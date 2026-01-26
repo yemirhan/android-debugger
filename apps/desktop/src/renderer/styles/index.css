@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0a0a0a;
+  --color-surface: #141414;
+  --color-surface-hover: #1a1a1a;
+  --color-border: #262626;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a3a3a3;
+  --color-text-muted: #737373;
+
+  --color-log-verbose: #6b7280;
+  --color-log-debug: #3b82f6;
+  --color-log-info: #22c55e;
+  --color-log-warn: #eab308;
+  --color-log-error: #ef4444;
+  --color-log-fatal: #dc2626;
+
+  --color-chart-memory: #8b5cf6;
+  --color-chart-java: #3b82f6;
+  --color-chart-native: #22c55e;
+  --color-chart-graphics: #f59e0b;
+  --color-chart-cpu: #ef4444;
+  --color-chart-fps: #06b6d4;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #404040;
+}
+
+/* Drag region for frameless window */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Log level colors */
+.log-V { color: var(--color-log-verbose); }
+.log-D { color: var(--color-log-debug); }
+.log-I { color: var(--color-log-info); }
+.log-W { color: var(--color-log-warn); }
+.log-E { color: var(--color-log-error); }
+.log-F { color: var(--color-log-fatal); }
+.log-S { color: #9333ea; }
