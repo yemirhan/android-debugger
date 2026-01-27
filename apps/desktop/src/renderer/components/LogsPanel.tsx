@@ -19,6 +19,12 @@ const LOG_LEVEL_NAMES: Record<LogLevel, string> = {
   S: 'Silent',
 };
 
+const SearchIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+  </svg>
+);
+
 export function LogsPanel({ device }: LogsPanelProps) {
   const {
     logs,
@@ -44,23 +50,16 @@ export function LogsPanel({ device }: LogsPanelProps) {
     const container = containerRef.current;
     const newLogsCount = logs.length - prevLogsLengthRef.current;
 
-    // Only adjust if logs were added (not removed/filtered)
     if (newLogsCount > 0 && !isAtTopRef.current) {
-      // User has scrolled down - maintain their position by scrolling down
-      // to account for new content added at the top
-      // We need to calculate how much height was added
-      // This is approximate - works well for same-height rows
-      const rowHeight = 28; // approximate row height in pixels
+      const rowHeight = 28;
       container.scrollTop += newLogsCount * rowHeight;
     }
-    // If user is at top, they stay at top automatically (scrollTop = 0)
 
     prevLogsLengthRef.current = logs.length;
   }, [logs, isPaused]);
 
   const handleScroll = useCallback(() => {
     if (containerRef.current) {
-      // User is "at top" if scrollTop is near 0
       isAtTopRef.current = containerRef.current.scrollTop < 10;
     }
   }, []);
@@ -69,32 +68,32 @@ export function LogsPanel({ device }: LogsPanelProps) {
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h2 className="text-lg font-semibold">Logs</h2>
-          <span className="text-sm text-text-muted">
-            {logs.length.toLocaleString()} / {totalLogs.toLocaleString()} entries
+        <div className="flex items-center gap-3">
+          <h2 className="text-base font-semibold">Logs</h2>
+          <span className="text-xs text-text-muted font-mono">
+            {logs.length.toLocaleString()} / {totalLogs.toLocaleString()}
           </span>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={togglePause}
-            className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
               isPaused
-                ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
-                : 'bg-surface-hover text-text-primary hover:bg-border'
+                ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
+                : 'bg-surface text-text-secondary border border-border-muted hover:bg-surface-hover hover:text-text-primary'
             }`}
           >
             {isPaused ? 'Resume' : 'Pause'}
           </button>
           <button
             onClick={clearLogs}
-            className="px-3 py-1.5 text-sm bg-surface-hover rounded-lg hover:bg-border transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
           >
             Clear
           </button>
           <button
             onClick={exportLogs}
-            className="px-3 py-1.5 text-sm bg-surface-hover rounded-lg hover:bg-border transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
           >
             Export
           </button>
@@ -102,36 +101,37 @@ export function LogsPanel({ device }: LogsPanelProps) {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         {/* Search */}
-        <div className="flex-1 max-w-md">
+        <div className="flex-1 max-w-sm relative">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
+            <SearchIcon />
+          </div>
           <input
             type="text"
             value={filter.search}
             onChange={(e) => updateFilter({ search: e.target.value })}
             placeholder="Search logs..."
-            className="w-full px-3 py-1.5 bg-surface-hover rounded-lg border border-border text-sm text-text-primary placeholder-text-muted outline-none focus:border-violet-500"
+            className="w-full pl-9 pr-3 py-2 bg-surface rounded-md border border-border-muted text-sm text-text-primary placeholder-text-muted outline-none focus:border-accent transition-colors"
           />
         </div>
 
         {/* Level filters */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 p-1 bg-surface rounded-md border border-border-muted">
           {LOG_LEVELS.map((level) => (
             <button
               key={level}
               onClick={() => toggleLevel(level)}
               title={LOG_LEVEL_NAMES[level]}
-              className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
+              className={`w-7 h-7 rounded text-xs font-medium font-mono transition-all duration-150 ${
                 filter.levels.has(level)
                   ? 'text-white'
-                  : 'text-text-muted opacity-40'
+                  : 'text-text-muted opacity-50 hover:opacity-75'
               }`}
               style={{
                 backgroundColor: filter.levels.has(level)
-                  ? LOG_LEVEL_COLORS[level] + '30'
+                  ? LOG_LEVEL_COLORS[level] + '25'
                   : 'transparent',
-                borderColor: LOG_LEVEL_COLORS[level],
-                borderWidth: filter.levels.has(level) ? '1px' : '0px',
               }}
             >
               {level}
@@ -140,14 +140,14 @@ export function LogsPanel({ device }: LogsPanelProps) {
         </div>
 
         {/* Streaming status */}
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover">
+        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-surface border border-border-muted">
           <div
-            className={`w-2 h-2 rounded-full ${
-              isStreaming ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+            className={`w-1.5 h-1.5 rounded-full ${
+              isStreaming ? 'bg-accent animate-pulse-dot' : 'bg-red-500'
             }`}
           />
           <span className="text-xs text-text-muted">
-            {isStreaming ? 'Streaming' : 'Stopped'}
+            {isStreaming ? 'Live' : 'Stopped'}
           </span>
         </div>
       </div>
@@ -156,44 +156,57 @@ export function LogsPanel({ device }: LogsPanelProps) {
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 bg-surface rounded-xl border border-border overflow-y-auto font-mono text-xs"
+        className="flex-1 bg-surface rounded-lg border border-border-muted overflow-y-auto"
       >
         <table className="w-full">
-          <tbody>
+          <thead className="sticky top-0 bg-surface-hover border-b border-border-muted">
+            <tr className="text-xs text-text-muted">
+              <th className="px-3 py-2 text-left font-medium w-[130px]">Time</th>
+              <th className="px-2 py-2 text-center font-medium w-8">Lvl</th>
+              <th className="px-2 py-2 text-left font-medium w-[140px]">Tag</th>
+              <th className="px-3 py-2 text-left font-medium">Message</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono text-xs">
             {logs.map((log) => (
               <tr
                 key={log.id}
-                className={`log-${log.level} hover:bg-surface-hover border-b border-border/50`}
+                className={`log-${log.level} hover:bg-surface-hover/50 border-b border-border-muted/50 transition-colors`}
               >
-                <td className="px-3 py-1 text-text-muted whitespace-nowrap w-[140px]">
+                <td className="px-3 py-1.5 text-text-muted whitespace-nowrap">
                   {log.timestamp}
                 </td>
                 <td
-                  className="px-2 py-1 font-bold w-6 text-center"
+                  className="px-2 py-1.5 font-semibold text-center"
                   style={{ color: LOG_LEVEL_COLORS[log.level] }}
                 >
                   {log.level}
                 </td>
-                <td className="px-2 py-1 text-cyan-400 whitespace-nowrap max-w-[150px] truncate">
+                <td className="px-2 py-1.5 text-cyan-400 whitespace-nowrap truncate max-w-[140px]">
                   {log.tag}
                 </td>
-                <td className="px-3 py-1 text-text-primary break-all">{log.message}</td>
+                <td className="px-3 py-1.5 text-text-primary break-all">{log.message}</td>
               </tr>
             ))}
           </tbody>
         </table>
 
         {logs.length === 0 && (
-          <div className="flex items-center justify-center h-full text-text-muted">
-            No logs to display
+          <div className="flex flex-col items-center justify-center h-64 text-text-muted">
+            <div className="w-12 h-12 mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h7" />
+              </svg>
+            </div>
+            <p className="text-sm">No logs to display</p>
           </div>
         )}
       </div>
 
       {/* Paused indicator */}
       {isPaused && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 bg-amber-500/20 border border-amber-500/30 rounded-lg text-amber-400 text-sm">
-          Log streaming paused - new logs buffered
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 bg-amber-500/15 border border-amber-500/25 rounded-lg text-amber-400 text-xs font-medium animate-fade-in">
+          Streaming paused - new logs buffered
         </div>
       )}
     </div>

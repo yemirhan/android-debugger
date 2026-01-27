@@ -7,6 +7,18 @@ interface PackageSelectorProps {
   onChange: (value: string) => void;
 }
 
+const PackageIcon = () => (
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+  </svg>
+);
+
+const ChevronIcon = () => (
+  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+  </svg>
+);
+
 export function PackageSelector({ device, value, onChange }: PackageSelectorProps) {
   const [packages, setPackages] = useState<string[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -62,8 +74,8 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <div className="flex items-center gap-2">
-        <label className="text-sm text-text-secondary">Package:</label>
+      <div className="flex items-center gap-2 px-2.5 py-1.5 bg-background rounded-md border border-border-muted hover:border-border transition-colors">
+        <PackageIcon />
         <input
           ref={inputRef}
           type="text"
@@ -71,32 +83,45 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
           onChange={handleInputChange}
           onFocus={() => setIsOpen(true)}
           placeholder="com.example.app"
-          className="w-64 px-3 py-1.5 bg-surface-hover rounded-lg border border-border text-sm text-text-primary placeholder-text-muted outline-none focus:border-violet-500"
+          className="w-52 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
         />
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="text-text-muted hover:text-text-primary transition-colors"
+        >
+          <ChevronIcon />
+        </button>
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-full bg-surface border border-border rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+        <div className="absolute top-full left-0 mt-1 w-full bg-surface-elevated border border-border rounded-lg shadow-xl z-50 max-h-64 overflow-hidden animate-fade-in backdrop-blur-dropdown">
           {loading ? (
-            <div className="px-3 py-2 text-sm text-text-muted">Loading packages...</div>
+            <div className="px-3 py-3 text-sm text-text-muted flex items-center gap-2">
+              <div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+              Loading packages...
+            </div>
           ) : filteredPackages.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-text-muted">
+            <div className="px-3 py-3 text-sm text-text-muted">
               {search ? 'No matching packages' : 'No packages found'}
             </div>
           ) : (
-            <ul>
+            <ul className="overflow-y-auto max-h-60">
               {filteredPackages.slice(0, 50).map((pkg) => (
                 <li key={pkg}>
                   <button
                     onClick={() => handleSelect(pkg)}
-                    className="w-full px-3 py-2 text-sm text-left text-text-primary hover:bg-surface-hover transition-colors"
+                    className={`w-full px-3 py-2 text-xs text-left font-mono transition-colors ${
+                      pkg === value
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-text-primary hover:bg-surface-hover'
+                    }`}
                   >
                     {pkg}
                   </button>
                 </li>
               ))}
               {filteredPackages.length > 50 && (
-                <li className="px-3 py-2 text-xs text-text-muted">
+                <li className="px-3 py-2 text-xs text-text-muted border-t border-border-muted">
                   +{filteredPackages.length - 50} more packages
                 </li>
               )}

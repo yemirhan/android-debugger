@@ -44,9 +44,14 @@ function App() {
   const renderPanel = () => {
     if (!selectedDevice) {
       return (
-        <div className="flex-1 flex items-center justify-center text-text-secondary">
+        <div className="flex-1 flex items-center justify-center text-text-secondary panel-content">
           <div className="text-center">
-            <p className="text-xl mb-2">No Device Connected</p>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-surface-hover flex items-center justify-center">
+              <svg className="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <p className="text-lg font-medium text-text-primary mb-1">No Device Connected</p>
             <p className="text-sm text-text-muted">Connect an Android device via USB and enable USB debugging</p>
           </div>
         </div>
@@ -95,7 +100,11 @@ function App() {
         />
         <div className="flex-1 flex overflow-hidden">
           <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
-          <main className="flex-1 flex flex-col overflow-hidden">{renderPanel()}</main>
+          <main className="flex-1 flex flex-col overflow-hidden">
+            <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
+              {renderPanel()}
+            </div>
+          </main>
         </div>
       </div>
     </SdkProvider>

@@ -1,49 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
-@theme {
-  --color-background: #0a0a0a;
-  --color-surface: #141414;
-  --color-surface-hover: #1a1a1a;
-  --color-border: #262626;
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a3a3a3;
-  --color-text-muted: #737373;
+/* ============================================
+   FONTS
+   ============================================ */
 
-  --color-log-verbose: #6b7280;
+/* Geist Sans - loaded from local or CDN */
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ============================================
+   THEME VARIABLES
+   ============================================ */
+@theme {
+  /* Refined dark palette - Zinc based */
+  --color-background: #09090b;      /* Zinc-950 - true dark */
+  --color-surface: #18181b;         /* Zinc-900 - elevated */
+  --color-surface-hover: #27272a;   /* Zinc-800 - hover state */
+  --color-surface-elevated: #27272a; /* Zinc-800 - modals/dropdowns */
+  --color-border: #3f3f46;          /* Zinc-700 - subtle borders */
+  --color-border-muted: #27272a;    /* Zinc-800 - very subtle */
+
+  /* Text hierarchy */
+  --color-text-primary: #fafafa;    /* Zinc-50 */
+  --color-text-secondary: #a1a1aa;  /* Zinc-400 */
+  --color-text-muted: #71717a;      /* Zinc-500 */
+
+  /* Accent - Emerald for dev tools feel */
+  --color-accent: #10b981;          /* Emerald-500 */
+  --color-accent-muted: rgba(16, 185, 129, 0.15);
+  --color-accent-hover: #059669;    /* Emerald-600 */
+
+  /* Log level colors */
+  --color-log-verbose: #71717a;
   --color-log-debug: #3b82f6;
-  --color-log-info: #22c55e;
-  --color-log-warn: #eab308;
+  --color-log-info: #10b981;
+  --color-log-warn: #f59e0b;
   --color-log-error: #ef4444;
   --color-log-fatal: #dc2626;
 
-  --color-chart-memory: #8b5cf6;
+  /* Chart colors */
+  --color-chart-memory: #10b981;    /* Emerald for primary */
   --color-chart-java: #3b82f6;
-  --color-chart-native: #22c55e;
+  --color-chart-native: #8b5cf6;
   --color-chart-graphics: #f59e0b;
   --color-chart-cpu: #ef4444;
   --color-chart-fps: #06b6d4;
+
+  /* Font families */
+  --font-sans: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Custom scrollbar */
+/* ============================================
+   BASE STYLES
+   ============================================ */
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================
+   SCROLLBAR
+   ============================================ */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-surface);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #404040;
+  background: #52525b;
 }
 
-/* Drag region for frameless window */
+/* Hide scrollbar when not hovering */
+.hide-scrollbar::-webkit-scrollbar {
+  width: 0;
+}
+
+.hide-scrollbar:hover::-webkit-scrollbar {
+  width: 6px;
+}
+
+/* ============================================
+   DRAG REGION (for frameless window)
+   ============================================ */
 .drag-region {
   -webkit-app-region: drag;
 }
@@ -52,11 +127,188 @@
   -webkit-app-region: no-drag;
 }
 
-/* Log level colors */
+/* ============================================
+   LOG LEVEL COLORS
+   ============================================ */
 .log-V { color: var(--color-log-verbose); }
 .log-D { color: var(--color-log-debug); }
 .log-I { color: var(--color-log-info); }
 .log-W { color: var(--color-log-warn); }
 .log-E { color: var(--color-log-error); }
 .log-F { color: var(--color-log-fatal); }
-.log-S { color: #9333ea; }
+.log-S { color: #a855f7; }
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.animate-slide-in {
+  animation: slide-in 200ms ease-out;
+}
+
+/* ============================================
+   COMPONENT UTILITIES
+   ============================================ */
+
+/* Button press effect */
+.btn-press:active {
+  transform: scale(0.98);
+}
+
+/* Focus ring for accessibility */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Gradient background for stat cards */
+.stat-card-gradient {
+  background: linear-gradient(
+    135deg,
+    rgba(16, 185, 129, 0.08) 0%,
+    rgba(16, 185, 129, 0.02) 100%
+  );
+}
+
+/* Tooltip styles */
+.tooltip {
+  position: relative;
+}
+
+.tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 10px;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+  z-index: 50;
+}
+
+.tooltip:hover::after {
+  opacity: 1;
+}
+
+/* Backdrop blur for dropdowns */
+.backdrop-blur-dropdown {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Panel transition */
+.panel-content {
+  animation: fade-in 150ms ease-out;
+}
+
+/* Monospace text utility */
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* ============================================
+   CUSTOM COMPONENTS
+   ============================================ */
+
+/* Ghost button */
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.btn-ghost:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Primary button */
+.btn-primary {
+  background: var(--color-accent);
+  color: white;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.btn-primary:hover {
+  background: var(--color-accent-hover);
+}
+
+/* Input styles */
+.input-base {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
+  color: var(--color-text-primary);
+  transition: border-color var(--transition-fast);
+}
+
+.input-base:focus {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.input-base::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Tab styles */
+.tab-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* Card hover effect */
+.card-hover {
+  transition: all var(--transition-fast);
+}
+
+.card-hover:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+}

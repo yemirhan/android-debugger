@@ -6,55 +6,52 @@ type MethodFilter = 'all' | 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 type StatusFilter = 'all' | '2xx' | '3xx' | '4xx' | '5xx' | 'pending' | 'error';
 
 const CopyIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
   </svg>
 );
 
 const CheckIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
   </svg>
 );
 
+const CloseIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
+
+const SearchIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+  </svg>
+);
+
 function escapeShellArg(str: string): string {
-  // Escape single quotes for shell
   return str.replace(/'/g, "'\\''");
 }
 
 function generateCurl(request: NetworkRequest): string {
   const lines: string[] = [];
-
-  // Start with curl command
   lines.push('curl');
-
-  // Location flag - follow redirects
   lines.push('  --location');
-
-  // Request method
   lines.push(`  --request ${request.method.toUpperCase()}`);
-
-  // URL
   lines.push(`  '${escapeShellArg(request.url)}'`);
 
-  // All headers
   if (request.headers && Object.keys(request.headers).length > 0) {
     for (const [key, value] of Object.entries(request.headers)) {
       lines.push(`  --header '${escapeShellArg(key)}: ${escapeShellArg(value)}'`);
     }
   }
 
-  // Body/data
   if (request.body) {
-    // Check if it's JSON and format nicely
-    let bodyContent = request.body;
     try {
-      // If it's valid JSON, we can keep it as-is
-      JSON.parse(bodyContent);
-      lines.push(`  --data '${escapeShellArg(bodyContent)}'`);
+      JSON.parse(request.body);
+      lines.push(`  --data '${escapeShellArg(request.body)}'`);
     } catch {
-      // Not JSON, use --data-raw for raw content
-      lines.push(`  --data-raw '${escapeShellArg(bodyContent)}'`);
+      lines.push(`  --data-raw '${escapeShellArg(request.body)}'`);
     }
   }
 
@@ -63,18 +60,14 @@ function generateCurl(request: NetworkRequest): string {
 
 function generateCurlCompact(request: NetworkRequest): string {
   const parts: string[] = ['curl', '-L', '-X', request.method.toUpperCase()];
-
-  // URL
   parts.push(`'${escapeShellArg(request.url)}'`);
 
-  // Headers
   if (request.headers && Object.keys(request.headers).length > 0) {
     for (const [key, value] of Object.entries(request.headers)) {
       parts.push('-H', `'${escapeShellArg(key)}: ${escapeShellArg(value)}'`);
     }
   }
 
-  // Body
   if (request.body) {
     parts.push('-d', `'${escapeShellArg(request.body)}'`);
   }
@@ -94,17 +87,12 @@ export function NetworkPanel() {
 
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
-      // URL filter
       if (urlFilter && !r.url.toLowerCase().includes(urlFilter.toLowerCase())) {
         return false;
       }
-
-      // Method filter
       if (methodFilter !== 'all' && r.method.toUpperCase() !== methodFilter) {
         return false;
       }
-
-      // Status filter
       if (statusFilter !== 'all') {
         if (statusFilter === 'pending') {
           if (r.status !== undefined) return false;
@@ -120,14 +108,13 @@ export function NetworkPanel() {
           if (!r.status || r.status < 500 || r.status >= 600) return false;
         }
       }
-
       return true;
     });
   }, [requests, urlFilter, methodFilter, statusFilter]);
 
   const getStatusColor = (status?: number) => {
     if (!status) return 'text-text-muted';
-    if (status >= 200 && status < 300) return 'text-green-400';
+    if (status >= 200 && status < 300) return 'text-emerald-400';
     if (status >= 300 && status < 400) return 'text-amber-400';
     if (status >= 400) return 'text-red-400';
     return 'text-text-primary';
@@ -135,18 +122,12 @@ export function NetworkPanel() {
 
   const getMethodColor = (method: string) => {
     switch (method.toUpperCase()) {
-      case 'GET':
-        return 'text-green-400';
-      case 'POST':
-        return 'text-blue-400';
-      case 'PUT':
-        return 'text-amber-400';
-      case 'DELETE':
-        return 'text-red-400';
-      case 'PATCH':
-        return 'text-violet-400';
-      default:
-        return 'text-text-primary';
+      case 'GET': return 'text-emerald-400';
+      case 'POST': return 'text-blue-400';
+      case 'PUT': return 'text-amber-400';
+      case 'DELETE': return 'text-red-400';
+      case 'PATCH': return 'text-violet-400';
+      default: return 'text-text-primary';
     }
   };
 
@@ -190,30 +171,34 @@ export function NetworkPanel() {
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h2 className="text-lg font-semibold">Network</h2>
-          <span className="text-sm text-text-muted">
+        <div className="flex items-center gap-3">
+          <h2 className="text-base font-semibold">Network</h2>
+          <span className="text-xs text-text-muted font-mono">
             {filteredRequests.length === requests.length
               ? `${requests.length} requests`
-              : `${filteredRequests.length} of ${requests.length} requests`
-            }
+              : `${filteredRequests.length} / ${requests.length}`}
           </span>
         </div>
         <div className="flex items-center gap-2">
           {/* URL Filter */}
-          <input
-            type="text"
-            value={urlFilter}
-            onChange={(e) => setUrlFilter(e.target.value)}
-            placeholder="Filter by URL..."
-            className="w-48 px-3 py-1.5 bg-surface-hover rounded-lg border border-border text-sm text-text-primary placeholder-text-muted outline-none focus:border-violet-500"
-          />
+          <div className="relative">
+            <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted">
+              <SearchIcon />
+            </div>
+            <input
+              type="text"
+              value={urlFilter}
+              onChange={(e) => setUrlFilter(e.target.value)}
+              placeholder="Filter URL..."
+              className="w-40 pl-8 pr-3 py-1.5 bg-surface rounded-md border border-border-muted text-xs text-text-primary placeholder-text-muted outline-none focus:border-accent transition-colors"
+            />
+          </div>
 
           {/* Method Filter */}
           <select
             value={methodFilter}
             onChange={(e) => setMethodFilter(e.target.value as MethodFilter)}
-            className="px-3 py-1.5 bg-surface-hover rounded-lg border border-border text-sm text-text-primary outline-none focus:border-violet-500 cursor-pointer"
+            className="px-2.5 py-1.5 bg-surface rounded-md border border-border-muted text-xs text-text-primary outline-none focus:border-accent cursor-pointer"
           >
             <option value="all">All Methods</option>
             <option value="GET">GET</option>
@@ -227,18 +212,17 @@ export function NetworkPanel() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-            className="px-3 py-1.5 bg-surface-hover rounded-lg border border-border text-sm text-text-primary outline-none focus:border-violet-500 cursor-pointer"
+            className="px-2.5 py-1.5 bg-surface rounded-md border border-border-muted text-xs text-text-primary outline-none focus:border-accent cursor-pointer"
           >
             <option value="all">All Status</option>
             <option value="2xx">2xx Success</option>
             <option value="3xx">3xx Redirect</option>
-            <option value="4xx">4xx Client Error</option>
-            <option value="5xx">5xx Server Error</option>
+            <option value="4xx">4xx Error</option>
+            <option value="5xx">5xx Error</option>
             <option value="pending">Pending</option>
             <option value="error">Has Error</option>
           </select>
 
-          {/* Clear filters */}
           {activeFiltersCount > 0 && (
             <button
               onClick={() => {
@@ -246,7 +230,7 @@ export function NetworkPanel() {
                 setMethodFilter('all');
                 setStatusFilter('all');
               }}
-              className="px-3 py-1.5 text-sm text-violet-400 hover:text-violet-300 transition-colors"
+              className="px-2.5 py-1.5 text-xs text-accent hover:text-accent/80 transition-colors"
             >
               Clear filters
             </button>
@@ -254,7 +238,7 @@ export function NetworkPanel() {
 
           <button
             onClick={clearRequests}
-            className="px-3 py-1.5 text-sm bg-surface-hover rounded-lg hover:bg-border transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
           >
             Clear
           </button>
@@ -264,8 +248,8 @@ export function NetworkPanel() {
       {/* Content */}
       <div className="flex-1 flex gap-4 overflow-hidden">
         {/* Request list */}
-        <div className="flex-1 bg-surface rounded-xl border border-border overflow-hidden flex flex-col">
-          <div className="grid grid-cols-[80px_1fr_80px_100px] gap-2 px-4 py-2 bg-surface-hover border-b border-border text-xs font-medium text-text-muted">
+        <div className="flex-1 bg-surface rounded-lg border border-border-muted overflow-hidden flex flex-col">
+          <div className="grid grid-cols-[70px_1fr_70px_80px] gap-2 px-3 py-2 bg-surface-hover border-b border-border-muted text-xs font-medium text-text-muted">
             <div>Method</div>
             <div>URL</div>
             <div>Status</div>
@@ -274,21 +258,26 @@ export function NetworkPanel() {
           <div className="flex-1 overflow-y-auto">
             {filteredRequests.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-text-muted">
+                <div className="w-12 h-12 mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                  </svg>
+                </div>
                 {requests.length === 0 ? (
                   <>
-                    <p>No network requests captured</p>
-                    <p className="text-xs mt-1">Connect the SDK to capture network traffic</p>
+                    <p className="text-sm">No network requests</p>
+                    <p className="text-xs mt-1">Connect the SDK to capture traffic</p>
                   </>
                 ) : (
                   <>
-                    <p>No requests match filters</p>
+                    <p className="text-sm">No requests match filters</p>
                     <button
                       onClick={() => {
                         setUrlFilter('');
                         setMethodFilter('all');
                         setStatusFilter('all');
                       }}
-                      className="text-xs mt-1 text-violet-400 hover:text-violet-300"
+                      className="text-xs mt-1 text-accent hover:text-accent/80"
                     >
                       Clear filters
                     </button>
@@ -300,18 +289,18 @@ export function NetworkPanel() {
                 <button
                   key={request.id}
                   onClick={() => setSelectedRequest(request)}
-                  className={`w-full grid grid-cols-[80px_1fr_80px_100px] gap-2 px-4 py-2 text-left text-sm hover:bg-surface-hover transition-colors border-b border-border/50 ${
-                    selectedRequest?.id === request.id ? 'bg-violet-500/10' : ''
+                  className={`w-full grid grid-cols-[70px_1fr_70px_80px] gap-2 px-3 py-2 text-left text-xs hover:bg-surface-hover/50 transition-colors border-b border-border-muted/50 ${
+                    selectedRequest?.id === request.id ? 'bg-accent/10' : ''
                   }`}
                 >
                   <div className={`font-mono font-medium ${getMethodColor(request.method)}`}>
                     {request.method}
                   </div>
-                  <div className="text-text-primary truncate">{request.url}</div>
+                  <div className="text-text-primary truncate font-mono">{request.url}</div>
                   <div className={`font-mono ${getStatusColor(request.status)}`}>
-                    {request.status || 'pending'}
+                    {request.status || '...'}
                   </div>
-                  <div className="text-text-muted">
+                  <div className="text-text-muted font-mono">
                     {request.duration ? `${request.duration}ms` : '-'}
                   </div>
                 </button>
@@ -322,25 +311,22 @@ export function NetworkPanel() {
 
         {/* Request details */}
         {selectedRequest && (
-          <div className="w-96 bg-surface rounded-xl border border-border overflow-hidden flex flex-col">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <h3 className="font-medium">Request Details</h3>
+          <div className="w-96 bg-surface rounded-lg border border-border-muted overflow-hidden flex flex-col animate-slide-in">
+            <div className="px-4 py-3 border-b border-border-muted flex items-center justify-between bg-surface-hover">
+              <h3 className="text-sm font-medium">Request Details</h3>
               <div className="flex items-center gap-2">
                 {/* Copy dropdown */}
                 <div className="relative">
                   <button
                     onClick={() => setShowCopyMenu(!showCopyMenu)}
-                    className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                    className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-all duration-150 ${
                       copied
-                        ? 'bg-green-500/20 text-green-400'
-                        : 'bg-surface-hover text-text-secondary hover:text-text-primary'
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-surface text-text-secondary hover:text-text-primary'
                     }`}
                   >
                     {copied ? <CheckIcon /> : <CopyIcon />}
-                    <span>{copied ? 'Copied!' : 'Copy'}</span>
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
                   </button>
                   {showCopyMenu && (
                     <>
@@ -348,40 +334,38 @@ export function NetworkPanel() {
                         className="fixed inset-0 z-10"
                         onClick={() => setShowCopyMenu(false)}
                       />
-                      <div className="absolute right-0 top-full mt-1 z-20 bg-surface border border-border rounded-lg shadow-lg py-1 min-w-[160px]">
+                      <div className="absolute right-0 top-full mt-1 z-20 bg-surface-elevated border border-border rounded-lg shadow-xl py-1 min-w-[150px] backdrop-blur-dropdown animate-fade-in">
                         <button
                           onClick={() => copyToClipboard('curl')}
-                          className="w-full px-3 py-1.5 text-left text-xs hover:bg-surface-hover flex items-center gap-2"
+                          className="w-full px-3 py-1.5 text-left text-xs hover:bg-surface-hover transition-colors"
                         >
                           <span className="text-text-primary">Copy as cURL</span>
-                          <span className="text-text-muted">(formatted)</span>
                         </button>
                         <button
                           onClick={() => copyToClipboard('curl-compact')}
-                          className="w-full px-3 py-1.5 text-left text-xs hover:bg-surface-hover flex items-center gap-2"
+                          className="w-full px-3 py-1.5 text-left text-xs hover:bg-surface-hover transition-colors"
                         >
-                          <span className="text-text-primary">Copy as cURL</span>
-                          <span className="text-text-muted">(compact)</span>
+                          <span className="text-text-primary">Copy cURL (compact)</span>
                         </button>
-                        <div className="h-px bg-border my-1" />
+                        <div className="h-px bg-border-muted my-1" />
                         <button
                           onClick={() => copyToClipboard('url')}
-                          className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover"
+                          className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover transition-colors"
                         >
                           Copy URL
                         </button>
                         <button
                           onClick={() => copyToClipboard('headers')}
-                          className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover"
+                          className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover transition-colors"
                         >
-                          Copy Request Headers
+                          Copy Headers
                         </button>
                         {selectedRequest.responseBody && (
                           <button
                             onClick={() => copyToClipboard('response')}
-                            className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover"
+                            className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover transition-colors"
                           >
-                            Copy Response Body
+                            Copy Response
                           </button>
                         )}
                       </div>
@@ -390,53 +374,49 @@ export function NetworkPanel() {
                 </div>
                 <button
                   onClick={() => setSelectedRequest(null)}
-                  className="text-text-muted hover:text-text-primary"
+                  className="p-1 text-text-muted hover:text-text-primary transition-colors"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <CloseIcon />
                 </button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
               {/* URL */}
               <div>
-                <p className="text-text-muted text-xs mb-1">URL</p>
-                <p className="text-text-primary break-all font-mono text-xs">{selectedRequest.url}</p>
+                <p className="text-xs text-text-muted uppercase tracking-wider mb-1.5">URL</p>
+                <p className="text-text-primary break-all font-mono text-xs bg-surface-hover rounded p-2">{selectedRequest.url}</p>
               </div>
 
               {/* Method & Status */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-text-muted text-xs mb-1">Method</p>
-                  <p className={`font-mono font-medium ${getMethodColor(selectedRequest.method)}`}>
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-1">Method</p>
+                  <p className={`font-mono font-medium text-sm ${getMethodColor(selectedRequest.method)}`}>
                     {selectedRequest.method}
                   </p>
                 </div>
                 <div>
-                  <p className="text-text-muted text-xs mb-1">Status</p>
-                  <p className={`font-mono font-medium ${getStatusColor(selectedRequest.status)}`}>
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-1">Status</p>
+                  <p className={`font-mono font-medium text-sm ${getStatusColor(selectedRequest.status)}`}>
                     {selectedRequest.status || 'pending'}
                   </p>
                 </div>
+                {selectedRequest.duration && (
+                  <div>
+                    <p className="text-xs text-text-muted uppercase tracking-wider mb-1">Duration</p>
+                    <p className="font-mono text-sm">{selectedRequest.duration}ms</p>
+                  </div>
+                )}
               </div>
-
-              {/* Duration */}
-              {selectedRequest.duration && (
-                <div>
-                  <p className="text-text-muted text-xs mb-1">Duration</p>
-                  <p className="text-text-primary">{selectedRequest.duration}ms</p>
-                </div>
-              )}
 
               {/* Request Headers */}
               {Object.keys(selectedRequest.headers || {}).length > 0 && (
                 <div>
-                  <p className="text-text-muted text-xs mb-2">Request Headers</p>
-                  <div className="bg-surface-hover rounded-lg p-2 font-mono text-xs space-y-1">
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Request Headers</p>
+                  <div className="bg-surface-hover rounded-md p-2 font-mono text-xs space-y-1">
                     {Object.entries(selectedRequest.headers).map(([key, value]) => (
                       <div key={key} className="flex gap-2">
-                        <span className="text-cyan-400">{key}:</span>
+                        <span className="text-cyan-400 shrink-0">{key}:</span>
                         <span className="text-text-primary break-all">{value}</span>
                       </div>
                     ))}
@@ -447,8 +427,8 @@ export function NetworkPanel() {
               {/* Request Body */}
               {selectedRequest.body && (
                 <div>
-                  <p className="text-text-muted text-xs mb-2">Request Body</p>
-                  <pre className="bg-surface-hover rounded-lg p-2 font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap">
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Request Body</p>
+                  <pre className="bg-surface-hover rounded-md p-2 font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap">
                     {selectedRequest.body}
                   </pre>
                 </div>
@@ -457,11 +437,11 @@ export function NetworkPanel() {
               {/* Response Headers */}
               {selectedRequest.responseHeaders && Object.keys(selectedRequest.responseHeaders).length > 0 && (
                 <div>
-                  <p className="text-text-muted text-xs mb-2">Response Headers</p>
-                  <div className="bg-surface-hover rounded-lg p-2 font-mono text-xs space-y-1">
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Response Headers</p>
+                  <div className="bg-surface-hover rounded-md p-2 font-mono text-xs space-y-1">
                     {Object.entries(selectedRequest.responseHeaders).map(([key, value]) => (
                       <div key={key} className="flex gap-2">
-                        <span className="text-cyan-400">{key}:</span>
+                        <span className="text-cyan-400 shrink-0">{key}:</span>
                         <span className="text-text-primary break-all">{value}</span>
                       </div>
                     ))}
@@ -472,8 +452,8 @@ export function NetworkPanel() {
               {/* Response Body */}
               {selectedRequest.responseBody && (
                 <div>
-                  <p className="text-text-muted text-xs mb-2">Response Body</p>
-                  <pre className="bg-surface-hover rounded-lg p-2 font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap max-h-64">
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Response Body</p>
+                  <pre className="bg-surface-hover rounded-md p-2 font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap max-h-64">
                     {selectedRequest.responseBody}
                   </pre>
                 </div>
@@ -482,8 +462,8 @@ export function NetworkPanel() {
               {/* Error */}
               {selectedRequest.error && (
                 <div>
-                  <p className="text-text-muted text-xs mb-2">Error</p>
-                  <pre className="bg-red-500/10 border border-red-500/20 rounded-lg p-2 font-mono text-xs text-red-400">
+                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Error</p>
+                  <pre className="bg-red-500/10 border border-red-500/20 rounded-md p-2 font-mono text-xs text-red-400">
                     {selectedRequest.error}
                   </pre>
                 </div>
