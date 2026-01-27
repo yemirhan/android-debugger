@@ -2,14 +2,201 @@ import type { NetworkRequest, SdkMessage } from '@android-debugger/shared';
 
 type SendFn = (message: SdkMessage) => void;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AxiosInstance = any;
+
+interface AxiosInterceptorManager {
+  requestInterceptorId: number | null;
+  responseInterceptorId: number | null;
+  instance: AxiosInstance;
+}
+
 let originalFetch: typeof fetch | null = null;
 let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
 let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
+let axiosInterceptors: AxiosInterceptorManager[] = [];
 
 let requestId = 0;
 
 function generateRequestId(): string {
   return `req-${Date.now()}-${++requestId}`;
+}
+
+/**
+ * Intercept an Axios instance
+ */
+export function interceptAxios(axiosInstance: AxiosInstance, send: SendFn): () => void {
+  const pendingRequests = new Map<string, NetworkRequest>();
+
+  // Request interceptor
+  const requestInterceptorId = axiosInstance.interceptors.request.use(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config: any) => {
+      const id = generateRequestId();
+      const startTime = Date.now();
+
+      // Store ID in config for response matching
+      config.__debugger_id = id;
+      config.__debugger_start = startTime;
+
+      const headers: Record<string, string> = {};
+      if (config.headers) {
+        // Axios headers can be an object or AxiosHeaders instance
+        const headerObj = config.headers.toJSON ? config.headers.toJSON() : config.headers;
+        Object.entries(headerObj).forEach(([key, value]) => {
+          if (typeof value === 'string') {
+            headers[key] = value;
+          }
+        });
+      }
+
+      let body: string | undefined;
+      if (config.data) {
+        try {
+          body = typeof config.data === 'string' ? config.data : JSON.stringify(config.data);
+        } catch {
+          body = String(config.data);
+        }
+      }
+
+      const request: NetworkRequest = {
+        id,
+        url: config.url || '',
+        method: (config.method || 'GET').toUpperCase(),
+        headers,
+        body,
+        timestamp: startTime,
+      };
+
+      // Handle baseURL
+      if (config.baseURL && config.url && !config.url.startsWith('http')) {
+        request.url = config.baseURL.replace(/\/$/, '') + '/' + config.url.replace(/^\//, '');
+      }
+
+      pendingRequests.set(id, request);
+
+      send({
+        type: 'network',
+        timestamp: startTime,
+        payload: request,
+      });
+
+      return config;
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (error: any) => {
+      return Promise.reject(error);
+    }
+  );
+
+  // Response interceptor
+  const responseInterceptorId = axiosInstance.interceptors.response.use(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (response: any) => {
+      const id = response.config?.__debugger_id;
+      const startTime = response.config?.__debugger_start || Date.now();
+      const request = pendingRequests.get(id);
+
+      if (request) {
+        pendingRequests.delete(id);
+
+        const responseHeaders: Record<string, string> = {};
+        if (response.headers) {
+          const headerObj = response.headers.toJSON ? response.headers.toJSON() : response.headers;
+          Object.entries(headerObj).forEach(([key, value]) => {
+            if (typeof value === 'string') {
+              responseHeaders[key] = value;
+            }
+          });
+        }
+
+        let responseBody: string | undefined;
+        if (response.data !== undefined) {
+          try {
+            responseBody =
+              typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+            if (responseBody && responseBody.length > 10000) {
+              responseBody = responseBody.substring(0, 10000) + '... [truncated]';
+            }
+          } catch {
+            responseBody = String(response.data);
+          }
+        }
+
+        const completedRequest: NetworkRequest = {
+          ...request,
+          status: response.status,
+          responseHeaders,
+          responseBody,
+          duration: Date.now() - startTime,
+        };
+
+        send({
+          type: 'network',
+          timestamp: Date.now(),
+          payload: completedRequest,
+        });
+      }
+
+      return response;
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (error: any) => {
+      const config = error.config || {};
+      const id = config.__debugger_id;
+      const startTime = config.__debugger_start || Date.now();
+      const request = pendingRequests.get(id);
+
+      if (request) {
+        pendingRequests.delete(id);
+
+        const errorRequest: NetworkRequest = {
+          ...request,
+          status: error.response?.status,
+          error: error.message || 'Request failed',
+          duration: Date.now() - startTime,
+        };
+
+        // Include response data if available
+        if (error.response?.data) {
+          try {
+            errorRequest.responseBody =
+              typeof error.response.data === 'string'
+                ? error.response.data
+                : JSON.stringify(error.response.data);
+          } catch {
+            errorRequest.responseBody = String(error.response.data);
+          }
+        }
+
+        send({
+          type: 'network',
+          timestamp: Date.now(),
+          payload: errorRequest,
+        });
+      }
+
+      return Promise.reject(error);
+    }
+  );
+
+  const manager: AxiosInterceptorManager = {
+    requestInterceptorId,
+    responseInterceptorId,
+    instance: axiosInstance,
+  };
+  axiosInterceptors.push(manager);
+
+  // Return restore function
+  return () => {
+    if (manager.requestInterceptorId !== null) {
+      axiosInstance.interceptors.request.eject(manager.requestInterceptorId);
+    }
+    if (manager.responseInterceptorId !== null) {
+      axiosInstance.interceptors.response.eject(manager.responseInterceptorId);
+    }
+    axiosInterceptors = axiosInterceptors.filter((m) => m !== manager);
+  };
 }
 
 export function interceptNetwork(send: SendFn): () => void {
@@ -176,7 +363,23 @@ export function interceptNetwork(send: SendFn): () => void {
         }
       });
 
-      let responseBody = this.responseText;
+      let responseBody: string | undefined;
+      const responseType = this.responseType;
+
+      if (responseType === '' || responseType === 'text') {
+        responseBody = this.responseText;
+      } else if (responseType === 'json' && this.response) {
+        try {
+          responseBody = JSON.stringify(this.response);
+        } catch {
+          responseBody = '[JSON response - unable to stringify]';
+        }
+      } else if (responseType === 'blob' || responseType === 'arraybuffer') {
+        const size =
+          (this.response as Blob)?.size ?? (this.response as ArrayBuffer)?.byteLength ?? 0;
+        responseBody = `[${responseType} response - ${size} bytes]`;
+      }
+
       if (responseBody && responseBody.length > 10000) {
         responseBody = responseBody.substring(0, 10000) + '... [truncated]';
       }
@@ -241,5 +444,15 @@ export function interceptNetwork(send: SendFn): () => void {
       XMLHttpRequest.prototype.send = originalXHRSend;
       originalXHRSend = null;
     }
+    // Clean up any axios interceptors
+    axiosInterceptors.forEach((manager) => {
+      if (manager.requestInterceptorId !== null) {
+        manager.instance.interceptors.request.eject(manager.requestInterceptorId);
+      }
+      if (manager.responseInterceptorId !== null) {
+        manager.instance.interceptors.response.eject(manager.responseInterceptorId);
+      }
+    });
+    axiosInterceptors = [];
   };
 }

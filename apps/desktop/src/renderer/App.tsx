@@ -9,6 +9,7 @@ import { NetworkPanel } from './components/NetworkPanel';
 import { SdkPanel } from './components/SdkPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { useDevices } from './hooks/useDevices';
+import { SdkProvider } from './contexts/SdkContext';
 
 export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings';
 
@@ -81,21 +82,23 @@ function App() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-background text-text-primary">
-      <Header
-        devices={devices}
-        selectedDevice={selectedDevice}
-        onDeviceSelect={handleDeviceSelect}
-        onRefreshDevices={refreshDevices}
-        loading={devicesLoading}
-        packageName={packageName}
-        onPackageChange={handlePackageChange}
-      />
-      <div className="flex-1 flex overflow-hidden">
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
-        <main className="flex-1 flex flex-col overflow-hidden">{renderPanel()}</main>
+    <SdkProvider>
+      <div className="h-screen flex flex-col bg-background text-text-primary">
+        <Header
+          devices={devices}
+          selectedDevice={selectedDevice}
+          onDeviceSelect={handleDeviceSelect}
+          onRefreshDevices={refreshDevices}
+          loading={devicesLoading}
+          packageName={packageName}
+          onPackageChange={handlePackageChange}
+        />
+        <div className="flex-1 flex overflow-hidden">
+          <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+          <main className="flex-1 flex flex-col overflow-hidden">{renderPanel()}</main>
+        </div>
       </div>
-    </div>
+    </SdkProvider>
   );
 }
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Device } from '@android-debugger/shared';
 import { PackageSelector } from './PackageSelector';
+import { useSdkContext } from '../contexts/SdkContext';
 
 interface HeaderProps {
   devices: Device[];
@@ -24,6 +25,12 @@ const DeviceIcon = () => (
   </svg>
 );
 
+const ServerIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+  </svg>
+);
+
 export function Header({
   devices,
   selectedDevice,
@@ -33,13 +40,12 @@ export function Header({
   packageName,
   onPackageChange,
 }: HeaderProps) {
+  const { port, setPort, isRunning, startServer, stopServer, connectionCount } = useSdkContext();
+
   return (
     <header className="h-14 bg-surface border-b border-border flex items-center justify-between px-4 drag-region">
-      <div className="flex items-center gap-3 no-drag">
-        <div className="w-3 h-3 rounded-full bg-red-500" />
-        <div className="w-3 h-3 rounded-full bg-yellow-500" />
-        <div className="w-3 h-3 rounded-full bg-green-500" />
-        <h1 className="text-sm font-semibold text-text-primary ml-2">Android Debugger</h1>
+      <div className="flex items-center gap-3 no-drag pl-16">
+        <h1 className="text-sm font-semibold text-text-primary">Android Debugger</h1>
       </div>
 
       <div className="flex items-center gap-3 no-drag">
@@ -87,6 +93,46 @@ export function Header({
             onChange={onPackageChange}
           />
         )}
+
+        {/* Divider */}
+        <div className="w-px h-6 bg-border" />
+
+        {/* SDK Server controls */}
+        <div className="flex items-center gap-2">
+          <ServerIcon />
+          {!isRunning && (
+            <input
+              type="number"
+              value={port}
+              onChange={(e) => setPort(parseInt(e.target.value, 10))}
+              className="w-16 px-2 py-1 bg-surface-hover rounded border border-border text-xs text-text-primary outline-none focus:border-violet-500"
+              title="WebSocket port"
+            />
+          )}
+          <button
+            onClick={isRunning ? stopServer : startServer}
+            className={`px-3 py-1 text-xs rounded transition-colors ${
+              isRunning
+                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+            }`}
+          >
+            {isRunning ? 'Stop' : 'Start'}
+          </button>
+          {isRunning && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-green-500/10 border border-green-500/20">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-xs text-green-400">:{port}</span>
+            </div>
+          )}
+          {connectionCount > 0 && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-violet-500/10 border border-violet-500/20">
+              <span className="text-xs text-violet-400">
+                {connectionCount} SDK
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Connection status */}
         {selectedDevice && (

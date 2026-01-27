@@ -1,2 +1,2 @@
 export { interceptConsole } from './console';
-export { interceptNetwork } from './network';
+export { interceptNetwork, interceptAxios } from './network';

@@ -1,7 +1,7 @@
 import type { SdkMessage, CustomEvent, StateSnapshot, PerformanceMark } from '@android-debugger/shared';
 import { DEFAULT_WS_PORT } from '@android-debugger/shared';
 import { DebuggerClient, ClientOptions } from './client';
-import { interceptConsole, interceptNetwork } from './interceptors';
+import { interceptConsole, interceptNetwork, interceptAxios } from './interceptors';
 
 export interface AndroidDebuggerOptions {
   host: string;
@@ -13,10 +13,14 @@ export interface AndroidDebuggerOptions {
   onDisconnect?: () => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AxiosInstance = any;
+
 class AndroidDebuggerSDK {
   private client: DebuggerClient | null = null;
   private restoreConsole: (() => void) | null = null;
   private restoreNetwork: (() => void) | null = null;
+  private axiosRestoreFns: (() => void)[] = [];
   private performanceMarks: Map<string, number> = new Map();
   private isInitialized = false;
 
@@ -73,6 +77,32 @@ class AndroidDebuggerSDK {
   }
 
   /**
+   * Intercept an Axios instance for network request tracking
+   * Call this for each axios instance you want to monitor
+   *
+   * @example
+   * import axios from 'axios';
+   * import { AndroidDebugger } from '@android-debugger/sdk';
+   *
+   * const api = axios.create({ baseURL: 'https://api.example.com' });
+   * AndroidDebugger.interceptAxios(api);
+   */
+  interceptAxios(axiosInstance: AxiosInstance): () => void {
+    if (!this.isInitialized) {
+      console.warn('[AndroidDebugger] SDK not initialized. Call init() first.');
+      return () => {};
+    }
+
+    const restore = interceptAxios(axiosInstance, (msg) => this.send(msg));
+    this.axiosRestoreFns.push(restore);
+
+    return () => {
+      restore();
+      this.axiosRestoreFns = this.axiosRestoreFns.filter((fn) => fn !== restore);
+    };
+  }
+
+  /**
    * Disconnect and cleanup
    */
   destroy(): void {
@@ -80,10 +110,12 @@ class AndroidDebuggerSDK {
 
     this.restoreConsole?.();
     this.restoreNetwork?.();
+    this.axiosRestoreFns.forEach((fn) => fn());
     this.client?.disconnect();
 
     this.restoreConsole = null;
     this.restoreNetwork = null;
+    this.axiosRestoreFns = [];
     this.client = null;
     this.isInitialized = false;
     this.performanceMarks.clear();
@@ -195,3 +227,6 @@ export const AndroidDebugger = new AndroidDebuggerSDK();
 // Re-export client
 export { DebuggerClient } from './client';
 export type { ClientOptions } from './client';
+
+// Re-export interceptors for advanced usage
+export { interceptAxios, interceptNetwork, interceptConsole } from './interceptors';

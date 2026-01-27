@@ -25,10 +25,10 @@ export class WebSocketService {
     }
 
     return new Promise((resolve, reject) => {
-      this.server = new WebSocketServer({ port });
+      this.server = new WebSocketServer({ host: '0.0.0.0', port });
 
       this.server.on('listening', () => {
-        console.log(`WebSocket server started on port ${port}`);
+        console.log(`WebSocket server started on 0.0.0.0:${port}`);
         this.startPingInterval();
         resolve();
       });

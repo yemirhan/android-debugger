@@ -74,6 +74,52 @@ const response = await fetch('https://api.example.com/users');
 const data = await response.json();
 ```
 
+### Axios Support
+
+For Axios users, you can intercept Axios instances for more reliable request tracking:
+
+```typescript
+import axios from 'axios';
+import { AndroidDebugger } from '@android-debugger/sdk';
+
+// Initialize the SDK first
+AndroidDebugger.init({
+  host: '192.168.1.100',
+});
+
+// Create your axios instance
+const api = axios.create({
+  baseURL: 'https://api.example.com',
+});
+
+// Intercept the axios instance
+AndroidDebugger.interceptAxios(api);
+
+// All requests through this instance are now tracked
+const response = await api.get('/users');
+```
+
+You can intercept multiple axios instances:
+
+```typescript
+const publicApi = axios.create({ baseURL: 'https://public-api.example.com' });
+const privateApi = axios.create({ baseURL: 'https://private-api.example.com' });
+
+AndroidDebugger.interceptAxios(publicApi);
+AndroidDebugger.interceptAxios(privateApi);
+
+// You can also intercept the global axios instance
+import axios from 'axios';
+AndroidDebugger.interceptAxios(axios);
+```
+
+The interceptor captures:
+- Request URL (with baseURL resolution)
+- Request method, headers, body
+- Response status, headers, body (including error responses)
+- Request duration
+- Network errors and timeouts
+
 ### Custom Events
 
 Track custom events with arbitrary data:
@@ -209,6 +255,23 @@ End a performance measurement and send the result.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | `string` | Measurement name (must match `markStart`) |
+
+### `AndroidDebugger.interceptAxios(axiosInstance)`
+
+Intercept an Axios instance for network request tracking.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `axiosInstance` | `AxiosInstance` | The axios instance to intercept |
+
+Returns a function to remove the interceptor:
+
+```typescript
+const removeInterceptor = AndroidDebugger.interceptAxios(api);
+
+// Later, to stop intercepting:
+removeInterceptor();
+```
 
 ### `AndroidDebugger.createReduxMiddleware()`
 

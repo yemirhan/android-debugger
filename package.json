@@ -5,6 +5,7 @@
   "description": "React Native Android debugging tool",
   "scripts": {
     "dev": "turbo run dev",
+    "dev:example": "pnpm --filter @android-debugger/example-expo dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules"
