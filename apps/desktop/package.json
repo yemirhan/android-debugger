@@ -10,14 +10,16 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-builder",
+    "package:signed": "dotenv -e .env -- electron-builder",
     "clean": "rm -rf dist out",
     "copy-adb": "mkdir -p resources/platform-tools && cp ~/Library/Android/sdk/platform-tools/adb resources/platform-tools/ && chmod +x resources/platform-tools/adb"
   },
   "dependencies": {
     "@android-debugger/shared": "workspace:*",
+    "dotenv": "^17.2.3",
     "recharts": "^2.15.0",
-    "ws": "^8.18.0",
-    "uuid": "^11.0.5"
+    "uuid": "^11.0.5",
+    "ws": "^8.18.0"
   },
   "build": {
     "appId": "com.android-debugger.desktop",
@@ -36,8 +38,19 @@
     ],
     "npmRebuild": false,
     "mac": {
-      "target": ["dmg"],
-      "category": "public.app-category.developer-tools"
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+"notarize": true
+    },
+    "dmg": {
+      "sign": false
     }
   },
   "devDependencies": {
@@ -49,6 +62,7 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "dotenv-cli": "^11.0.0",
     "electron": "34.0.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
