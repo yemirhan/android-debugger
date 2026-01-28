@@ -1,6 +1,6 @@
 {
   "name": "@yemirhan/android-debugger-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "React Native SDK for Android Debugger",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
