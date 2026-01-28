@@ -20,6 +20,10 @@ import type {
   UpdateProgress,
   UpdateCheckResult,
   UpdateSettings,
+  BatteryInfo,
+  CrashEntry,
+  ServiceInfo,
+  AppNetworkStats,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -111,6 +115,27 @@ export interface ElectronAPI {
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => UnsubscribeFn;
   onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => UnsubscribeFn;
   onUpdateError: (callback: (error: string) => void) => UnsubscribeFn;
+
+  // Battery
+  getBatteryInfo: (deviceId: string) => Promise<BatteryInfo | null>;
+  startBatteryMonitor: (deviceId: string, interval?: number) => void;
+  stopBatteryMonitor: () => void;
+  onBatteryUpdate: (callback: (info: BatteryInfo) => void) => UnsubscribeFn;
+
+  // Crash Logcat
+  startCrashLogcat: (deviceId: string) => void;
+  stopCrashLogcat: () => void;
+  clearCrashLogcat: (deviceId: string) => Promise<void>;
+  onCrashEntry: (callback: (entry: CrashEntry) => void) => UnsubscribeFn;
+
+  // Services
+  getRunningServices: (deviceId: string, packageName?: string) => Promise<ServiceInfo[]>;
+
+  // Network Stats
+  getNetworkStats: (deviceId: string, packageName?: string) => Promise<AppNetworkStats | null>;
+  startNetworkStatsMonitor: (deviceId: string, packageName: string, interval?: number) => void;
+  stopNetworkStatsMonitor: () => void;
+  onNetworkStatsUpdate: (callback: (stats: AppNetworkStats) => void) => UnsubscribeFn;
 }
 
 const electronAPI: ElectronAPI = {
@@ -264,6 +289,43 @@ const electronAPI: ElectronAPI = {
     const listener = (_: Electron.IpcRendererEvent, error: string) => callback(error);
     ipcRenderer.on('updater:error', listener);
     return () => ipcRenderer.removeListener('updater:error', listener);
+  },
+
+  // Battery
+  getBatteryInfo: (deviceId) => ipcRenderer.invoke('adb:get-battery', deviceId),
+  startBatteryMonitor: (deviceId, interval) =>
+    ipcRenderer.send('adb:start-battery-monitor', deviceId, interval),
+  stopBatteryMonitor: () => ipcRenderer.send('adb:stop-battery-monitor'),
+  onBatteryUpdate: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, info: BatteryInfo) => callback(info);
+    ipcRenderer.on('battery-update', listener);
+    return () => ipcRenderer.removeListener('battery-update', listener);
+  },
+
+  // Crash Logcat
+  startCrashLogcat: (deviceId) => ipcRenderer.send('adb:start-crash-logcat', deviceId),
+  stopCrashLogcat: () => ipcRenderer.send('adb:stop-crash-logcat'),
+  clearCrashLogcat: (deviceId) => ipcRenderer.invoke('adb:clear-crash-logcat', deviceId),
+  onCrashEntry: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, entry: CrashEntry) => callback(entry);
+    ipcRenderer.on('crash-entry', listener);
+    return () => ipcRenderer.removeListener('crash-entry', listener);
+  },
+
+  // Services
+  getRunningServices: (deviceId, packageName) =>
+    ipcRenderer.invoke('adb:get-services', deviceId, packageName),
+
+  // Network Stats
+  getNetworkStats: (deviceId, packageName) =>
+    ipcRenderer.invoke('adb:get-network-stats', deviceId, packageName),
+  startNetworkStatsMonitor: (deviceId, packageName, interval) =>
+    ipcRenderer.send('adb:start-network-stats-monitor', deviceId, packageName, interval),
+  stopNetworkStatsMonitor: () => ipcRenderer.send('adb:stop-network-stats-monitor'),
+  onNetworkStatsUpdate: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, stats: AppNetworkStats) => callback(stats);
+    ipcRenderer.on('network-stats-update', listener);
+    return () => ipcRenderer.removeListener('network-stats-update', listener);
   },
 };
 

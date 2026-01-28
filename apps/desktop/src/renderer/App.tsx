@@ -13,11 +13,15 @@ import { ScreenCapturePanel } from './components/ScreenCapturePanel';
 import { DevOptionsPanel } from './components/DevOptionsPanel';
 import { FileInspectorPanel } from './components/FileInspectorPanel';
 import { IntentTesterPanel } from './components/IntentTesterPanel';
+import { BatteryPanel } from './components/BatteryPanel';
+import { CrashPanel } from './components/CrashPanel';
+import { ServicesPanel } from './components/ServicesPanel';
+import { NetworkStatsPanel } from './components/NetworkStatsPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { SdkProvider, LogsProvider } from './contexts';
 
-export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester';
+export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('memory');
@@ -101,6 +105,14 @@ function App() {
         return <FileInspectorPanel device={selectedDevice} packageName={packageName} />;
       case 'intent-tester':
         return <IntentTesterPanel device={selectedDevice} />;
+      case 'battery':
+        return <BatteryPanel device={selectedDevice} />;
+      case 'crashes':
+        return <CrashPanel device={selectedDevice} />;
+      case 'services':
+        return <ServicesPanel device={selectedDevice} packageName={packageName} />;
+      case 'network-stats':
+        return <NetworkStatsPanel device={selectedDevice} packageName={packageName} />;
       default:
         return null;
     }

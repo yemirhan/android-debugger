@@ -3,3 +3,5 @@ export { useMemory } from './useMemory';
 export { useLogs } from './useLogs';
 export { useCpu } from './useCpu';
 export { useFps } from './useFps';
+export { useBattery } from './useBattery';
+export { useNetworkStats } from './useNetworkStats';

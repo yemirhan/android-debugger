@@ -279,6 +279,24 @@ export interface IpcChannels {
   'intent:delete-saved': (id: string) => Promise<void>;
   'intent:get-history': () => Promise<IntentHistoryEntry[]>;
   'intent:clear-history': () => Promise<void>;
+
+  // Battery
+  'adb:get-battery': (deviceId: string) => Promise<BatteryInfo | null>;
+  'adb:start-battery-monitor': (deviceId: string, interval: number) => void;
+  'adb:stop-battery-monitor': () => void;
+
+  // Crash Logcat
+  'adb:start-crash-logcat': (deviceId: string) => void;
+  'adb:stop-crash-logcat': () => void;
+  'adb:clear-crash-logcat': (deviceId: string) => Promise<void>;
+
+  // Services
+  'adb:get-services': (deviceId: string, packageName?: string) => Promise<ServiceInfo[]>;
+
+  // Network Stats
+  'adb:get-network-stats': (deviceId: string, packageName?: string) => Promise<AppNetworkStats | null>;
+  'adb:start-network-stats-monitor': (deviceId: string, packageName: string, interval: number) => void;
+  'adb:stop-network-stats-monitor': () => void;
 }
 
 // Event types from main to renderer
@@ -292,6 +310,9 @@ export interface IpcEvents {
   'sdk-message': SdkMessage;
   'error': { source: string; message: string };
   'recording-update': RecordingState;
+  'battery-update': BatteryInfo;
+  'crash-entry': CrashEntry;
+  'network-stats-update': AppNetworkStats;
 }
 
 // Auto-updater types
@@ -317,4 +338,52 @@ export interface UpdateCheckResult {
 export interface UpdateSettings {
   autoCheckOnStartup: boolean;
   autoDownload: boolean;
+}
+
+// Battery types
+export interface BatteryInfo {
+  timestamp: number;
+  level: number;           // 0-100
+  temperature: number;     // Celsius (raw / 10)
+  health: 'good' | 'overheat' | 'dead' | 'over_voltage' | 'cold' | 'unknown';
+  status: 'charging' | 'discharging' | 'not_charging' | 'full' | 'unknown';
+  plugged: 'ac' | 'usb' | 'wireless' | 'none';
+  voltage: number;         // mV
+}
+
+// Crash types
+export interface CrashEntry {
+  id: string;
+  timestamp: string;
+  processName: string;
+  pid: number;
+  signal?: string;        // SIGSEGV, SIGABRT, etc.
+  message: string;
+  stackTrace: string[];
+  raw: string;
+}
+
+// Service types
+export interface ServiceInfo {
+  name: string;            // Service class name
+  packageName: string;
+  pid: number;
+  state: 'started' | 'bound' | 'started+bound';
+  foreground: boolean;
+  clientCount: number;
+}
+
+// Network Stats types
+export interface NetworkStats {
+  timestamp: number;
+  rxBytes: number;         // Received
+  txBytes: number;         // Transmitted
+  rxPackets: number;
+  txPackets: number;
+}
+
+export interface AppNetworkStats {
+  packageName: string;
+  wifi: NetworkStats;
+  mobile: NetworkStats;
 }

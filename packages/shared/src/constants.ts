@@ -3,6 +3,8 @@ export const MEMORY_POLL_INTERVAL = 1000;
 export const CPU_POLL_INTERVAL = 1000;
 export const FPS_POLL_INTERVAL = 1000;
 export const DEVICE_POLL_INTERVAL = 3000;
+export const BATTERY_POLL_INTERVAL = 5000;
+export const NETWORK_STATS_POLL_INTERVAL = 5000;
 
 // Memory leak detection thresholds (MB)
 export const MEMORY_WARNING_THRESHOLD = 300;
@@ -35,6 +37,9 @@ export const MAX_MEMORY_DATA_POINTS = 300; // 5 minutes at 1s interval
 export const MAX_CPU_DATA_POINTS = 300;
 export const MAX_FPS_DATA_POINTS = 300;
 export const MAX_LOG_ENTRIES = 10000;
+export const MAX_BATTERY_DATA_POINTS = 60; // 5 minutes at 5s interval
+export const MAX_NETWORK_STATS_DATA_POINTS = 60;
+export const MAX_CRASH_ENTRIES = 100;
 
 // App info
 export const APP_NAME = 'Android Debugger';

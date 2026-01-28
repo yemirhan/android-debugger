@@ -101,8 +101,11 @@ import type {
   DeveloperOptions,
   IntentConfig,
   IntentHistoryEntry,
+  BatteryInfo,
+  CrashEntry,
+  AppNetworkStats,
 } from '@android-debugger/shared';
-import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL } from '@android-debugger/shared';
+import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
 // Storage for saved intents and history
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
@@ -491,6 +494,65 @@ function setupIpcHandlers(): void {
   // App info handlers
   ipcMain.handle('app:get-adb-info', async () => {
     return getAdbInfo();
+  });
+
+  // Battery handlers
+  ipcMain.handle('adb:get-battery', async (_, deviceId: string) => {
+    return adbService.getBatteryInfo(deviceId);
+  });
+
+  ipcMain.on('adb:start-battery-monitor', (_, deviceId: string, interval?: number) => {
+    adbService.startBatteryMonitor(
+      deviceId,
+      interval || BATTERY_POLL_INTERVAL,
+      (info: BatteryInfo) => {
+        mainWindow?.webContents.send('battery-update', info);
+      }
+    );
+  });
+
+  ipcMain.on('adb:stop-battery-monitor', () => {
+    adbService.stopBatteryMonitor();
+  });
+
+  // Crash logcat handlers
+  ipcMain.on('adb:start-crash-logcat', (_, deviceId: string) => {
+    adbService.startCrashLogcat(deviceId, (entry: CrashEntry) => {
+      mainWindow?.webContents.send('crash-entry', entry);
+    });
+  });
+
+  ipcMain.on('adb:stop-crash-logcat', () => {
+    adbService.stopCrashLogcat();
+  });
+
+  ipcMain.handle('adb:clear-crash-logcat', async (_, deviceId: string) => {
+    return adbService.clearCrashLogcat(deviceId);
+  });
+
+  // Services handlers
+  ipcMain.handle('adb:get-services', async (_, deviceId: string, packageName?: string) => {
+    return adbService.getRunningServices(deviceId, packageName);
+  });
+
+  // Network stats handlers
+  ipcMain.handle('adb:get-network-stats', async (_, deviceId: string, packageName?: string) => {
+    return adbService.getNetworkStats(deviceId, packageName);
+  });
+
+  ipcMain.on('adb:start-network-stats-monitor', (_, deviceId: string, packageName: string, interval?: number) => {
+    adbService.startNetworkStatsMonitor(
+      deviceId,
+      packageName,
+      interval || NETWORK_STATS_POLL_INTERVAL,
+      (stats: AppNetworkStats) => {
+        mainWindow?.webContents.send('network-stats-update', stats);
+      }
+    );
+  });
+
+  ipcMain.on('adb:stop-network-stats-monitor', () => {
+    adbService.stopNetworkStatsMonitor();
   });
 
   // Auto-updater handlers

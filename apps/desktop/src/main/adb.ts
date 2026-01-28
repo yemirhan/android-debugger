@@ -20,6 +20,11 @@ import type {
   IntentConfig,
   ScreenshotResult,
   SdkMessage,
+  BatteryInfo,
+  CrashEntry,
+  ServiceInfo,
+  AppNetworkStats,
+  NetworkStats,
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
@@ -28,12 +33,16 @@ const execAsync = promisify(exec);
 
 type LogCallback = (entry: LogEntry) => void;
 type SdkMessageCallback = (message: SdkMessage) => void;
+type CrashCallback = (entry: CrashEntry) => void;
 
 export class AdbService extends EventEmitter {
   private logcatProcess: ChildProcess | null = null;
+  private crashLogcatProcess: ChildProcess | null = null;
   private memoryInterval: NodeJS.Timeout | null = null;
   private cpuInterval: NodeJS.Timeout | null = null;
   private fpsInterval: NodeJS.Timeout | null = null;
+  private batteryInterval: NodeJS.Timeout | null = null;
+  private networkStatsInterval: NodeJS.Timeout | null = null;
   private logcatParser: LogcatMessageParser = new LogcatMessageParser();
   private sdkMessageCallback: SdkMessageCallback | null = null;
 
@@ -1137,11 +1146,462 @@ export class AdbService extends EventEmitter {
     }
   }
 
+  // ==================== Battery Monitor ====================
+
+  async getBatteryInfo(deviceId: string): Promise<BatteryInfo | null> {
+    try {
+      const { stdout } = await execAsync(`adb -s ${deviceId} shell dumpsys battery`);
+      return this.parseBatteryInfo(stdout);
+    } catch (error) {
+      console.error('Error getting battery info:', error);
+      return null;
+    }
+  }
+
+  private parseBatteryInfo(output: string): BatteryInfo | null {
+    try {
+      const info: Partial<BatteryInfo> = {
+        timestamp: Date.now(),
+      };
+
+      const lines = output.split('\n');
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Parse level
+        const levelMatch = trimmed.match(/level:\s*(\d+)/i);
+        if (levelMatch) {
+          info.level = parseInt(levelMatch[1], 10);
+        }
+
+        // Parse temperature (in tenths of a degree Celsius)
+        const tempMatch = trimmed.match(/temperature:\s*(\d+)/i);
+        if (tempMatch) {
+          info.temperature = parseInt(tempMatch[1], 10) / 10;
+        }
+
+        // Parse voltage (in millivolts)
+        const voltageMatch = trimmed.match(/voltage:\s*(\d+)/i);
+        if (voltageMatch) {
+          info.voltage = parseInt(voltageMatch[1], 10);
+        }
+
+        // Parse health
+        const healthMatch = trimmed.match(/health:\s*(\d+)/i);
+        if (healthMatch) {
+          const healthCode = parseInt(healthMatch[1], 10);
+          const healthMap: Record<number, BatteryInfo['health']> = {
+            1: 'unknown',
+            2: 'good',
+            3: 'overheat',
+            4: 'dead',
+            5: 'over_voltage',
+            6: 'unknown', // unspecified failure
+            7: 'cold',
+          };
+          info.health = healthMap[healthCode] || 'unknown';
+        }
+
+        // Parse status
+        const statusMatch = trimmed.match(/status:\s*(\d+)/i);
+        if (statusMatch) {
+          const statusCode = parseInt(statusMatch[1], 10);
+          const statusMap: Record<number, BatteryInfo['status']> = {
+            1: 'unknown',
+            2: 'charging',
+            3: 'discharging',
+            4: 'not_charging',
+            5: 'full',
+          };
+          info.status = statusMap[statusCode] || 'unknown';
+        }
+
+        // Parse plugged
+        const pluggedMatch = trimmed.match(/plugged:\s*(\d+)/i);
+        if (pluggedMatch) {
+          const pluggedCode = parseInt(pluggedMatch[1], 10);
+          const pluggedMap: Record<number, BatteryInfo['plugged']> = {
+            0: 'none',
+            1: 'ac',
+            2: 'usb',
+            4: 'wireless',
+          };
+          info.plugged = pluggedMap[pluggedCode] || 'none';
+        }
+      }
+
+      if (info.level === undefined) {
+        return null;
+      }
+
+      return {
+        timestamp: info.timestamp!,
+        level: info.level,
+        temperature: info.temperature || 0,
+        health: info.health || 'unknown',
+        status: info.status || 'unknown',
+        plugged: info.plugged || 'none',
+        voltage: info.voltage || 0,
+      };
+    } catch (error) {
+      console.error('Error parsing battery info:', error);
+      return null;
+    }
+  }
+
+  startBatteryMonitor(
+    deviceId: string,
+    interval: number,
+    callback: (info: BatteryInfo) => void
+  ): void {
+    this.stopBatteryMonitor();
+
+    this.batteryInterval = setInterval(async () => {
+      const info = await this.getBatteryInfo(deviceId);
+      if (info) {
+        callback(info);
+      }
+    }, interval);
+  }
+
+  stopBatteryMonitor(): void {
+    if (this.batteryInterval) {
+      clearInterval(this.batteryInterval);
+      this.batteryInterval = null;
+    }
+  }
+
+  // ==================== Crash Logcat ====================
+
+  startCrashLogcat(deviceId: string, callback: CrashCallback): void {
+    this.stopCrashLogcat();
+
+    const args = ['-s', deviceId, 'logcat', '-b', 'crash', '-v', 'time'];
+    this.crashLogcatProcess = spawn('adb', args);
+
+    let buffer = '';
+    let currentCrash: Partial<CrashEntry> | null = null;
+
+    this.crashLogcatProcess.stdout?.on('data', (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        // Detect start of a crash (FATAL EXCEPTION or native signal)
+        const fatalMatch = line.match(/FATAL EXCEPTION:\s*(.+)/);
+        const nativeSignalMatch = line.match(/signal\s+(\d+)\s+\(([^)]+)\)/i);
+        const timestampMatch = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})/);
+
+        if (fatalMatch || nativeSignalMatch) {
+          // Save previous crash if exists
+          if (currentCrash && currentCrash.message) {
+            callback(this.finalizeCrashEntry(currentCrash));
+          }
+
+          // Start new crash entry
+          currentCrash = {
+            id: uuidv4(),
+            timestamp: timestampMatch?.[1] || new Date().toISOString(),
+            processName: fatalMatch?.[1]?.trim() || 'Unknown',
+            pid: 0,
+            signal: nativeSignalMatch?.[2],
+            message: line,
+            stackTrace: [],
+            raw: line,
+          };
+
+          // Extract PID from log line if present
+          const pidMatch = line.match(/\(\s*(\d+)\)/);
+          if (pidMatch) {
+            currentCrash.pid = parseInt(pidMatch[1], 10);
+          }
+        } else if (currentCrash) {
+          // Add to current crash stack trace
+          currentCrash.raw += '\n' + line;
+
+          // Check if this looks like a stack trace line
+          if (line.includes('\tat ') || line.includes('    at ') || line.match(/^\s+#\d+/)) {
+            currentCrash.stackTrace?.push(line.trim());
+          }
+
+          // Check for process/thread info
+          const processMatch = line.match(/Process:\s*([^\s,]+)/);
+          if (processMatch) {
+            currentCrash.processName = processMatch[1];
+          }
+
+          const pidLineMatch = line.match(/PID:\s*(\d+)/);
+          if (pidLineMatch) {
+            currentCrash.pid = parseInt(pidLineMatch[1], 10);
+          }
+        }
+      }
+    });
+
+    this.crashLogcatProcess.on('close', () => {
+      // Emit any remaining crash
+      if (currentCrash && currentCrash.message) {
+        callback(this.finalizeCrashEntry(currentCrash));
+      }
+      this.crashLogcatProcess = null;
+    });
+
+    this.crashLogcatProcess.stderr?.on('data', (data: Buffer) => {
+      console.error('Crash logcat error:', data.toString());
+    });
+  }
+
+  private finalizeCrashEntry(partial: Partial<CrashEntry>): CrashEntry {
+    return {
+      id: partial.id || uuidv4(),
+      timestamp: partial.timestamp || new Date().toISOString(),
+      processName: partial.processName || 'Unknown',
+      pid: partial.pid || 0,
+      signal: partial.signal,
+      message: partial.message || '',
+      stackTrace: partial.stackTrace || [],
+      raw: partial.raw || '',
+    };
+  }
+
+  stopCrashLogcat(): void {
+    if (this.crashLogcatProcess) {
+      this.crashLogcatProcess.kill();
+      this.crashLogcatProcess = null;
+    }
+  }
+
+  async clearCrashLogcat(deviceId: string): Promise<void> {
+    try {
+      await execAsync(`adb -s ${deviceId} logcat -b crash -c`);
+    } catch (error) {
+      console.error('Error clearing crash logcat:', error);
+    }
+  }
+
+  // ==================== Running Services ====================
+
+  async getRunningServices(deviceId: string, packageName?: string): Promise<ServiceInfo[]> {
+    try {
+      const cmd = packageName
+        ? `adb -s ${deviceId} shell dumpsys activity services ${packageName}`
+        : `adb -s ${deviceId} shell dumpsys activity services`;
+
+      const { stdout } = await execAsync(cmd);
+      return this.parseServicesInfo(stdout, packageName);
+    } catch (error) {
+      console.error('Error getting running services:', error);
+      return [];
+    }
+  }
+
+  private parseServicesInfo(output: string, filterPackage?: string): ServiceInfo[] {
+    const services: ServiceInfo[] = [];
+    const lines = output.split('\n');
+
+    let currentService: Partial<ServiceInfo> | null = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Match service record start: * ServiceRecord{...} or ServiceRecord{...}
+      const serviceMatch = trimmed.match(/\*?\s*ServiceRecord\{[^}]+\s+([^/]+)\/([^\s}]+)/);
+      if (serviceMatch) {
+        // Save previous service
+        if (currentService && currentService.name) {
+          services.push(this.finalizeServiceEntry(currentService));
+        }
+
+        currentService = {
+          packageName: serviceMatch[1],
+          name: serviceMatch[2],
+          pid: 0,
+          state: 'started',
+          foreground: false,
+          clientCount: 0,
+        };
+        continue;
+      }
+
+      if (currentService) {
+        // Parse app info with PID
+        const appMatch = trimmed.match(/app=ProcessRecord\{[^}]+\s+(\d+):/);
+        if (appMatch) {
+          currentService.pid = parseInt(appMatch[1], 10);
+        }
+
+        // Check for foreground
+        if (trimmed.includes('isForeground=true')) {
+          currentService.foreground = true;
+        }
+
+        // Check for connections/bindings count
+        const bindingsMatch = trimmed.match(/bindings=.*size=(\d+)/);
+        if (bindingsMatch) {
+          currentService.clientCount = parseInt(bindingsMatch[1], 10);
+          if (currentService.clientCount > 0) {
+            currentService.state = currentService.state === 'started' ? 'started+bound' : 'bound';
+          }
+        }
+      }
+    }
+
+    // Add final service
+    if (currentService && currentService.name) {
+      services.push(this.finalizeServiceEntry(currentService));
+    }
+
+    // Filter by package if specified
+    if (filterPackage) {
+      return services.filter(s => s.packageName === filterPackage);
+    }
+
+    return services;
+  }
+
+  private finalizeServiceEntry(partial: Partial<ServiceInfo>): ServiceInfo {
+    return {
+      name: partial.name || 'Unknown',
+      packageName: partial.packageName || 'Unknown',
+      pid: partial.pid || 0,
+      state: partial.state || 'started',
+      foreground: partial.foreground || false,
+      clientCount: partial.clientCount || 0,
+    };
+  }
+
+  // ==================== Network Stats ====================
+
+  async getNetworkStats(deviceId: string, packageName?: string): Promise<AppNetworkStats | null> {
+    try {
+      // First get the UID for the package
+      let uid: number | null = null;
+      if (packageName) {
+        const { stdout: uidOutput } = await execAsync(
+          `adb -s ${deviceId} shell dumpsys package ${packageName} | grep userId=`
+        );
+        const uidMatch = uidOutput.match(/userId=(\d+)/);
+        if (uidMatch) {
+          uid = parseInt(uidMatch[1], 10);
+        }
+      }
+
+      const { stdout } = await execAsync(`adb -s ${deviceId} shell dumpsys netstats detail`);
+      return this.parseNetworkStats(stdout, packageName, uid);
+    } catch (error) {
+      console.error('Error getting network stats:', error);
+      return null;
+    }
+  }
+
+  private parseNetworkStats(output: string, packageName?: string, uid?: number | null): AppNetworkStats | null {
+    try {
+      const timestamp = Date.now();
+      const stats: AppNetworkStats = {
+        packageName: packageName || 'all',
+        wifi: {
+          timestamp,
+          rxBytes: 0,
+          txBytes: 0,
+          rxPackets: 0,
+          txPackets: 0,
+        },
+        mobile: {
+          timestamp,
+          rxBytes: 0,
+          txBytes: 0,
+          rxPackets: 0,
+          txPackets: 0,
+        },
+      };
+
+      const lines = output.split('\n');
+      let currentSection = '';
+      let inUidSection = false;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Detect section
+        if (trimmed.includes('iface=wlan') || trimmed.includes('type=WIFI')) {
+          currentSection = 'wifi';
+        } else if (trimmed.includes('iface=rmnet') || trimmed.includes('type=MOBILE')) {
+          currentSection = 'mobile';
+        }
+
+        // Check for UID section
+        if (uid !== null) {
+          if (trimmed.includes(`uid=${uid}`)) {
+            inUidSection = true;
+          } else if (trimmed.startsWith('uid=') && !trimmed.includes(`uid=${uid}`)) {
+            inUidSection = false;
+          }
+        } else {
+          // If no UID filter, count all traffic
+          inUidSection = true;
+        }
+
+        if (inUidSection && currentSection) {
+          // Parse byte counts: rxBytes=xxx txBytes=xxx
+          const rxBytesMatch = trimmed.match(/rxBytes=(\d+)/);
+          const txBytesMatch = trimmed.match(/txBytes=(\d+)/);
+          const rxPacketsMatch = trimmed.match(/rxPackets=(\d+)/);
+          const txPacketsMatch = trimmed.match(/txPackets=(\d+)/);
+
+          if (currentSection === 'wifi') {
+            if (rxBytesMatch) stats.wifi.rxBytes += parseInt(rxBytesMatch[1], 10);
+            if (txBytesMatch) stats.wifi.txBytes += parseInt(txBytesMatch[1], 10);
+            if (rxPacketsMatch) stats.wifi.rxPackets += parseInt(rxPacketsMatch[1], 10);
+            if (txPacketsMatch) stats.wifi.txPackets += parseInt(txPacketsMatch[1], 10);
+          } else if (currentSection === 'mobile') {
+            if (rxBytesMatch) stats.mobile.rxBytes += parseInt(rxBytesMatch[1], 10);
+            if (txBytesMatch) stats.mobile.txBytes += parseInt(txBytesMatch[1], 10);
+            if (rxPacketsMatch) stats.mobile.rxPackets += parseInt(rxPacketsMatch[1], 10);
+            if (txPacketsMatch) stats.mobile.txPackets += parseInt(txPacketsMatch[1], 10);
+          }
+        }
+      }
+
+      return stats;
+    } catch (error) {
+      console.error('Error parsing network stats:', error);
+      return null;
+    }
+  }
+
+  startNetworkStatsMonitor(
+    deviceId: string,
+    packageName: string,
+    interval: number,
+    callback: (stats: AppNetworkStats) => void
+  ): void {
+    this.stopNetworkStatsMonitor();
+
+    this.networkStatsInterval = setInterval(async () => {
+      const stats = await this.getNetworkStats(deviceId, packageName);
+      if (stats) {
+        callback(stats);
+      }
+    }, interval);
+  }
+
+  stopNetworkStatsMonitor(): void {
+    if (this.networkStatsInterval) {
+      clearInterval(this.networkStatsInterval);
+      this.networkStatsInterval = null;
+    }
+  }
+
   stopAll(): void {
     this.stopMemoryMonitor();
     this.stopCpuMonitor();
     this.stopFpsMonitor();
     this.stopLogcat();
+    this.stopBatteryMonitor();
+    this.stopCrashLogcat();
+    this.stopNetworkStatsMonitor();
     if (this.recordingProcess) {
       this.recordingProcess.kill('SIGINT');
       this.recordingProcess = null;

@@ -7,3 +7,7 @@ export { NetworkPanel } from './NetworkPanel';
 export { SdkPanel } from './SdkPanel';
 export { SettingsPanel } from './SettingsPanel';
 export { PackageSelector } from './PackageSelector';
+export { BatteryPanel } from './BatteryPanel';
+export { CrashPanel } from './CrashPanel';
+export { ServicesPanel } from './ServicesPanel';
+export { NetworkStatsPanel } from './NetworkStatsPanel';
