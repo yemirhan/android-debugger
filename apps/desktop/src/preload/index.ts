@@ -16,6 +16,10 @@ import type {
   IntentHistoryEntry,
   ScreenshotResult,
   RecordingState,
+  UpdateInfo,
+  UpdateProgress,
+  UpdateCheckResult,
+  UpdateSettings,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -93,6 +97,20 @@ export interface ElectronAPI {
 
   // App Info
   getAdbInfo: () => Promise<{ path: string; version: string; source: 'bundled' | 'system' | 'android-sdk' } | null>;
+
+  // Auto-updater
+  checkForUpdates: () => Promise<UpdateCheckResult>;
+  downloadUpdate: () => Promise<{ success: boolean; error?: string }>;
+  installUpdate: () => Promise<void>;
+  getAppVersion: () => Promise<string>;
+  getUpdateSettings: () => Promise<UpdateSettings>;
+  setUpdateSettings: (settings: UpdateSettings) => Promise<void>;
+  onUpdateChecking: (callback: () => void) => UnsubscribeFn;
+  onUpdateAvailable: (callback: (info: UpdateInfo) => void) => UnsubscribeFn;
+  onUpdateNotAvailable: (callback: () => void) => UnsubscribeFn;
+  onUpdateProgress: (callback: (progress: UpdateProgress) => void) => UnsubscribeFn;
+  onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => UnsubscribeFn;
+  onUpdateError: (callback: (error: string) => void) => UnsubscribeFn;
 }
 
 const electronAPI: ElectronAPI = {
@@ -209,6 +227,44 @@ const electronAPI: ElectronAPI = {
 
   // App Info
   getAdbInfo: () => ipcRenderer.invoke('app:get-adb-info'),
+
+  // Auto-updater
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updater:download'),
+  installUpdate: () => ipcRenderer.invoke('updater:install'),
+  getAppVersion: () => ipcRenderer.invoke('updater:get-version'),
+  getUpdateSettings: () => ipcRenderer.invoke('updater:get-settings'),
+  setUpdateSettings: (settings) => ipcRenderer.invoke('updater:set-settings', settings),
+  onUpdateChecking: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('updater:checking', listener);
+    return () => ipcRenderer.removeListener('updater:checking', listener);
+  },
+  onUpdateAvailable: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, info: UpdateInfo) => callback(info);
+    ipcRenderer.on('updater:available', listener);
+    return () => ipcRenderer.removeListener('updater:available', listener);
+  },
+  onUpdateNotAvailable: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('updater:not-available', listener);
+    return () => ipcRenderer.removeListener('updater:not-available', listener);
+  },
+  onUpdateProgress: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, progress: UpdateProgress) => callback(progress);
+    ipcRenderer.on('updater:progress', listener);
+    return () => ipcRenderer.removeListener('updater:progress', listener);
+  },
+  onUpdateDownloaded: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, info: UpdateInfo) => callback(info);
+    ipcRenderer.on('updater:downloaded', listener);
+    return () => ipcRenderer.removeListener('updater:downloaded', listener);
+  },
+  onUpdateError: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, error: string) => callback(error);
+    ipcRenderer.on('updater:error', listener);
+    return () => ipcRenderer.removeListener('updater:error', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

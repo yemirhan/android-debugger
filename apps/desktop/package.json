@@ -1,6 +1,6 @@
 {
   "name": "@android-debugger/desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Android Debugger Desktop Application",
   "author": "Android Debugger Team",
   "private": true,
@@ -11,12 +11,15 @@
     "preview": "electron-vite preview",
     "package": "electron-builder",
     "package:signed": "dotenv -e .env -- electron-builder",
+    "publish": "electron-builder --publish always",
+    "publish:signed": "dotenv -e .env -- electron-builder --publish always",
     "clean": "rm -rf dist out",
     "copy-adb": "mkdir -p resources/platform-tools && cp ~/Library/Android/sdk/platform-tools/adb resources/platform-tools/ && chmod +x resources/platform-tools/adb"
   },
   "dependencies": {
     "@android-debugger/shared": "workspace:*",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.1.7",
     "recharts": "^2.15.0",
     "uuid": "^11.0.5",
     "ws": "^8.18.0"
@@ -51,6 +54,11 @@
     },
     "dmg": {
       "sign": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "yemirhan",
+      "repo": "android-debugger"
     }
   },
   "devDependencies": {

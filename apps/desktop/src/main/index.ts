@@ -1,8 +1,10 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { join } from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { execSync } from 'child_process';
+import type { UpdateSettings, UpdateInfo, UpdateProgress } from '@android-debugger/shared';
 
 interface AdbInfo {
   path: string;
@@ -105,6 +107,31 @@ import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL } from '@and
 // Storage for saved intents and history
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
 const intentHistoryPath = join(app.getPath('userData'), 'intent-history.json');
+const updateSettingsPath = join(app.getPath('userData'), 'update-settings.json');
+
+// Update settings management
+function loadUpdateSettings(): UpdateSettings {
+  try {
+    if (fs.existsSync(updateSettingsPath)) {
+      return JSON.parse(fs.readFileSync(updateSettingsPath, 'utf-8'));
+    }
+  } catch (error) {
+    console.error('Error loading update settings:', error);
+  }
+  return { autoCheckOnStartup: true, autoDownload: false };
+}
+
+function saveUpdateSettings(settings: UpdateSettings): void {
+  try {
+    fs.writeFileSync(updateSettingsPath, JSON.stringify(settings, null, 2));
+  } catch (error) {
+    console.error('Error saving update settings:', error);
+  }
+}
+
+// Configure auto-updater
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
 
 function loadSavedIntents(): IntentConfig[] {
   try {
@@ -465,11 +492,118 @@ function setupIpcHandlers(): void {
   ipcMain.handle('app:get-adb-info', async () => {
     return getAdbInfo();
   });
+
+  // Auto-updater handlers
+  ipcMain.handle('updater:check', async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      if (result?.updateInfo) {
+        return {
+          updateAvailable: true,
+          version: result.updateInfo.version,
+        };
+      }
+      return { updateAvailable: false };
+    } catch (error) {
+      console.error('Error checking for updates:', error);
+      return {
+        updateAvailable: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  ipcMain.handle('updater:download', async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return { success: true };
+    } catch (error) {
+      console.error('Error downloading update:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  ipcMain.handle('updater:install', async () => {
+    autoUpdater.quitAndInstall();
+  });
+
+  ipcMain.handle('updater:get-version', async () => {
+    return app.getVersion();
+  });
+
+  ipcMain.handle('updater:get-settings', async () => {
+    return loadUpdateSettings();
+  });
+
+  ipcMain.handle('updater:set-settings', async (_, settings: UpdateSettings) => {
+    saveUpdateSettings(settings);
+    autoUpdater.autoDownload = settings.autoDownload;
+  });
+}
+
+function setupAutoUpdaterEvents(): void {
+  autoUpdater.on('checking-for-update', () => {
+    mainWindow?.webContents.send('updater:checking');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    const updateInfo: UpdateInfo = {
+      version: info.version,
+      releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,
+      releaseDate: info.releaseDate,
+    };
+    mainWindow?.webContents.send('updater:available', updateInfo);
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    mainWindow?.webContents.send('updater:not-available');
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    const updateProgress: UpdateProgress = {
+      percent: progress.percent,
+      bytesPerSecond: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total,
+    };
+    mainWindow?.webContents.send('updater:progress', updateProgress);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    const updateInfo: UpdateInfo = {
+      version: info.version,
+      releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,
+      releaseDate: info.releaseDate,
+    };
+    mainWindow?.webContents.send('updater:downloaded', updateInfo);
+  });
+
+  autoUpdater.on('error', (error) => {
+    mainWindow?.webContents.send('updater:error', error.message);
+  });
 }
 
 app.whenReady().then(() => {
   setupIpcHandlers();
+  setupAutoUpdaterEvents();
   createWindow();
+
+  // Auto-check for updates on startup (only in packaged app)
+  if (app.isPackaged) {
+    const updateSettings = loadUpdateSettings();
+    autoUpdater.autoDownload = updateSettings.autoDownload;
+    if (updateSettings.autoCheckOnStartup) {
+      // Delay check slightly to allow window to load
+      setTimeout(() => {
+        autoUpdater.checkForUpdates().catch((error) => {
+          console.error('Auto-update check failed:', error);
+        });
+      }, 3000);
+    }
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

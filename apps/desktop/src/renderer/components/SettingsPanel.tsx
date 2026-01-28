@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL } from '@android-debugger/shared';
+import type { UpdateInfo, UpdateProgress, UpdateSettings } from '@android-debugger/shared';
 
 interface AdbInfo {
   path: string;
@@ -7,8 +8,19 @@ interface AdbInfo {
   source: 'bundled' | 'system' | 'android-sdk';
 }
 
+type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+
 export function SettingsPanel() {
   const [adbInfo, setAdbInfo] = useState<AdbInfo | null>(null);
+  const [appVersion, setAppVersion] = useState<string>('');
+  const [updateSettings, setUpdateSettings] = useState<UpdateSettings>({
+    autoCheckOnStartup: true,
+    autoDownload: false,
+  });
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [settings, setSettings] = useState({
     memoryInterval: MEMORY_POLL_INTERVAL,
     cpuInterval: CPU_POLL_INTERVAL,
@@ -26,7 +38,72 @@ export function SettingsPanel() {
 
   useEffect(() => {
     window.electronAPI.getAdbInfo().then(setAdbInfo);
+    window.electronAPI.getAppVersion().then(setAppVersion);
+    window.electronAPI.getUpdateSettings().then(setUpdateSettings);
   }, []);
+
+  // Set up update event listeners
+  useEffect(() => {
+    const unsubChecking = window.electronAPI.onUpdateChecking(() => {
+      setUpdateStatus('checking');
+      setUpdateError(null);
+    });
+
+    const unsubAvailable = window.electronAPI.onUpdateAvailable((info) => {
+      setUpdateStatus('available');
+      setUpdateInfo(info);
+    });
+
+    const unsubNotAvailable = window.electronAPI.onUpdateNotAvailable(() => {
+      setUpdateStatus('idle');
+      setUpdateInfo(null);
+    });
+
+    const unsubProgress = window.electronAPI.onUpdateProgress((progress) => {
+      setUpdateStatus('downloading');
+      setUpdateProgress(progress);
+    });
+
+    const unsubDownloaded = window.electronAPI.onUpdateDownloaded((info) => {
+      setUpdateStatus('downloaded');
+      setUpdateInfo(info);
+      setUpdateProgress(null);
+    });
+
+    const unsubError = window.electronAPI.onUpdateError((error) => {
+      setUpdateStatus('error');
+      setUpdateError(error);
+    });
+
+    return () => {
+      unsubChecking();
+      unsubAvailable();
+      unsubNotAvailable();
+      unsubProgress();
+      unsubDownloaded();
+      unsubError();
+    };
+  }, []);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    setUpdateStatus('checking');
+    setUpdateError(null);
+    await window.electronAPI.checkForUpdates();
+  }, []);
+
+  const handleDownloadUpdate = useCallback(async () => {
+    await window.electronAPI.downloadUpdate();
+  }, []);
+
+  const handleInstallUpdate = useCallback(async () => {
+    await window.electronAPI.installUpdate();
+  }, []);
+
+  const handleUpdateSettingsChange = useCallback(async (key: keyof UpdateSettings, value: boolean) => {
+    const newSettings = { ...updateSettings, [key]: value };
+    setUpdateSettings(newSettings);
+    await window.electronAPI.setUpdateSettings(newSettings);
+  }, [updateSettings]);
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-5">
@@ -157,13 +234,108 @@ export function SettingsPanel() {
         </div>
       </section>
 
+      {/* Updates */}
+      <section className="bg-surface rounded-lg p-4 border border-border-muted">
+        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Updates</h3>
+        <div className="space-y-4">
+          <SettingRow
+            label="Check for updates on startup"
+            description="Automatically check when the app launches"
+          >
+            <Toggle
+              value={updateSettings.autoCheckOnStartup}
+              onChange={(v) => handleUpdateSettingsChange('autoCheckOnStartup', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="Download updates automatically"
+            description="Download updates in the background when available"
+          >
+            <Toggle
+              value={updateSettings.autoDownload}
+              onChange={(v) => handleUpdateSettingsChange('autoDownload', v)}
+            />
+          </SettingRow>
+
+          {/* Update Status */}
+          <div className="pt-2 border-t border-border-muted">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-text-primary">
+                  {updateStatus === 'idle' && 'No updates available'}
+                  {updateStatus === 'checking' && 'Checking for updates...'}
+                  {updateStatus === 'available' && `Update available: v${updateInfo?.version}`}
+                  {updateStatus === 'downloading' && `Downloading: ${updateProgress?.percent.toFixed(0)}%`}
+                  {updateStatus === 'downloaded' && `Ready to install: v${updateInfo?.version}`}
+                  {updateStatus === 'error' && 'Update check failed'}
+                </p>
+                {updateStatus === 'error' && updateError && (
+                  <p className="text-xs text-red-400 mt-1">{updateError}</p>
+                )}
+                {updateStatus === 'downloading' && updateProgress && (
+                  <div className="mt-2 w-full bg-surface-hover rounded-full h-1.5">
+                    <div
+                      className="bg-accent h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${updateProgress.percent}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {(updateStatus === 'idle' || updateStatus === 'error') && (
+                  <button
+                    onClick={handleCheckForUpdates}
+                    className="px-3 py-1.5 text-xs bg-surface-hover hover:bg-border-muted rounded-md transition-colors"
+                  >
+                    Check for Updates
+                  </button>
+                )}
+                {updateStatus === 'checking' && (
+                  <button
+                    disabled
+                    className="px-3 py-1.5 text-xs bg-surface-hover rounded-md opacity-50 cursor-not-allowed"
+                  >
+                    Checking...
+                  </button>
+                )}
+                {updateStatus === 'available' && (
+                  <button
+                    onClick={handleDownloadUpdate}
+                    className="px-3 py-1.5 text-xs bg-accent hover:bg-accent/80 text-white rounded-md transition-colors"
+                  >
+                    Download
+                  </button>
+                )}
+                {updateStatus === 'downloading' && (
+                  <button
+                    disabled
+                    className="px-3 py-1.5 text-xs bg-surface-hover rounded-md opacity-50 cursor-not-allowed"
+                  >
+                    Downloading...
+                  </button>
+                )}
+                {updateStatus === 'downloaded' && (
+                  <button
+                    onClick={handleInstallUpdate}
+                    className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors"
+                  >
+                    Restart & Update
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* About */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
         <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">About</h3>
         <div className="space-y-2">
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">Version</span>
-            <span className="text-sm font-mono text-text-primary">1.0.0</span>
+            <span className="text-sm font-mono text-text-primary">{appVersion || '1.0.0'}</span>
           </div>
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">Electron</span>

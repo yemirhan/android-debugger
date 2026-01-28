@@ -293,3 +293,28 @@ export interface IpcEvents {
   'error': { source: string; message: string };
   'recording-update': RecordingState;
 }
+
+// Auto-updater types
+export interface UpdateInfo {
+  version: string;
+  releaseNotes?: string;
+  releaseDate?: string;
+}
+
+export interface UpdateProgress {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+}
+
+export interface UpdateCheckResult {
+  updateAvailable: boolean;
+  version?: string;
+  error?: string;
+}
+
+export interface UpdateSettings {
+  autoCheckOnStartup: boolean;
+  autoDownload: boolean;
+}
