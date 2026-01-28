@@ -1,6 +1,8 @@
 {
   "name": "@android-debugger/desktop",
   "version": "1.0.0",
+  "description": "Android Debugger Desktop Application",
+  "author": "Android Debugger Team",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -16,6 +18,21 @@
     "ws": "^8.18.0",
     "uuid": "^11.0.5"
   },
+  "build": {
+    "appId": "com.android-debugger.desktop",
+    "productName": "Android Debugger",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.developer-tools"
+    }
+  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.10.5",
@@ -25,7 +42,7 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "electron": "^34.0.1",
+    "electron": "34.0.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
     "postcss": "^8.5.1",

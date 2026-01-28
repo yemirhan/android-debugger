@@ -1,6 +1,41 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join } from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+
+// Fix PATH for packaged app - add common ADB locations
+function fixPath(): void {
+  const homeDir = os.homedir();
+  const adbPaths = [
+    join(homeDir, 'Library/Android/sdk/platform-tools'), // macOS Android Studio default
+    join(homeDir, 'Android/Sdk/platform-tools'), // Linux default
+    '/usr/local/bin', // Homebrew
+    '/opt/homebrew/bin', // Homebrew on Apple Silicon
+  ];
+
+  // Check ANDROID_HOME and ANDROID_SDK_ROOT
+  const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  if (androidHome) {
+    adbPaths.unshift(join(androidHome, 'platform-tools'));
+  }
+
+  const existingPath = process.env.PATH || '';
+  const pathsToAdd = adbPaths.filter(p => {
+    try {
+      return fs.existsSync(p) && !existingPath.includes(p);
+    } catch {
+      return false;
+    }
+  });
+
+  if (pathsToAdd.length > 0) {
+    process.env.PATH = [...pathsToAdd, existingPath].join(':');
+  }
+}
+
+// Fix PATH before importing adb service
+fixPath();
+
 import { adbService } from './adb';
 import type {
   LogEntry,
