@@ -1,5 +1,5 @@
 {
-  "name": "@android-debugger/sdk",
+  "name": "@yemirhan/android-debugger-sdk",
   "version": "1.0.0",
   "description": "React Native SDK for Android Debugger",
   "main": "./dist/index.js",
@@ -12,17 +12,24 @@
       "require": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@android-debugger/shared": "workspace:*"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
+    "@android-debugger/shared": "workspace:*",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "peerDependencies": {
     "react": ">=18.0.0",

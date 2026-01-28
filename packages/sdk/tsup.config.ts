@@ -7,4 +7,5 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   external: ['react', 'react-native'],
+  noExternal: ['@android-debugger/shared'],
 });
