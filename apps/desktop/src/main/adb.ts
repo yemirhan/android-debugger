@@ -1,6 +1,24 @@
 import { spawn, exec, ChildProcess } from 'child_process';
 import { promisify } from 'util';
-import type { Device, MemoryInfo, CpuInfo, FpsInfo, LogEntry, LogLevel } from '@android-debugger/shared';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import type {
+  Device,
+  MemoryInfo,
+  CpuInfo,
+  FpsInfo,
+  LogEntry,
+  LogLevel,
+  AppMetadata,
+  DeveloperOptions,
+  FileEntry,
+  SharedPreference,
+  DatabaseInfo,
+  DatabaseQueryResult,
+  IntentConfig,
+  ScreenshotResult,
+} from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 
 const execAsync = promisify(exec);
@@ -497,11 +515,602 @@ export class AdbService {
     }
   }
 
+  // ==================== App Metadata ====================
+
+  async getAppMetadata(deviceId: string, packageName: string): Promise<AppMetadata | null> {
+    try {
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell dumpsys package ${packageName}`
+      );
+
+      return this.parseAppMetadata(packageName, stdout);
+    } catch (error) {
+      console.error('Error getting app metadata:', error);
+      return null;
+    }
+  }
+
+  private parseAppMetadata(packageName: string, output: string): AppMetadata | null {
+    try {
+      const metadata: Partial<AppMetadata> = {
+        packageName,
+        permissions: [],
+        isDebuggable: false,
+        isSystem: false,
+      };
+
+      const lines = output.split('\n');
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Version info
+        const versionNameMatch = trimmed.match(/versionName=([^\s]+)/);
+        if (versionNameMatch) {
+          metadata.versionName = versionNameMatch[1];
+        }
+
+        const versionCodeMatch = trimmed.match(/versionCode=(\d+)/);
+        if (versionCodeMatch) {
+          metadata.versionCode = parseInt(versionCodeMatch[1], 10);
+        }
+
+        // SDK versions
+        const targetSdkMatch = trimmed.match(/targetSdk=(\d+)/);
+        if (targetSdkMatch) {
+          metadata.targetSdk = parseInt(targetSdkMatch[1], 10);
+        }
+
+        const minSdkMatch = trimmed.match(/minSdk=(\d+)/);
+        if (minSdkMatch) {
+          metadata.minSdk = parseInt(minSdkMatch[1], 10);
+        }
+
+        // Install times
+        const firstInstallMatch = trimmed.match(/firstInstallTime=([^\s]+)/);
+        if (firstInstallMatch) {
+          metadata.firstInstallTime = firstInstallMatch[1];
+        }
+
+        const lastUpdateMatch = trimmed.match(/lastUpdateTime=([^\s]+)/);
+        if (lastUpdateMatch) {
+          metadata.lastUpdateTime = lastUpdateMatch[1];
+        }
+
+        // Flags
+        if (trimmed.includes('DEBUGGABLE')) {
+          metadata.isDebuggable = true;
+        }
+        if (trimmed.includes('SYSTEM')) {
+          metadata.isSystem = true;
+        }
+
+        // Permissions
+        const permMatch = trimmed.match(/android\.permission\.([A-Z_]+)/);
+        if (permMatch && metadata.permissions) {
+          const perm = `android.permission.${permMatch[1]}`;
+          if (!metadata.permissions.includes(perm)) {
+            metadata.permissions.push(perm);
+          }
+        }
+      }
+
+      // Get app sizes from stat command
+      try {
+        // This is a simplified version - actual implementation would need to sum directory sizes
+        metadata.apkSize = 0;
+        metadata.dataSize = 0;
+        metadata.cacheSize = 0;
+      } catch {
+        // Ignore size errors
+      }
+
+      return {
+        packageName: metadata.packageName!,
+        versionName: metadata.versionName || 'Unknown',
+        versionCode: metadata.versionCode || 0,
+        targetSdk: metadata.targetSdk || 0,
+        minSdk: metadata.minSdk || 0,
+        firstInstallTime: metadata.firstInstallTime || 'Unknown',
+        lastUpdateTime: metadata.lastUpdateTime || 'Unknown',
+        apkSize: metadata.apkSize || 0,
+        dataSize: metadata.dataSize || 0,
+        cacheSize: metadata.cacheSize || 0,
+        permissions: metadata.permissions || [],
+        isDebuggable: metadata.isDebuggable || false,
+        isSystem: metadata.isSystem || false,
+      };
+    } catch (error) {
+      console.error('Error parsing app metadata:', error);
+      return null;
+    }
+  }
+
+  // ==================== Screenshot & Screen Recording ====================
+
+  private recordingProcess: ChildProcess | null = null;
+  private recordingPath: string | null = null;
+
+  async takeScreenshot(deviceId: string, outputPath?: string): Promise<ScreenshotResult | null> {
+    try {
+      const timestamp = Date.now();
+      const remotePath = '/sdcard/screenshot.png';
+      const localPath = outputPath || path.join(os.tmpdir(), `screenshot_${timestamp}.png`);
+
+      // Take screenshot on device
+      await execAsync(`adb -s ${deviceId} shell screencap -p ${remotePath}`);
+
+      // Pull to local machine
+      await execAsync(`adb -s ${deviceId} pull ${remotePath} "${localPath}"`);
+
+      // Clean up remote file
+      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`);
+
+      return {
+        path: localPath,
+        width: 0, // Would need to parse image to get dimensions
+        height: 0,
+        timestamp,
+      };
+    } catch (error) {
+      console.error('Error taking screenshot:', error);
+      return null;
+    }
+  }
+
+  async startScreenRecording(
+    deviceId: string,
+    outputPath?: string,
+    onStateChange?: (isRecording: boolean) => void
+  ): Promise<{ success: boolean; path?: string }> {
+    try {
+      if (this.recordingProcess) {
+        return { success: false };
+      }
+
+      const timestamp = Date.now();
+      const remotePath = '/sdcard/screenrecord.mp4';
+      this.recordingPath = outputPath || path.join(os.tmpdir(), `recording_${timestamp}.mp4`);
+
+      // Start recording (max 3 minutes by default)
+      this.recordingProcess = spawn('adb', [
+        '-s', deviceId,
+        'shell', 'screenrecord',
+        '--time-limit', '180',
+        remotePath,
+      ]);
+
+      this.recordingProcess.on('close', () => {
+        this.recordingProcess = null;
+        onStateChange?.(false);
+      });
+
+      onStateChange?.(true);
+      return { success: true, path: this.recordingPath };
+    } catch (error) {
+      console.error('Error starting screen recording:', error);
+      return { success: false };
+    }
+  }
+
+  async stopScreenRecording(deviceId: string): Promise<{ success: boolean; path?: string }> {
+    try {
+      if (!this.recordingProcess) {
+        return { success: false };
+      }
+
+      // Send interrupt to stop recording
+      this.recordingProcess.kill('SIGINT');
+
+      // Wait a moment for the file to be finalized
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const remotePath = '/sdcard/screenrecord.mp4';
+      const localPath = this.recordingPath || path.join(os.tmpdir(), 'recording.mp4');
+
+      // Pull to local machine
+      await execAsync(`adb -s ${deviceId} pull ${remotePath} "${localPath}"`);
+
+      // Clean up remote file
+      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`);
+
+      this.recordingProcess = null;
+      this.recordingPath = null;
+
+      return { success: true, path: localPath };
+    } catch (error) {
+      console.error('Error stopping screen recording:', error);
+      this.recordingProcess = null;
+      this.recordingPath = null;
+      return { success: false };
+    }
+  }
+
+  // ==================== Developer Options ====================
+
+  async getDeveloperOptions(deviceId: string): Promise<DeveloperOptions | null> {
+    try {
+      const [layoutBounds, gpuOverdraw, windowAnim, transitionAnim, animatorAnim, showTouches, pointerLocation] =
+        await Promise.all([
+          execAsync(`adb -s ${deviceId} shell getprop debug.layout`).catch(() => ({ stdout: '' })),
+          execAsync(`adb -s ${deviceId} shell getprop debug.hwui.overdraw`).catch(() => ({ stdout: '' })),
+          execAsync(`adb -s ${deviceId} shell settings get global window_animation_scale`).catch(() => ({ stdout: '1.0' })),
+          execAsync(`adb -s ${deviceId} shell settings get global transition_animation_scale`).catch(() => ({ stdout: '1.0' })),
+          execAsync(`adb -s ${deviceId} shell settings get global animator_duration_scale`).catch(() => ({ stdout: '1.0' })),
+          execAsync(`adb -s ${deviceId} shell settings get system show_touches`).catch(() => ({ stdout: '0' })),
+          execAsync(`adb -s ${deviceId} shell settings get system pointer_location`).catch(() => ({ stdout: '0' })),
+        ]);
+
+      return {
+        layoutBounds: layoutBounds.stdout.trim() === 'true',
+        gpuOverdraw: (gpuOverdraw.stdout.trim() || 'off') as DeveloperOptions['gpuOverdraw'],
+        windowAnimationScale: parseFloat(windowAnim.stdout.trim()) || 1.0,
+        transitionAnimationScale: parseFloat(transitionAnim.stdout.trim()) || 1.0,
+        animatorDurationScale: parseFloat(animatorAnim.stdout.trim()) || 1.0,
+        showTouches: showTouches.stdout.trim() === '1',
+        pointerLocation: pointerLocation.stdout.trim() === '1',
+      };
+    } catch (error) {
+      console.error('Error getting developer options:', error);
+      return null;
+    }
+  }
+
+  async setLayoutBounds(deviceId: string, enabled: boolean): Promise<boolean> {
+    try {
+      await execAsync(`adb -s ${deviceId} shell setprop debug.layout ${enabled}`);
+      // Need to restart UI to take effect
+      await execAsync(`adb -s ${deviceId} shell service call activity 1599295570`);
+      return true;
+    } catch (error) {
+      console.error('Error setting layout bounds:', error);
+      return false;
+    }
+  }
+
+  async setGpuOverdraw(deviceId: string, mode: DeveloperOptions['gpuOverdraw']): Promise<boolean> {
+    try {
+      const value = mode === 'off' ? 'false' : mode;
+      await execAsync(`adb -s ${deviceId} shell setprop debug.hwui.overdraw ${value}`);
+      // Need to restart UI to take effect
+      await execAsync(`adb -s ${deviceId} shell service call activity 1599295570`);
+      return true;
+    } catch (error) {
+      console.error('Error setting GPU overdraw:', error);
+      return false;
+    }
+  }
+
+  async setAnimationScale(
+    deviceId: string,
+    scale: number,
+    type: 'window' | 'transition' | 'animator'
+  ): Promise<boolean> {
+    try {
+      const settingName = {
+        window: 'window_animation_scale',
+        transition: 'transition_animation_scale',
+        animator: 'animator_duration_scale',
+      }[type];
+
+      await execAsync(`adb -s ${deviceId} shell settings put global ${settingName} ${scale}`);
+      return true;
+    } catch (error) {
+      console.error('Error setting animation scale:', error);
+      return false;
+    }
+  }
+
+  async setShowTouches(deviceId: string, enabled: boolean): Promise<boolean> {
+    try {
+      await execAsync(`adb -s ${deviceId} shell settings put system show_touches ${enabled ? 1 : 0}`);
+      return true;
+    } catch (error) {
+      console.error('Error setting show touches:', error);
+      return false;
+    }
+  }
+
+  async setPointerLocation(deviceId: string, enabled: boolean): Promise<boolean> {
+    try {
+      await execAsync(`adb -s ${deviceId} shell settings put system pointer_location ${enabled ? 1 : 0}`);
+      return true;
+    } catch (error) {
+      console.error('Error setting pointer location:', error);
+      return false;
+    }
+  }
+
+  // ==================== File Inspector ====================
+
+  async listAppFiles(deviceId: string, packageName: string, relativePath: string = ''): Promise<FileEntry[]> {
+    try {
+      const basePath = `/data/data/${packageName}`;
+      const fullPath = relativePath ? `${basePath}/${relativePath}` : basePath;
+
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell run-as ${packageName} ls -la "${fullPath}"`
+      );
+
+      const entries: FileEntry[] = [];
+      const lines = stdout.trim().split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('total') || !line.trim()) continue;
+
+        // Parse ls -la output: drwxrwx--x 2 u0_a123 u0_a123 4096 2024-01-15 10:30 dirname
+        const match = line.match(
+          /^([drwx-]{10})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+)$/
+        );
+
+        if (match) {
+          const [, permissions, size, modified, name] = match;
+          if (name === '.' || name === '..') continue;
+
+          entries.push({
+            name,
+            path: relativePath ? `${relativePath}/${name}` : name,
+            type: permissions.startsWith('d') ? 'directory' : 'file',
+            size: parseInt(size, 10),
+            modified,
+            permissions,
+          });
+        }
+      }
+
+      return entries;
+    } catch (error) {
+      console.error('Error listing app files:', error);
+      return [];
+    }
+  }
+
+  async readAppFile(deviceId: string, packageName: string, relativePath: string): Promise<string | null> {
+    try {
+      const basePath = `/data/data/${packageName}`;
+      const fullPath = `${basePath}/${relativePath}`;
+
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell run-as ${packageName} cat "${fullPath}"`
+      );
+
+      return stdout;
+    } catch (error) {
+      console.error('Error reading app file:', error);
+      return null;
+    }
+  }
+
+  async readSharedPreferences(deviceId: string, packageName: string): Promise<SharedPreference[]> {
+    try {
+      // List shared_prefs directory
+      const files = await this.listAppFiles(deviceId, packageName, 'shared_prefs');
+      const prefs: SharedPreference[] = [];
+
+      for (const file of files) {
+        if (file.type === 'file' && file.name.endsWith('.xml')) {
+          const content = await this.readAppFile(deviceId, packageName, `shared_prefs/${file.name}`);
+          if (content) {
+            const entries = this.parseSharedPrefsXml(content);
+            prefs.push({
+              file: file.name,
+              entries,
+            });
+          }
+        }
+      }
+
+      return prefs;
+    } catch (error) {
+      console.error('Error reading shared preferences:', error);
+      return [];
+    }
+  }
+
+  private parseSharedPrefsXml(xml: string): Record<string, { type: string; value: unknown }> {
+    const entries: Record<string, { type: string; value: unknown }> = {};
+
+    // Parse string entries
+    const stringMatches = xml.matchAll(/<string name="([^"]+)"[^>]*>([^<]*)<\/string>/g);
+    for (const match of stringMatches) {
+      entries[match[1]] = { type: 'string', value: match[2] };
+    }
+
+    // Parse int entries
+    const intMatches = xml.matchAll(/<int name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
+    for (const match of intMatches) {
+      entries[match[1]] = { type: 'int', value: parseInt(match[2], 10) };
+    }
+
+    // Parse long entries
+    const longMatches = xml.matchAll(/<long name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
+    for (const match of longMatches) {
+      entries[match[1]] = { type: 'long', value: parseInt(match[2], 10) };
+    }
+
+    // Parse float entries
+    const floatMatches = xml.matchAll(/<float name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
+    for (const match of floatMatches) {
+      entries[match[1]] = { type: 'float', value: parseFloat(match[2]) };
+    }
+
+    // Parse boolean entries
+    const boolMatches = xml.matchAll(/<boolean name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
+    for (const match of boolMatches) {
+      entries[match[1]] = { type: 'boolean', value: match[2] === 'true' };
+    }
+
+    return entries;
+  }
+
+  async listDatabases(deviceId: string, packageName: string): Promise<DatabaseInfo[]> {
+    try {
+      const files = await this.listAppFiles(deviceId, packageName, 'databases');
+      const databases: DatabaseInfo[] = [];
+
+      for (const file of files) {
+        if (file.type === 'file' && !file.name.endsWith('-journal') && !file.name.endsWith('-wal') && !file.name.endsWith('-shm')) {
+          // Get tables for this database
+          const tables = await this.getDatabaseTables(deviceId, packageName, file.name);
+          databases.push({
+            name: file.name,
+            path: `databases/${file.name}`,
+            tables,
+            size: file.size,
+          });
+        }
+      }
+
+      return databases;
+    } catch (error) {
+      console.error('Error listing databases:', error);
+      return [];
+    }
+  }
+
+  private async getDatabaseTables(deviceId: string, packageName: string, dbName: string): Promise<string[]> {
+    try {
+      const dbPath = `/data/data/${packageName}/databases/${dbName}`;
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell run-as ${packageName} sqlite3 "${dbPath}" ".tables"`
+      );
+
+      return stdout.trim().split(/\s+/).filter(Boolean);
+    } catch (error) {
+      console.error('Error getting database tables:', error);
+      return [];
+    }
+  }
+
+  async queryDatabase(
+    deviceId: string,
+    packageName: string,
+    dbName: string,
+    query: string
+  ): Promise<DatabaseQueryResult | null> {
+    try {
+      const dbPath = `/data/data/${packageName}/databases/${dbName}`;
+      // Use -header -separator for CSV-like output
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell run-as ${packageName} sqlite3 -header -separator '|' "${dbPath}" "${query.replace(/"/g, '\\"')}"`
+      );
+
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      if (lines.length === 0) {
+        return { columns: [], rows: [], rowCount: 0 };
+      }
+
+      const columns = lines[0].split('|');
+      const rows = lines.slice(1).map((line) =>
+        line.split('|').map((val) => {
+          // Try to parse as number
+          const num = Number(val);
+          return isNaN(num) ? val : num;
+        })
+      );
+
+      return {
+        columns,
+        rows,
+        rowCount: rows.length,
+      };
+    } catch (error) {
+      console.error('Error querying database:', error);
+      return null;
+    }
+  }
+
+  // ==================== Intent Tester ====================
+
+  async fireIntent(deviceId: string, intent: IntentConfig): Promise<{ success: boolean; error?: string }> {
+    try {
+      let cmd = `adb -s ${deviceId} shell am start`;
+
+      // Action
+      if (intent.action) {
+        cmd += ` -a ${intent.action}`;
+      }
+
+      // Data URI
+      if (intent.data) {
+        cmd += ` -d "${intent.data}"`;
+      }
+
+      // MIME type
+      if (intent.type) {
+        cmd += ` -t ${intent.type}`;
+      }
+
+      // Category
+      if (intent.category) {
+        cmd += ` -c ${intent.category}`;
+      }
+
+      // Component
+      if (intent.component) {
+        cmd += ` -n ${intent.component}`;
+      }
+
+      // Flags
+      for (const flag of intent.flags) {
+        cmd += ` -f ${flag}`;
+      }
+
+      // Extras
+      for (const extra of intent.extras) {
+        const typeFlag = {
+          string: '--es',
+          int: '--ei',
+          long: '--el',
+          float: '--ef',
+          double: '--ed',
+          boolean: '--ez',
+          uri: '--eu',
+        }[extra.type];
+
+        cmd += ` ${typeFlag} "${extra.key}" "${extra.value}"`;
+      }
+
+      const { stdout, stderr } = await execAsync(cmd);
+
+      if (stderr && stderr.includes('Error')) {
+        return { success: false, error: stderr };
+      }
+
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: message };
+    }
+  }
+
+  async fireDeepLink(deviceId: string, uri: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { stdout, stderr } = await execAsync(
+        `adb -s ${deviceId} shell am start -a android.intent.action.VIEW -d "${uri}"`
+      );
+
+      if (stderr && stderr.includes('Error')) {
+        return { success: false, error: stderr };
+      }
+
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: message };
+    }
+  }
+
   stopAll(): void {
     this.stopMemoryMonitor();
     this.stopCpuMonitor();
     this.stopFpsMonitor();
     this.stopLogcat();
+    if (this.recordingProcess) {
+      this.recordingProcess.kill('SIGINT');
+      this.recordingProcess = null;
+      this.recordingPath = null;
+    }
   }
 }
 

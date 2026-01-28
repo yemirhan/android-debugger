@@ -109,6 +109,105 @@ export interface CustomEvent {
   timestamp: number;
 }
 
+// App Metadata types
+export interface AppMetadata {
+  packageName: string;
+  versionName: string;
+  versionCode: number;
+  targetSdk: number;
+  minSdk: number;
+  firstInstallTime: string;
+  lastUpdateTime: string;
+  apkSize: number;
+  dataSize: number;
+  cacheSize: number;
+  permissions: string[];
+  isDebuggable: boolean;
+  isSystem: boolean;
+}
+
+// Developer Options types
+export interface DeveloperOptions {
+  layoutBounds: boolean;
+  gpuOverdraw: 'off' | 'show' | 'show_deuteranomaly';
+  windowAnimationScale: number;
+  transitionAnimationScale: number;
+  animatorDurationScale: number;
+  showTouches: boolean;
+  pointerLocation: boolean;
+}
+
+// File Inspector types
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size: number;
+  modified: string;
+  permissions: string;
+}
+
+export interface SharedPreference {
+  file: string;
+  entries: Record<string, { type: string; value: unknown }>;
+}
+
+export interface DatabaseInfo {
+  name: string;
+  path: string;
+  tables: string[];
+  size: number;
+}
+
+export interface DatabaseQueryResult {
+  columns: string[];
+  rows: unknown[][];
+  rowCount: number;
+}
+
+// Intent Tester types
+export interface IntentConfig {
+  id: string;
+  name: string;
+  action: string;
+  data?: string;
+  type?: string;
+  category?: string;
+  component?: string;
+  extras: IntentExtra[];
+  flags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface IntentExtra {
+  key: string;
+  type: 'string' | 'int' | 'long' | 'float' | 'double' | 'boolean' | 'uri';
+  value: string;
+}
+
+export interface IntentHistoryEntry {
+  id: string;
+  intent: IntentConfig;
+  timestamp: number;
+  success: boolean;
+  error?: string;
+}
+
+// Screen Capture types
+export interface ScreenshotResult {
+  path: string;
+  width: number;
+  height: number;
+  timestamp: number;
+}
+
+export interface RecordingState {
+  isRecording: boolean;
+  startTime?: number;
+  outputPath?: string;
+}
+
 // IPC types
 export interface IpcChannels {
   // Device
@@ -145,6 +244,38 @@ export interface IpcChannels {
   'ws:start-server': (port: number) => Promise<void>;
   'ws:stop-server': () => Promise<void>;
   'ws:get-connections': () => number;
+
+  // App Metadata
+  'adb:get-app-metadata': (deviceId: string, packageName: string) => Promise<AppMetadata | null>;
+
+  // Screen Capture
+  'screen:take-screenshot': (deviceId: string) => Promise<ScreenshotResult | null>;
+  'screen:start-recording': (deviceId: string) => Promise<{ success: boolean; path?: string }>;
+  'screen:stop-recording': (deviceId: string) => Promise<{ success: boolean; path?: string }>;
+
+  // Developer Options
+  'dev-options:get': (deviceId: string) => Promise<DeveloperOptions | null>;
+  'dev-options:set-layout-bounds': (deviceId: string, enabled: boolean) => Promise<boolean>;
+  'dev-options:set-gpu-overdraw': (deviceId: string, mode: DeveloperOptions['gpuOverdraw']) => Promise<boolean>;
+  'dev-options:set-animation-scale': (deviceId: string, scale: number, type: 'window' | 'transition' | 'animator') => Promise<boolean>;
+  'dev-options:set-show-touches': (deviceId: string, enabled: boolean) => Promise<boolean>;
+  'dev-options:set-pointer-location': (deviceId: string, enabled: boolean) => Promise<boolean>;
+
+  // File Inspector
+  'files:list': (deviceId: string, packageName: string, path: string) => Promise<FileEntry[]>;
+  'files:read': (deviceId: string, packageName: string, path: string) => Promise<string | null>;
+  'files:read-shared-prefs': (deviceId: string, packageName: string) => Promise<SharedPreference[]>;
+  'files:list-databases': (deviceId: string, packageName: string) => Promise<DatabaseInfo[]>;
+  'files:query-database': (deviceId: string, packageName: string, dbName: string, query: string) => Promise<DatabaseQueryResult | null>;
+
+  // Intent Tester
+  'intent:fire': (deviceId: string, intent: IntentConfig) => Promise<{ success: boolean; error?: string }>;
+  'intent:fire-deep-link': (deviceId: string, uri: string) => Promise<{ success: boolean; error?: string }>;
+  'intent:save': (intent: IntentConfig) => Promise<void>;
+  'intent:get-saved': () => Promise<IntentConfig[]>;
+  'intent:delete-saved': (id: string) => Promise<void>;
+  'intent:get-history': () => Promise<IntentHistoryEntry[]>;
+  'intent:clear-history': () => Promise<void>;
 }
 
 // Event types from main to renderer
@@ -158,4 +289,5 @@ export interface IpcEvents {
   'sdk-message': SdkMessage;
   'sdk-connection': { connected: boolean; clientId: string };
   'error': { source: string; message: string };
+  'recording-update': RecordingState;
 }

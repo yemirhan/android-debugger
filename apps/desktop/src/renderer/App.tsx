@@ -8,10 +8,15 @@ import { CpuFpsPanel } from './components/CpuFpsPanel';
 import { NetworkPanel } from './components/NetworkPanel';
 import { SdkPanel } from './components/SdkPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { AppMetadataPanel } from './components/AppMetadataPanel';
+import { ScreenCapturePanel } from './components/ScreenCapturePanel';
+import { DevOptionsPanel } from './components/DevOptionsPanel';
+import { FileInspectorPanel } from './components/FileInspectorPanel';
+import { IntentTesterPanel } from './components/IntentTesterPanel';
 import { useDevices } from './hooks/useDevices';
 import { SdkProvider } from './contexts/SdkContext';
 
-export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings';
+export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('memory');
@@ -81,6 +86,16 @@ function App() {
         return <SdkPanel />;
       case 'settings':
         return <SettingsPanel />;
+      case 'app-info':
+        return <AppMetadataPanel device={selectedDevice} packageName={packageName} />;
+      case 'screen-capture':
+        return <ScreenCapturePanel device={selectedDevice} />;
+      case 'dev-options':
+        return <DevOptionsPanel device={selectedDevice} />;
+      case 'file-inspector':
+        return <FileInspectorPanel device={selectedDevice} packageName={packageName} />;
+      case 'intent-tester':
+        return <IntentTesterPanel device={selectedDevice} />;
       default:
         return null;
     }

@@ -1,5 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { Device, MemoryInfo, CpuInfo, FpsInfo, LogEntry, SdkMessage } from '@android-debugger/shared';
+import type {
+  Device,
+  MemoryInfo,
+  CpuInfo,
+  FpsInfo,
+  LogEntry,
+  SdkMessage,
+  AppMetadata,
+  DeveloperOptions,
+  FileEntry,
+  SharedPreference,
+  DatabaseInfo,
+  DatabaseQueryResult,
+  IntentConfig,
+  IntentHistoryEntry,
+  ScreenshotResult,
+  RecordingState,
+} from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
 
@@ -44,6 +61,39 @@ export interface ElectronAPI {
   getWsConnections: () => Promise<number>;
   onSdkMessage: (callback: (data: { clientId: string; message: SdkMessage }) => void) => UnsubscribeFn;
   onSdkConnection: (callback: (data: { clientId: string; connected: boolean }) => void) => UnsubscribeFn;
+
+  // App Metadata
+  getAppMetadata: (deviceId: string, packageName: string) => Promise<AppMetadata | null>;
+
+  // Screen Capture
+  takeScreenshot: (deviceId: string) => Promise<ScreenshotResult | null>;
+  startScreenRecording: (deviceId: string) => Promise<{ success: boolean; path?: string }>;
+  stopScreenRecording: (deviceId: string) => Promise<{ success: boolean; path?: string }>;
+  onRecordingUpdate: (callback: (state: RecordingState) => void) => UnsubscribeFn;
+
+  // Developer Options
+  getDeveloperOptions: (deviceId: string) => Promise<DeveloperOptions | null>;
+  setLayoutBounds: (deviceId: string, enabled: boolean) => Promise<boolean>;
+  setGpuOverdraw: (deviceId: string, mode: DeveloperOptions['gpuOverdraw']) => Promise<boolean>;
+  setAnimationScale: (deviceId: string, scale: number, type: 'window' | 'transition' | 'animator') => Promise<boolean>;
+  setShowTouches: (deviceId: string, enabled: boolean) => Promise<boolean>;
+  setPointerLocation: (deviceId: string, enabled: boolean) => Promise<boolean>;
+
+  // File Inspector
+  listFiles: (deviceId: string, packageName: string, path: string) => Promise<FileEntry[]>;
+  readFile: (deviceId: string, packageName: string, path: string) => Promise<string | null>;
+  readSharedPrefs: (deviceId: string, packageName: string) => Promise<SharedPreference[]>;
+  listDatabases: (deviceId: string, packageName: string) => Promise<DatabaseInfo[]>;
+  queryDatabase: (deviceId: string, packageName: string, dbName: string, query: string) => Promise<DatabaseQueryResult | null>;
+
+  // Intent Tester
+  fireIntent: (deviceId: string, intent: IntentConfig) => Promise<{ success: boolean; error?: string }>;
+  fireDeepLink: (deviceId: string, uri: string) => Promise<{ success: boolean; error?: string }>;
+  saveIntent: (intent: IntentConfig) => Promise<void>;
+  getSavedIntents: () => Promise<IntentConfig[]>;
+  deleteSavedIntent: (id: string) => Promise<void>;
+  getIntentHistory: () => Promise<IntentHistoryEntry[]>;
+  clearIntentHistory: () => Promise<void>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -118,6 +168,54 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('sdk-connection', listener);
     return () => ipcRenderer.removeListener('sdk-connection', listener);
   },
+
+  // App Metadata
+  getAppMetadata: (deviceId, packageName) =>
+    ipcRenderer.invoke('adb:get-app-metadata', deviceId, packageName),
+
+  // Screen Capture
+  takeScreenshot: (deviceId) => ipcRenderer.invoke('screen:take-screenshot', deviceId),
+  startScreenRecording: (deviceId) => ipcRenderer.invoke('screen:start-recording', deviceId),
+  stopScreenRecording: (deviceId) => ipcRenderer.invoke('screen:stop-recording', deviceId),
+  onRecordingUpdate: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, state: RecordingState) => callback(state);
+    ipcRenderer.on('recording-update', listener);
+    return () => ipcRenderer.removeListener('recording-update', listener);
+  },
+
+  // Developer Options
+  getDeveloperOptions: (deviceId) => ipcRenderer.invoke('dev-options:get', deviceId),
+  setLayoutBounds: (deviceId, enabled) =>
+    ipcRenderer.invoke('dev-options:set-layout-bounds', deviceId, enabled),
+  setGpuOverdraw: (deviceId, mode) =>
+    ipcRenderer.invoke('dev-options:set-gpu-overdraw', deviceId, mode),
+  setAnimationScale: (deviceId, scale, type) =>
+    ipcRenderer.invoke('dev-options:set-animation-scale', deviceId, scale, type),
+  setShowTouches: (deviceId, enabled) =>
+    ipcRenderer.invoke('dev-options:set-show-touches', deviceId, enabled),
+  setPointerLocation: (deviceId, enabled) =>
+    ipcRenderer.invoke('dev-options:set-pointer-location', deviceId, enabled),
+
+  // File Inspector
+  listFiles: (deviceId, packageName, path) =>
+    ipcRenderer.invoke('files:list', deviceId, packageName, path),
+  readFile: (deviceId, packageName, path) =>
+    ipcRenderer.invoke('files:read', deviceId, packageName, path),
+  readSharedPrefs: (deviceId, packageName) =>
+    ipcRenderer.invoke('files:read-shared-prefs', deviceId, packageName),
+  listDatabases: (deviceId, packageName) =>
+    ipcRenderer.invoke('files:list-databases', deviceId, packageName),
+  queryDatabase: (deviceId, packageName, dbName, query) =>
+    ipcRenderer.invoke('files:query-database', deviceId, packageName, dbName, query),
+
+  // Intent Tester
+  fireIntent: (deviceId, intent) => ipcRenderer.invoke('intent:fire', deviceId, intent),
+  fireDeepLink: (deviceId, uri) => ipcRenderer.invoke('intent:fire-deep-link', deviceId, uri),
+  saveIntent: (intent) => ipcRenderer.invoke('intent:save', intent),
+  getSavedIntents: () => ipcRenderer.invoke('intent:get-saved'),
+  deleteSavedIntent: (id) => ipcRenderer.invoke('intent:delete-saved', id),
+  getIntentHistory: () => ipcRenderer.invoke('intent:get-history'),
+  clearIntentHistory: () => ipcRenderer.invoke('intent:clear-history'),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
