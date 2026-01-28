@@ -27,6 +27,9 @@ import type {
   ActivityStackInfo,
   JobSchedulerInfo,
   AlarmMonitorInfo,
+  RecordingSession,
+  RecordingSessionWithEvents,
+  TimelineEvent,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -148,6 +151,12 @@ export interface ElectronAPI {
 
   // Alarm Monitor
   getScheduledAlarms: (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
+
+  // Recording
+  saveRecordingSession: (session: RecordingSession, events: TimelineEvent[]) => Promise<{ success: boolean; error?: string }>;
+  loadRecordingSession: (sessionId: string) => Promise<RecordingSessionWithEvents | null>;
+  listRecordingSessions: () => Promise<RecordingSession[]>;
+  deleteRecordingSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -351,6 +360,16 @@ const electronAPI: ElectronAPI = {
   // Alarm Monitor
   getScheduledAlarms: (deviceId, packageName) =>
     ipcRenderer.invoke('adb:get-scheduled-alarms', deviceId, packageName),
+
+  // Recording
+  saveRecordingSession: (session, events) =>
+    ipcRenderer.invoke('recording:save-session', session, events),
+  loadRecordingSession: (sessionId) =>
+    ipcRenderer.invoke('recording:load-session', sessionId),
+  listRecordingSessions: () =>
+    ipcRenderer.invoke('recording:list-sessions'),
+  deleteRecordingSession: (sessionId) =>
+    ipcRenderer.invoke('recording:delete-session', sessionId),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

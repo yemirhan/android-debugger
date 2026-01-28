@@ -21,14 +21,15 @@ import { ActivityStackPanel } from './components/ActivityStackPanel';
 import { JobSchedulerPanel } from './components/JobSchedulerPanel';
 import { AlarmMonitorPanel } from './components/AlarmMonitorPanel';
 import { WebSocketPanel } from './components/WebSocketPanel';
+import { TimelinePanel } from './components/TimelinePanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
-import { SdkProvider, LogsProvider } from './contexts';
+import { SdkProvider, LogsProvider, TimelineProvider, RecordingProvider } from './contexts';
 
-export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket';
+export type TabId = 'timeline' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('memory');
+  const [activeTab, setActiveTab] = useState<TabId>('timeline');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [packageName, setPackageName] = useState<string>('');
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
@@ -77,6 +78,8 @@ function App() {
     }
 
     switch (activeTab) {
+      case 'timeline':
+        return <TimelinePanel device={selectedDevice} packageName={packageName} />;
       case 'memory':
         return (
           <MemoryPanel
@@ -133,25 +136,29 @@ function App() {
   return (
     <SdkProvider>
       <LogsProvider selectedDevice={selectedDevice} packageName={packageName}>
-        <div className="h-screen flex flex-col bg-background text-text-primary">
-          <Header
-            devices={devices}
-            selectedDevice={selectedDevice}
-            onDeviceSelect={handleDeviceSelect}
-            onRefreshDevices={refreshDevices}
-            loading={devicesLoading}
-            packageName={packageName}
-            onPackageChange={handlePackageChange}
-          />
-          <div className="flex-1 flex overflow-hidden">
-            <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
-            <main className="flex-1 flex flex-col overflow-hidden">
-              <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
-                {renderPanel()}
+        <TimelineProvider>
+          <RecordingProvider>
+            <div className="h-screen flex flex-col bg-background text-text-primary">
+              <Header
+                devices={devices}
+                selectedDevice={selectedDevice}
+                onDeviceSelect={handleDeviceSelect}
+                onRefreshDevices={refreshDevices}
+                loading={devicesLoading}
+                packageName={packageName}
+                onPackageChange={handlePackageChange}
+              />
+              <div className="flex-1 flex overflow-hidden">
+                <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+                <main className="flex-1 flex flex-col overflow-hidden">
+                  <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
+                    {renderPanel()}
+                  </div>
+                </main>
               </div>
-            </main>
-          </div>
-        </div>
+            </div>
+          </RecordingProvider>
+        </TimelineProvider>
       </LogsProvider>
     </SdkProvider>
   );

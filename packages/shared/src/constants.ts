@@ -44,6 +44,10 @@ export const MAX_BATTERY_DATA_POINTS = 60; // 5 minutes at 5s interval
 export const MAX_NETWORK_STATS_DATA_POINTS = 60;
 export const MAX_CRASH_ENTRIES = 100;
 
+// Timeline
+export const MAX_TIMELINE_EVENTS = 50000;
+export const TIMELINE_FILTER_DEBOUNCE_MS = 300;
+
 // App info
 export const APP_NAME = 'Android Debugger';
 export const APP_VERSION = '1.0.0';

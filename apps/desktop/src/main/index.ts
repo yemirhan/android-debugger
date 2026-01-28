@@ -107,6 +107,9 @@ import type {
   ActivityStackInfo,
   JobSchedulerInfo,
   AlarmMonitorInfo,
+  RecordingSession,
+  RecordingSessionWithEvents,
+  TimelineEvent,
 } from '@android-debugger/shared';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
@@ -114,6 +117,7 @@ import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POL
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
 const intentHistoryPath = join(app.getPath('userData'), 'intent-history.json');
 const updateSettingsPath = join(app.getPath('userData'), 'update-settings.json');
+const recordingsDir = join(app.getPath('userData'), 'recordings');
 
 // Update settings management
 function loadUpdateSettings(): UpdateSettings {
@@ -176,6 +180,104 @@ function saveIntentHistory(history: IntentHistoryEntry[]): void {
     fs.writeFileSync(intentHistoryPath, JSON.stringify(trimmed, null, 2));
   } catch (error) {
     console.error('Error saving intent history:', error);
+  }
+}
+
+// Recording session management
+function ensureRecordingsDir(): void {
+  if (!fs.existsSync(recordingsDir)) {
+    fs.mkdirSync(recordingsDir, { recursive: true });
+  }
+}
+
+function getSessionDir(sessionId: string): string {
+  return join(recordingsDir, sessionId);
+}
+
+function saveRecordingSession(session: RecordingSession, events: TimelineEvent[]): { success: boolean; error?: string } {
+  try {
+    ensureRecordingsDir();
+    const sessionDir = getSessionDir(session.id);
+
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
+
+    // Save session metadata
+    fs.writeFileSync(join(sessionDir, 'session.json'), JSON.stringify(session, null, 2));
+
+    // Save events
+    fs.writeFileSync(join(sessionDir, 'events.json'), JSON.stringify(events));
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving recording session:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+function loadRecordingSession(sessionId: string): RecordingSessionWithEvents | null {
+  try {
+    const sessionDir = getSessionDir(sessionId);
+    const sessionPath = join(sessionDir, 'session.json');
+    const eventsPath = join(sessionDir, 'events.json');
+
+    if (!fs.existsSync(sessionPath)) {
+      return null;
+    }
+
+    const session: RecordingSession = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
+    const events: TimelineEvent[] = fs.existsSync(eventsPath)
+      ? JSON.parse(fs.readFileSync(eventsPath, 'utf-8'))
+      : [];
+
+    return { ...session, events };
+  } catch (error) {
+    console.error('Error loading recording session:', error);
+    return null;
+  }
+}
+
+function listRecordingSessions(): RecordingSession[] {
+  try {
+    ensureRecordingsDir();
+    const sessions: RecordingSession[] = [];
+
+    const entries = fs.readdirSync(recordingsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const sessionPath = join(recordingsDir, entry.name, 'session.json');
+        if (fs.existsSync(sessionPath)) {
+          try {
+            const session: RecordingSession = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
+            sessions.push(session);
+          } catch {
+            // Skip invalid session files
+          }
+        }
+      }
+    }
+
+    // Sort by creation date (newest first)
+    sessions.sort((a, b) => b.createdAt - a.createdAt);
+
+    return sessions;
+  } catch (error) {
+    console.error('Error listing recording sessions:', error);
+    return [];
+  }
+}
+
+function deleteRecordingSession(sessionId: string): { success: boolean; error?: string } {
+  try {
+    const sessionDir = getSessionDir(sessionId);
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting recording session:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
 
@@ -584,6 +686,23 @@ function setupIpcHandlers(): void {
   // Alarm Monitor handlers
   ipcMain.handle('adb:get-scheduled-alarms', async (_, deviceId: string, packageName?: string) => {
     return adbService.getScheduledAlarms(deviceId, packageName);
+  });
+
+  // Recording handlers
+  ipcMain.handle('recording:save-session', async (_, session: RecordingSession, events: TimelineEvent[]) => {
+    return saveRecordingSession(session, events);
+  });
+
+  ipcMain.handle('recording:load-session', async (_, sessionId: string) => {
+    return loadRecordingSession(sessionId);
+  });
+
+  ipcMain.handle('recording:list-sessions', async () => {
+    return listRecordingSessions();
+  });
+
+  ipcMain.handle('recording:delete-session', async (_, sessionId: string) => {
+    return deleteRecordingSession(sessionId);
   });
 
   // Auto-updater handlers

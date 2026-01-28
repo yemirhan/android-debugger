@@ -308,6 +308,12 @@ export interface IpcChannels {
 
   // Alarm Monitor
   'adb:get-scheduled-alarms': (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
+
+  // Recording
+  'recording:save-session': (session: RecordingSession, events: TimelineEvent[]) => Promise<{ success: boolean; error?: string }>;
+  'recording:load-session': (sessionId: string) => Promise<RecordingSessionWithEvents | null>;
+  'recording:list-sessions': () => Promise<RecordingSession[]>;
+  'recording:delete-session': (sessionId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 // Event types from main to renderer
@@ -505,4 +511,52 @@ export interface WebSocketEvent {
   timestamp: number;
   data?: WebSocketMessage;
   error?: string;
+}
+
+// Timeline types
+export type TimelineEventType =
+  | 'log'
+  | 'crash'
+  | 'console'
+  | 'network'
+  | 'state'
+  | 'custom'
+  | 'zustand'
+  | 'websocket'
+  | 'memory'
+  | 'cpu'
+  | 'fps'
+  | 'battery'
+  | 'activity';
+
+export type TimelineSeverity = 'info' | 'warning' | 'error' | 'critical';
+
+export interface TimelineEvent {
+  id: string;
+  timestamp: number;        // Normalized Unix ms
+  type: TimelineEventType;
+  severity?: TimelineSeverity;
+  title: string;
+  subtitle?: string;
+  data: unknown;
+}
+
+export interface RecordingSession {
+  id: string;
+  name: string;
+  notes?: string;
+  createdAt: number;
+  startTime: number;
+  endTime: number;
+  device: {
+    id: string;
+    model: string;
+    androidVersion: string;
+  };
+  packageName: string;
+  eventCount: number;
+}
+
+export interface RecordingSessionWithEvents extends RecordingSession {
+  events: TimelineEvent[];
 }
