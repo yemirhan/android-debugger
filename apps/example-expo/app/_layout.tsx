@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Provider } from 'react-redux';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 import { createStore } from '@/store/redux';
 import { setupAxiosInterceptor } from '@/utils/api';
 

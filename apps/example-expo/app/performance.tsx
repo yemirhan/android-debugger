@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
 import { apiHelpers } from '@/utils/api';
 

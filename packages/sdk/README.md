@@ -1,51 +1,37 @@
-# @android-debugger/sdk
+# @yemirhan/android-debugger-sdk
 
 React Native SDK for Android Debugger - sends console logs, network requests, and custom events to the desktop debugging tool.
 
 ## Installation
 
 ```bash
-npm install @android-debugger/sdk
+npm install @yemirhan/android-debugger-sdk
 # or
-yarn add @android-debugger/sdk
+yarn add @yemirhan/android-debugger-sdk
 # or
-pnpm add @android-debugger/sdk
+pnpm add @yemirhan/android-debugger-sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 // Initialize in your app entry point (App.tsx or index.js)
-AndroidDebugger.init({
-  host: '192.168.1.100', // Your computer's IP address
-  port: 8347,            // Default port, must match desktop app
-});
+AndroidDebugger.init();
 ```
+
+> **Note:** The SDK communicates with the desktop app via ADB logcat - no network configuration required. Just make sure your device is connected via USB or wireless ADB.
 
 ## Configuration Options
 
 ```typescript
 AndroidDebugger.init({
-  // Required: IP address of the computer running the desktop app
-  host: '192.168.1.100',
-
-  // Optional: WebSocket port (default: 8347)
-  port: 8347,
-
-  // Optional: Auto-reconnect on disconnect (default: true)
-  autoReconnect: true,
-
   // Optional: Intercept console.log/warn/error (default: true)
   interceptConsole: true,
 
   // Optional: Intercept fetch/XMLHttpRequest (default: true)
   interceptNetwork: true,
-
-  // Optional: Connection callbacks
-  onConnect: () => console.log('Connected to debugger'),
-  onDisconnect: () => console.log('Disconnected from debugger'),
 });
 ```
 
@@ -80,12 +66,10 @@ For Axios users, you can intercept Axios instances for more reliable request tra
 
 ```typescript
 import axios from 'axios';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 // Initialize the SDK first
-AndroidDebugger.init({
-  host: '192.168.1.100',
-});
+AndroidDebugger.init();
 
 // Create your axios instance
 const api = axios.create({
@@ -183,7 +167,7 @@ Use the built-in Redux middleware to automatically track actions and state:
 
 ```typescript
 import { createStore, applyMiddleware } from 'redux';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 const store = createStore(
   rootReducer,
@@ -212,13 +196,13 @@ Disconnect and cleanup. Call this when you want to stop debugging.
 AndroidDebugger.destroy();
 ```
 
-### `AndroidDebugger.isConnected()`
+### `AndroidDebugger.isReady()`
 
-Check if the SDK is connected to the desktop app.
+Check if the SDK is initialized and ready to send messages.
 
 ```typescript
-if (AndroidDebugger.isConnected()) {
-  console.log('Debugger is connected');
+if (AndroidDebugger.isReady()) {
+  console.log('Debugger is ready');
 }
 ```
 
@@ -277,35 +261,22 @@ removeInterceptor();
 
 Create a Redux middleware for automatic action/state tracking.
 
-## Finding Your Computer's IP Address
+## How It Works
 
-### macOS
-```bash
-ipconfig getifaddr en0
-```
+The SDK communicates with the desktop app via ADB logcat. When you call SDK methods, messages are written to the Android log with a special tag. The desktop app captures these messages by running `adb logcat` and parsing the output.
 
-### Windows
-```bash
-ipconfig
-# Look for "IPv4 Address" under your active network adapter
-```
-
-### Linux
-```bash
-hostname -I | awk '{print $1}'
-```
+This means:
+- **No network configuration required** - No IP addresses or ports to configure
+- **Works over USB or wireless ADB** - Just connect your device via USB or set up wireless debugging
+- **No firewall issues** - Communication happens through ADB, not network sockets
 
 ## Troubleshooting
 
-### Connection Issues
+### Messages Not Appearing in Desktop App
 
-1. **Ensure both devices are on the same network** - Your phone and computer must be connected to the same WiFi network.
-
-2. **Check firewall settings** - Make sure port 8347 (or your configured port) is not blocked.
-
-3. **Verify the IP address** - The IP address can change. Re-check it if connection fails.
-
-4. **Start the desktop app first** - The WebSocket server must be running before the SDK tries to connect.
+1. **Check ADB connection** - Run `adb devices` to verify your device is connected
+2. **Restart ADB** - Try `adb kill-server && adb start-server`
+3. **Check USB debugging** - Ensure USB debugging is enabled on your device
 
 ### Console/Network Not Captured
 
@@ -318,14 +289,11 @@ hostname -I | awk '{print $1}'
 ```typescript
 // App.tsx
 import React, { useEffect } from 'react';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 // Initialize outside component to run once
 if (__DEV__) {
-  AndroidDebugger.init({
-    host: '192.168.1.100',
-    port: 8347,
-  });
+  AndroidDebugger.init();
 }
 
 export default function App() {

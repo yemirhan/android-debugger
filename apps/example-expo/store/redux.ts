@@ -1,5 +1,5 @@
 import { configureStore, createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 // Counter slice
 const counterSlice = createSlice({

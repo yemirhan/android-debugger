@@ -52,7 +52,7 @@ export function SdkPanel() {
         <div className="bg-surface rounded-lg p-4 border border-border-muted animate-fade-in">
           <h3 className="text-sm font-medium text-text-primary mb-3">Add SDK to your React Native app</h3>
           <pre className="bg-background rounded-md p-3 text-xs font-mono text-text-secondary overflow-x-auto">
-{`import { AndroidDebugger } from '@android-debugger/sdk';
+{`import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 // Initialize the SDK (no host/port needed!)
 AndroidDebugger.init();

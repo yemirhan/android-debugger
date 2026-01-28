@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { AndroidDebugger } from '@android-debugger/sdk';
+import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
 // Create axios instance for JSONPlaceholder API
 export const api = axios.create({

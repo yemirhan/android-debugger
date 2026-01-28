@@ -56,7 +56,7 @@ class AndroidDebuggerSDK {
    *
    * @example
    * import axios from 'axios';
-   * import { AndroidDebugger } from '@android-debugger/sdk';
+   * import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
    *
    * const api = axios.create({ baseURL: 'https://api.example.com' });
    * AndroidDebugger.interceptAxios(api);
