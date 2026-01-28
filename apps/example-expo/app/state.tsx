@@ -2,10 +2,8 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AndroidDebugger } from '@android-debugger/sdk';
 import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
-import { useConnection } from './_layout';
 
 export default function StateScreen() {
-  const { isConnected } = useConnection();
   const [results, setResults] = useState<string[]>([]);
   const [counter, setCounter] = useState(0);
   const [user, setUser] = useState({ name: 'John Doe', email: 'john@example.com' });
@@ -122,7 +120,7 @@ export default function StateScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <ConnectionStatus isConnected={isConnected} />
+      <ConnectionStatus />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>State Snapshots</Text>

@@ -1,13 +1,10 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FeatureCard, ConnectionStatus } from '@/components';
-import { useConnection } from './_layout';
 
 export default function HomeScreen() {
-  const { isConnected } = useConnection();
-
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <ConnectionStatus isConnected={isConnected} />
+      <ConnectionStatus />
 
       <View style={styles.header}>
         <Text style={styles.title}>SDK Feature Demos</Text>
@@ -60,8 +57,8 @@ export default function HomeScreen() {
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>
-          Make sure the Android Debugger desktop app is running and update the host IP in
-          app/_layout.tsx to your computer's IP address.
+          SDK messages are sent via logcat and captured by the desktop app through ADB.
+          No IP address or port configuration needed!
         </Text>
       </View>
     </ScrollView>

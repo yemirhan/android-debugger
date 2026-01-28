@@ -55,12 +55,8 @@ export interface ElectronAPI {
   killApp: (deviceId: string, packageName: string) => Promise<void>;
   clearAppData: (deviceId: string, packageName: string) => Promise<void>;
 
-  // WebSocket
-  startWsServer: (port: number) => Promise<void>;
-  stopWsServer: () => Promise<void>;
-  getWsConnections: () => Promise<number>;
-  onSdkMessage: (callback: (data: { clientId: string; message: SdkMessage }) => void) => UnsubscribeFn;
-  onSdkConnection: (callback: (data: { clientId: string; connected: boolean }) => void) => UnsubscribeFn;
+  // SDK Messages (received via logcat when logcat is running)
+  onSdkMessage: (callback: (data: { message: SdkMessage }) => void) => UnsubscribeFn;
 
   // App Metadata
   getAppMetadata: (deviceId: string, packageName: string) => Promise<AppMetadata | null>;
@@ -152,21 +148,12 @@ const electronAPI: ElectronAPI = {
   clearAppData: (deviceId, packageName) =>
     ipcRenderer.invoke('adb:clear-app-data', deviceId, packageName),
 
-  // WebSocket
-  startWsServer: (port) => ipcRenderer.invoke('ws:start-server', port),
-  stopWsServer: () => ipcRenderer.invoke('ws:stop-server'),
-  getWsConnections: () => ipcRenderer.invoke('ws:get-connections'),
+  // SDK Messages (received via logcat)
   onSdkMessage: (callback) => {
-    const listener = (_: Electron.IpcRendererEvent, data: { clientId: string; message: SdkMessage }) =>
+    const listener = (_: Electron.IpcRendererEvent, data: { message: SdkMessage }) =>
       callback(data);
     ipcRenderer.on('sdk-message', listener);
     return () => ipcRenderer.removeListener('sdk-message', listener);
-  },
-  onSdkConnection: (callback) => {
-    const listener = (_: Electron.IpcRendererEvent, data: { clientId: string; connected: boolean }) =>
-      callback(data);
-    ipcRenderer.on('sdk-connection', listener);
-    return () => ipcRenderer.removeListener('sdk-connection', listener);
   },
 
   // App Metadata

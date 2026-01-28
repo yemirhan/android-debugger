@@ -1,10 +1,8 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
-import { useConnection } from './_layout';
 
 export default function ConsoleScreen() {
-  const { isConnected } = useConnection();
   const [results, setResults] = useState<string[]>([]);
 
   const addResult = (message: string) => {
@@ -67,7 +65,7 @@ export default function ConsoleScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <ConnectionStatus isConnected={isConnected} />
+      <ConnectionStatus />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Basic Logging</Text>

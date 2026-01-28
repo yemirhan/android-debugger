@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join } from 'path';
 import * as fs from 'fs';
 import { adbService } from './adb';
-import { wsService } from './websocket';
 import type {
   LogEntry,
   MemoryInfo,
@@ -200,25 +199,10 @@ function setupIpcHandlers(): void {
     return adbService.clearAppData(deviceId, packageName);
   });
 
-  // WebSocket handlers
-  ipcMain.handle('ws:start-server', async (_, port: number) => {
-    await wsService.start(port);
-
-    wsService.onMessage((clientId: string, message: SdkMessage) => {
-      mainWindow?.webContents.send('sdk-message', { clientId, message });
-    });
-
-    wsService.onConnection((clientId: string, connected: boolean) => {
-      mainWindow?.webContents.send('sdk-connection', { clientId, connected });
-    });
-  });
-
-  ipcMain.handle('ws:stop-server', async () => {
-    await wsService.stop();
-  });
-
-  ipcMain.handle('ws:get-connections', () => {
-    return wsService.getConnectionCount();
+  // SDK message forwarding - SDK messages are now parsed from logcat
+  // and forwarded to the renderer automatically when logcat is running
+  adbService.on('sdk-message', (message: SdkMessage) => {
+    mainWindow?.webContents.send('sdk-message', { message });
   });
 
   // App Metadata handlers
@@ -400,7 +384,6 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   adbService.stopAll();
-  wsService.stop();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -409,5 +392,4 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   adbService.stopAll();
-  wsService.stop();
 });

@@ -4,9 +4,6 @@ import { useSdkContext } from '../contexts/SdkContext';
 
 export function SdkPanel() {
   const {
-    port,
-    isRunning,
-    connectionCount,
     consoleLogs,
     events,
     states,
@@ -33,48 +30,42 @@ export function SdkPanel() {
     { id: 'state' as const, label: 'State', count: states.length },
   ];
 
+  const hasData = consoleLogs.length > 0 || events.length > 0 || states.length > 0;
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-base font-semibold">SDK Connection</h2>
-          <div
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${
-              isRunning ? 'bg-accent/10' : 'bg-surface-hover'
-            }`}
-          >
-            <div
-              className={`w-1.5 h-1.5 rounded-full ${
-                isRunning ? 'bg-accent animate-pulse-dot' : 'bg-text-muted'
-              }`}
-            />
-            <span className={`text-xs font-mono ${isRunning ? 'text-accent' : 'text-text-muted'}`}>
-              {isRunning ? `Port ${port}` : 'Stopped'}
+          <h2 className="text-base font-semibold">SDK Data</h2>
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent/10">
+            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
+            <span className="text-xs font-mono text-accent">
+              Listening via ADB
             </span>
           </div>
-          {connectionCount > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent/10">
-              <span className="text-xs text-accent font-medium">
-                {connectionCount} client{connectionCount !== 1 ? 's' : ''}
-              </span>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Connection instructions */}
-      {isRunning && connectionCount === 0 && (
+      {/* Info banner when no SDK data */}
+      {!hasData && (
         <div className="bg-surface rounded-lg p-4 border border-border-muted animate-fade-in">
-          <h3 className="text-sm font-medium text-text-primary mb-3">Connect your React Native app</h3>
+          <h3 className="text-sm font-medium text-text-primary mb-3">Add SDK to your React Native app</h3>
           <pre className="bg-background rounded-md p-3 text-xs font-mono text-text-secondary overflow-x-auto">
 {`import { AndroidDebugger } from '@android-debugger/sdk';
 
-AndroidDebugger.init({
-  host: '<YOUR_IP_ADDRESS>',
-  port: ${port},
-});`}
+// Initialize the SDK (no host/port needed!)
+AndroidDebugger.init();
+
+// Optional: Track custom events
+AndroidDebugger.trackEvent('user_action', { button: 'login' });
+
+// Optional: Send state snapshots
+AndroidDebugger.sendState('user', { name: 'John' });`}
           </pre>
+          <p className="text-xs text-text-muted mt-3">
+            SDK messages are automatically captured from logcat. Make sure logcat is running in the Logs panel.
+          </p>
         </div>
       )}
 
@@ -120,6 +111,7 @@ AndroidDebugger.init({
                     </svg>
                   </div>
                   <p className="text-sm">No console logs captured</p>
+                  <p className="text-xs mt-1">Requires SDK in your app</p>
                 </div>
               ) : (
                 consoleLogs.map((log) => (
@@ -159,6 +151,7 @@ AndroidDebugger.init({
                     </svg>
                   </div>
                   <p className="text-sm">No custom events captured</p>
+                  <p className="text-xs mt-1">Requires SDK in your app</p>
                 </div>
               ) : (
                 events.map((event, i) => (
@@ -199,6 +192,7 @@ AndroidDebugger.init({
                     </svg>
                   </div>
                   <p className="text-sm">No state snapshots captured</p>
+                  <p className="text-xs mt-1">Requires SDK in your app</p>
                 </div>
               ) : (
                 states.map((state, i) => (

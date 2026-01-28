@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, TextInput } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
-import { useConnection } from './_layout';
 import {
   RootState,
   increment,
@@ -17,7 +16,6 @@ import {
 } from '@/store/redux';
 
 export default function ReduxScreen() {
-  const { isConnected } = useConnection();
   const dispatch = useDispatch();
   const counter = useSelector((state: RootState) => state.counter);
   const user = useSelector((state: RootState) => state.user);
@@ -85,7 +83,7 @@ export default function ReduxScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <ConnectionStatus isConnected={isConnected} />
+      <ConnectionStatus />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Counter Slice</Text>

@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import type { SdkMessage, ConsoleMessage, CustomEvent, StateSnapshot, NetworkRequest } from '@android-debugger/shared';
-import { DEFAULT_WS_PORT } from '@android-debugger/shared';
 
 interface ConsoleLine {
   id: string;
@@ -10,12 +9,6 @@ interface ConsoleLine {
 }
 
 interface SdkContextValue {
-  // Server state
-  port: number;
-  isRunning: boolean;
-  connectionCount: number;
-  connections: Map<string, boolean>;
-
   // SDK data
   consoleLogs: ConsoleLine[];
   events: CustomEvent[];
@@ -26,9 +19,6 @@ interface SdkContextValue {
   selectedRequest: NetworkRequest | null;
 
   // Actions
-  setPort: (port: number) => void;
-  startServer: () => Promise<void>;
-  stopServer: () => Promise<void>;
   clearConsoleLogs: () => void;
   clearEvents: () => void;
   clearStates: () => void;
@@ -51,12 +41,6 @@ interface SdkProviderProps {
 }
 
 export function SdkProvider({ children }: SdkProviderProps) {
-  // Server state
-  const [port, setPort] = useState(DEFAULT_WS_PORT);
-  const [isRunning, setIsRunning] = useState(false);
-  const [connectionCount, setConnectionCount] = useState(0);
-  const [connections, setConnections] = useState<Map<string, boolean>>(new Map());
-
   // SDK data
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLine[]>([]);
   const [events, setEvents] = useState<CustomEvent[]>([]);
@@ -65,28 +49,6 @@ export function SdkProvider({ children }: SdkProviderProps) {
   // Network data
   const [requests, setRequests] = useState<NetworkRequest[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<NetworkRequest | null>(null);
-
-  // Start server
-  const startServer = useCallback(async () => {
-    try {
-      await window.electronAPI.startWsServer(port);
-      setIsRunning(true);
-    } catch (error) {
-      console.error('Failed to start WebSocket server:', error);
-    }
-  }, [port]);
-
-  // Stop server
-  const stopServer = useCallback(async () => {
-    try {
-      await window.electronAPI.stopWsServer();
-      setIsRunning(false);
-      setConnectionCount(0);
-      setConnections(new Map());
-    } catch (error) {
-      console.error('Failed to stop WebSocket server:', error);
-    }
-  }, []);
 
   // Clear functions
   const clearConsoleLogs = useCallback(() => setConsoleLogs([]), []);
@@ -97,9 +59,10 @@ export function SdkProvider({ children }: SdkProviderProps) {
     setSelectedRequest(null);
   }, []);
 
-  // Listen for SDK messages and connections at app level
+  // Listen for SDK messages from logcat
+  // SDK messages are automatically parsed from logcat when logcat is running
   useEffect(() => {
-    const unsubscribeMessage = window.electronAPI.onSdkMessage(({ clientId, message }: { clientId: string; message: SdkMessage }) => {
+    const unsubscribeMessage = window.electronAPI.onSdkMessage(({ message }: { message: SdkMessage }) => {
       switch (message.type) {
         case 'console': {
           const consoleMsg = message.payload as ConsoleMessage;
@@ -150,38 +113,17 @@ export function SdkProvider({ children }: SdkProviderProps) {
       }
     });
 
-    const unsubscribeConnection = window.electronAPI.onSdkConnection(({ clientId, connected }: { clientId: string; connected: boolean }) => {
-      setConnections((prev) => {
-        const updated = new Map(prev);
-        if (connected) {
-          updated.set(clientId, true);
-        } else {
-          updated.delete(clientId);
-        }
-        return updated;
-      });
-      setConnectionCount((prev) => prev + (connected ? 1 : -1));
-    });
-
     return () => {
       unsubscribeMessage();
-      unsubscribeConnection();
     };
   }, []);
 
   const value: SdkContextValue = {
-    port,
-    isRunning,
-    connectionCount,
-    connections,
     consoleLogs,
     events,
     states,
     requests,
     selectedRequest,
-    setPort,
-    startServer,
-    stopServer,
     clearConsoleLogs,
     clearEvents,
     clearStates,
