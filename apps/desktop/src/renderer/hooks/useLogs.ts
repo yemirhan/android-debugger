@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import type { LogEntry, LogLevel, Device } from '@android-debugger/shared';
-import { MAX_LOG_ENTRIES } from '@android-debugger/shared';
+import { useLogsContext } from '../contexts';
 
 export interface LogFilter {
   search: string;
@@ -9,54 +9,18 @@ export interface LogFilter {
 }
 
 export function useLogs(device: Device | null) {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const { logs, isStreaming, isPaused, clearLogs: clearLogsContext, togglePause } = useLogsContext();
+
   const [filter, setFilter] = useState<LogFilter>({
     search: '',
     levels: new Set(['V', 'D', 'I', 'W', 'E', 'F'] as LogLevel[]),
     tags: [],
   });
-  const [isPaused, setIsPaused] = useState(false);
-  const pausedLogsRef = useRef<LogEntry[]>([]);
-
-  // Start streaming logs
-  const startStreaming = useCallback((filters?: string[]) => {
-    if (!device) return;
-
-    window.electronAPI.startLogcat(device.id, filters);
-    setIsStreaming(true);
-  }, [device]);
-
-  // Stop streaming logs
-  const stopStreaming = useCallback(() => {
-    window.electronAPI.stopLogcat();
-    setIsStreaming(false);
-  }, []);
 
   // Clear logs
   const clearLogs = useCallback(async () => {
-    if (device) {
-      await window.electronAPI.clearLogcat(device.id);
-    }
-    setLogs([]);
-    pausedLogsRef.current = [];
-  }, [device]);
-
-  // Pause/resume
-  const togglePause = useCallback(() => {
-    if (isPaused) {
-      // Resume: merge paused logs into main logs (paused logs are newer, go to front)
-      setLogs((prev) => {
-        const merged = [...pausedLogsRef.current, ...prev];
-        pausedLogsRef.current = [];
-        if (merged.length > MAX_LOG_ENTRIES) {
-          return merged.slice(0, MAX_LOG_ENTRIES);
-        }
-        return merged;
-      });
-    }
-    setIsPaused((prev) => !prev);
-  }, [isPaused]);
+    await clearLogsContext(device?.id);
+  }, [device?.id, clearLogsContext]);
 
   // Update filter
   const updateFilter = useCallback((newFilter: Partial<LogFilter>) => {
@@ -75,42 +39,6 @@ export function useLogs(device: Device | null) {
       return { ...prev, levels: newLevels };
     });
   }, []);
-
-  // Listen for log entries - new logs added to beginning (newest first)
-  useEffect(() => {
-    const unsubscribe = window.electronAPI.onLogEntry((entry: LogEntry) => {
-      if (isPaused) {
-        // Store in paused buffer (newest first)
-        pausedLogsRef.current.unshift(entry);
-        if (pausedLogsRef.current.length > MAX_LOG_ENTRIES) {
-          pausedLogsRef.current = pausedLogsRef.current.slice(0, MAX_LOG_ENTRIES);
-        }
-      } else {
-        setLogs((prev) => {
-          const newLogs = [entry, ...prev];
-          if (newLogs.length > MAX_LOG_ENTRIES) {
-            return newLogs.slice(0, MAX_LOG_ENTRIES);
-          }
-          return newLogs;
-        });
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [isPaused]);
-
-  // Track streaming status based on device
-  // Note: Logcat is now managed at the App level by useBackgroundLogcat
-  // This hook just listens for log entries
-  useEffect(() => {
-    if (device) {
-      setIsStreaming(true);
-    } else {
-      setIsStreaming(false);
-    }
-  }, [device?.id]);
 
   // Filter logs
   const filteredLogs = logs.filter((log) => {
@@ -158,8 +86,6 @@ export function useLogs(device: Device | null) {
     isStreaming,
     isPaused,
     filter,
-    startStreaming,
-    stopStreaming,
     clearLogs,
     togglePause,
     updateFilter,

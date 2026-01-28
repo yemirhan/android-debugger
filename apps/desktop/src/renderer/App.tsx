@@ -15,7 +15,7 @@ import { FileInspectorPanel } from './components/FileInspectorPanel';
 import { IntentTesterPanel } from './components/IntentTesterPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
-import { SdkProvider } from './contexts/SdkContext';
+import { SdkProvider, LogsProvider } from './contexts';
 
 export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester';
 
@@ -108,25 +108,27 @@ function App() {
 
   return (
     <SdkProvider>
-      <div className="h-screen flex flex-col bg-background text-text-primary">
-        <Header
-          devices={devices}
-          selectedDevice={selectedDevice}
-          onDeviceSelect={handleDeviceSelect}
-          onRefreshDevices={refreshDevices}
-          loading={devicesLoading}
-          packageName={packageName}
-          onPackageChange={handlePackageChange}
-        />
-        <div className="flex-1 flex overflow-hidden">
-          <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
-          <main className="flex-1 flex flex-col overflow-hidden">
-            <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
-              {renderPanel()}
-            </div>
-          </main>
+      <LogsProvider selectedDevice={selectedDevice}>
+        <div className="h-screen flex flex-col bg-background text-text-primary">
+          <Header
+            devices={devices}
+            selectedDevice={selectedDevice}
+            onDeviceSelect={handleDeviceSelect}
+            onRefreshDevices={refreshDevices}
+            loading={devicesLoading}
+            packageName={packageName}
+            onPackageChange={handlePackageChange}
+          />
+          <div className="flex-1 flex overflow-hidden">
+            <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+            <main className="flex-1 flex flex-col overflow-hidden">
+              <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
+                {renderPanel()}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
+      </LogsProvider>
     </SdkProvider>
   );
 }
