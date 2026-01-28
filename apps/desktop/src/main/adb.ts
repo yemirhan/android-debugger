@@ -267,6 +267,7 @@ export class AdbService extends EventEmitter {
         const sdkMessage = this.logcatParser.parseLogLine(line);
         if (sdkMessage) {
           // Emit SDK message event
+          console.log('[AdbService] Emitting SDK message:', sdkMessage.type);
           this.emit('sdk-message', sdkMessage);
           if (this.sdkMessageCallback) {
             this.sdkMessageCallback(sdkMessage);

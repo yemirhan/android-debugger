@@ -202,6 +202,7 @@ function setupIpcHandlers(): void {
   // SDK message forwarding - SDK messages are now parsed from logcat
   // and forwarded to the renderer automatically when logcat is running
   adbService.on('sdk-message', (message: SdkMessage) => {
+    console.log('[Main] Received SDK message from ADB, forwarding to renderer:', message.type);
     mainWindow?.webContents.send('sdk-message', { message });
   });
 

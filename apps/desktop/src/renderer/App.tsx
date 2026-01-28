@@ -14,6 +14,7 @@ import { DevOptionsPanel } from './components/DevOptionsPanel';
 import { FileInspectorPanel } from './components/FileInspectorPanel';
 import { IntentTesterPanel } from './components/IntentTesterPanel';
 import { useDevices } from './hooks/useDevices';
+import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { SdkProvider } from './contexts/SdkContext';
 
 export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester';
@@ -23,6 +24,10 @@ function App() {
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [packageName, setPackageName] = useState<string>('');
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
+
+  // Start logcat in background when device is selected
+  // This ensures SDK messages are captured regardless of which panel is active
+  useBackgroundLogcat(selectedDevice);
 
   // Auto-select first device
   useEffect(() => {

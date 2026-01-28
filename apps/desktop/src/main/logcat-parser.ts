@@ -36,10 +36,16 @@ export class LogcatMessageParser {
       return null;
     }
 
+    // Debug: log that we found an SDK message
+    console.log('[LogcatParser] Found SDK prefix in line:', line.substring(0, 100));
+
     const match = line.match(this.MESSAGE_PATTERN);
     if (!match) {
+      console.log('[LogcatParser] Regex did not match. Line:', line);
       return null;
     }
+
+    console.log('[LogcatParser] Regex matched, parsing message');
 
     const [, seq, typeStr, compressedFlag, indexStr, totalStr, payload] = match;
     const sequenceId = seq;

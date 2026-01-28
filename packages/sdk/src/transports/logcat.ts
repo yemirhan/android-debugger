@@ -33,6 +33,10 @@ interface ChunkInfo {
   compressed: boolean;
 }
 
+// Store reference to the ORIGINAL console.log before any interception
+// This is captured at module load time, before interceptors are set up
+const originalConsoleLog = console.log.bind(console);
+
 export class LogcatTransport {
   private sequenceNumber = 0;
   private readonly prefix = 'SDKMSG';
@@ -41,8 +45,9 @@ export class LogcatTransport {
     const chunks = this.chunkMessage(message);
     for (const chunk of chunks) {
       const logEntry = this.formatLogEntry(message.type, chunk);
+      // Use the ORIGINAL console.log to avoid infinite loop with console interceptor
       // React Native console.log appears in logcat under ReactNativeJS tag
-      console.log(logEntry);
+      originalConsoleLog(logEntry);
     }
   }
 

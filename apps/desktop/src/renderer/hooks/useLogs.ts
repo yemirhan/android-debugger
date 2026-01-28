@@ -101,17 +101,15 @@ export function useLogs(device: Device | null) {
     };
   }, [isPaused]);
 
-  // Auto-start streaming when device is selected
+  // Track streaming status based on device
+  // Note: Logcat is now managed at the App level by useBackgroundLogcat
+  // This hook just listens for log entries
   useEffect(() => {
-    if (device && !isStreaming) {
-      startStreaming();
+    if (device) {
+      setIsStreaming(true);
+    } else {
+      setIsStreaming(false);
     }
-
-    return () => {
-      if (isStreaming) {
-        stopStreaming();
-      }
-    };
   }, [device?.id]);
 
   // Filter logs
