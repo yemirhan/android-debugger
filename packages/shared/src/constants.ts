@@ -5,6 +5,9 @@ export const FPS_POLL_INTERVAL = 1000;
 export const DEVICE_POLL_INTERVAL = 3000;
 export const BATTERY_POLL_INTERVAL = 5000;
 export const NETWORK_STATS_POLL_INTERVAL = 5000;
+export const ACTIVITY_STACK_POLL_INTERVAL = 2000;
+export const JOB_SCHEDULER_POLL_INTERVAL = 5000;
+export const ALARM_MONITOR_POLL_INTERVAL = 5000;
 
 // Memory leak detection thresholds (MB)
 export const MEMORY_WARNING_THRESHOLD = 300;

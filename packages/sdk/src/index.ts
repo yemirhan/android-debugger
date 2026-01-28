@@ -1,10 +1,16 @@
 import type { SdkMessage, CustomEvent, StateSnapshot, PerformanceMark } from '@android-debugger/shared';
 import { DebuggerClient } from './client';
-import { interceptConsole, interceptNetwork, interceptAxios } from './interceptors';
+import { interceptConsole, interceptNetwork, interceptAxios, interceptZustandStore, interceptWebSocket } from './interceptors';
 
 export interface AndroidDebuggerOptions {
   interceptConsole?: boolean;
   interceptNetwork?: boolean;
+  interceptWebSocket?: boolean;
+}
+
+interface ZustandStore {
+  getState: () => unknown;
+  subscribe: (listener: (state: unknown, prevState: unknown) => void) => () => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -14,7 +20,9 @@ class AndroidDebuggerSDK {
   private client: DebuggerClient | null = null;
   private restoreConsole: (() => void) | null = null;
   private restoreNetwork: (() => void) | null = null;
+  private restoreWebSocket: (() => void) | null = null;
   private axiosRestoreFns: (() => void)[] = [];
+  private zustandRestoreFns: (() => void)[] = [];
   private performanceMarks: Map<string, number> = new Map();
   private isInitialized = false;
 
@@ -33,6 +41,7 @@ class AndroidDebuggerSDK {
     const {
       interceptConsole: shouldInterceptConsole = true,
       interceptNetwork: shouldInterceptNetwork = true,
+      interceptWebSocket: shouldInterceptWebSocket = false,
     } = options;
 
     this.client = new DebuggerClient();
@@ -44,6 +53,10 @@ class AndroidDebuggerSDK {
 
     if (shouldInterceptNetwork) {
       this.restoreNetwork = interceptNetwork((msg) => this.send(msg));
+    }
+
+    if (shouldInterceptWebSocket) {
+      this.restoreWebSocket = interceptWebSocket((msg) => this.send(msg));
     }
 
     this.isInitialized = true;
@@ -77,6 +90,36 @@ class AndroidDebuggerSDK {
   }
 
   /**
+   * Intercept a Zustand store for state tracking
+   * Call this for each Zustand store you want to monitor
+   *
+   * @example
+   * import { create } from 'zustand';
+   * import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
+   *
+   * const useStore = create((set) => ({
+   *   count: 0,
+   *   increment: () => set((state) => ({ count: state.count + 1 })),
+   * }));
+   *
+   * AndroidDebugger.interceptZustandStore(useStore, 'counter');
+   */
+  interceptZustandStore(store: ZustandStore, name: string): () => void {
+    if (!this.isInitialized) {
+      console.warn('[AndroidDebugger] SDK not initialized. Call init() first.');
+      return () => {};
+    }
+
+    const restore = interceptZustandStore(store, name, (msg) => this.send(msg));
+    this.zustandRestoreFns.push(restore);
+
+    return () => {
+      restore();
+      this.zustandRestoreFns = this.zustandRestoreFns.filter((fn) => fn !== restore);
+    };
+  }
+
+  /**
    * Disconnect and cleanup
    */
   destroy(): void {
@@ -84,11 +127,15 @@ class AndroidDebuggerSDK {
 
     this.restoreConsole?.();
     this.restoreNetwork?.();
+    this.restoreWebSocket?.();
     this.axiosRestoreFns.forEach((fn) => fn());
+    this.zustandRestoreFns.forEach((fn) => fn());
 
     this.restoreConsole = null;
     this.restoreNetwork = null;
+    this.restoreWebSocket = null;
     this.axiosRestoreFns = [];
+    this.zustandRestoreFns = [];
     this.client = null;
     this.isInitialized = false;
     this.performanceMarks.clear();
@@ -201,4 +248,4 @@ export const AndroidDebugger = new AndroidDebuggerSDK();
 export { DebuggerClient } from './client';
 
 // Re-export interceptors for advanced usage
-export { interceptAxios, interceptNetwork, interceptConsole } from './interceptors';
+export { interceptAxios, interceptNetwork, interceptConsole, interceptZustandStore, interceptWebSocket } from './interceptors';

@@ -55,6 +55,20 @@ export default function HomeScreen() {
         href="/redux"
       />
 
+      <FeatureCard
+        title="Zustand"
+        description="Track Zustand store state changes"
+        icon="archive"
+        href="/zustand"
+      />
+
+      <FeatureCard
+        title="WebSocket"
+        description="Monitor WebSocket connections and messages"
+        icon="flash"
+        href="/websocket"
+      />
+
       <View style={styles.footer}>
         <Text style={styles.footerText}>
           SDK messages are sent via logcat and captured by the desktop app through ADB.

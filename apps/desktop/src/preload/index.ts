@@ -24,6 +24,9 @@ import type {
   CrashEntry,
   ServiceInfo,
   AppNetworkStats,
+  ActivityStackInfo,
+  JobSchedulerInfo,
+  AlarmMonitorInfo,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -136,6 +139,15 @@ export interface ElectronAPI {
   startNetworkStatsMonitor: (deviceId: string, packageName: string, interval?: number) => void;
   stopNetworkStatsMonitor: () => void;
   onNetworkStatsUpdate: (callback: (stats: AppNetworkStats) => void) => UnsubscribeFn;
+
+  // Activity Stack
+  getActivityStack: (deviceId: string, packageName: string) => Promise<ActivityStackInfo | null>;
+
+  // Job Scheduler
+  getScheduledJobs: (deviceId: string, packageName?: string) => Promise<JobSchedulerInfo | null>;
+
+  // Alarm Monitor
+  getScheduledAlarms: (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -327,6 +339,18 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('network-stats-update', listener);
     return () => ipcRenderer.removeListener('network-stats-update', listener);
   },
+
+  // Activity Stack
+  getActivityStack: (deviceId, packageName) =>
+    ipcRenderer.invoke('adb:get-activity-stack', deviceId, packageName),
+
+  // Job Scheduler
+  getScheduledJobs: (deviceId, packageName) =>
+    ipcRenderer.invoke('adb:get-scheduled-jobs', deviceId, packageName),
+
+  // Alarm Monitor
+  getScheduledAlarms: (deviceId, packageName) =>
+    ipcRenderer.invoke('adb:get-scheduled-alarms', deviceId, packageName),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

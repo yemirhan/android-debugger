@@ -104,6 +104,9 @@ import type {
   BatteryInfo,
   CrashEntry,
   AppNetworkStats,
+  ActivityStackInfo,
+  JobSchedulerInfo,
+  AlarmMonitorInfo,
 } from '@android-debugger/shared';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
@@ -553,6 +556,21 @@ function setupIpcHandlers(): void {
 
   ipcMain.on('adb:stop-network-stats-monitor', () => {
     adbService.stopNetworkStatsMonitor();
+  });
+
+  // Activity Stack handlers
+  ipcMain.handle('adb:get-activity-stack', async (_, deviceId: string, packageName: string) => {
+    return adbService.getActivityStack(deviceId, packageName);
+  });
+
+  // Job Scheduler handlers
+  ipcMain.handle('adb:get-scheduled-jobs', async (_, deviceId: string, packageName?: string) => {
+    return adbService.getScheduledJobs(deviceId, packageName);
+  });
+
+  // Alarm Monitor handlers
+  ipcMain.handle('adb:get-scheduled-alarms', async (_, deviceId: string, packageName?: string) => {
+    return adbService.getScheduledAlarms(deviceId, packageName);
   });
 
   // Auto-updater handlers

@@ -17,11 +17,15 @@ import { BatteryPanel } from './components/BatteryPanel';
 import { CrashPanel } from './components/CrashPanel';
 import { ServicesPanel } from './components/ServicesPanel';
 import { NetworkStatsPanel } from './components/NetworkStatsPanel';
+import { ActivityStackPanel } from './components/ActivityStackPanel';
+import { JobSchedulerPanel } from './components/JobSchedulerPanel';
+import { AlarmMonitorPanel } from './components/AlarmMonitorPanel';
+import { WebSocketPanel } from './components/WebSocketPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { SdkProvider, LogsProvider } from './contexts';
 
-export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats';
+export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('memory');
@@ -113,6 +117,14 @@ function App() {
         return <ServicesPanel device={selectedDevice} packageName={packageName} />;
       case 'network-stats':
         return <NetworkStatsPanel device={selectedDevice} packageName={packageName} />;
+      case 'activity-stack':
+        return <ActivityStackPanel device={selectedDevice} packageName={packageName} />;
+      case 'jobs':
+        return <JobSchedulerPanel device={selectedDevice} packageName={packageName} />;
+      case 'alarms':
+        return <AlarmMonitorPanel device={selectedDevice} packageName={packageName} />;
+      case 'websocket':
+        return <WebSocketPanel />;
       default:
         return null;
     }

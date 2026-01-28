@@ -75,7 +75,9 @@ export type SdkMessageType =
   | 'network'
   | 'state'
   | 'performance'
-  | 'custom';
+  | 'custom'
+  | 'zustand'
+  | 'websocket';
 
 export interface SdkMessage {
   type: SdkMessageType;
@@ -297,6 +299,15 @@ export interface IpcChannels {
   'adb:get-network-stats': (deviceId: string, packageName?: string) => Promise<AppNetworkStats | null>;
   'adb:start-network-stats-monitor': (deviceId: string, packageName: string, interval: number) => void;
   'adb:stop-network-stats-monitor': () => void;
+
+  // Activity Stack
+  'adb:get-activity-stack': (deviceId: string, packageName: string) => Promise<ActivityStackInfo | null>;
+
+  // Job Scheduler
+  'adb:get-scheduled-jobs': (deviceId: string, packageName?: string) => Promise<JobSchedulerInfo | null>;
+
+  // Alarm Monitor
+  'adb:get-scheduled-alarms': (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
 }
 
 // Event types from main to renderer
@@ -386,4 +397,112 @@ export interface AppNetworkStats {
   packageName: string;
   wifi: NetworkStats;
   mobile: NetworkStats;
+}
+
+// Activity Stack types
+export interface ActivityInfo {
+  name: string;              // e.g., "com.example/.MainActivity"
+  shortName: string;         // e.g., "MainActivity"
+  packageName: string;
+  taskId: number;
+  state: 'resumed' | 'paused' | 'stopped' | 'destroyed';
+  isTop: boolean;
+}
+
+export interface TaskStack {
+  taskId: number;
+  rootActivity: string;
+  activities: ActivityInfo[];
+  isVisible: boolean;
+}
+
+export interface ActivityStackInfo {
+  timestamp: number;
+  packageName: string;
+  tasks: TaskStack[];
+  focusedActivity?: string;
+}
+
+// Job Scheduler types
+export interface ScheduledJob {
+  jobId: number;
+  packageName: string;
+  serviceName: string;
+  state: 'pending' | 'active' | 'ready' | 'waiting';
+  constraints: {
+    requiresCharging: boolean;
+    requiresDeviceIdle: boolean;
+    requiresNetwork: 'none' | 'any' | 'unmetered' | 'cellular';
+    requiresBatteryNotLow: boolean;
+    requiresStorageNotLow: boolean;
+  };
+  timing: {
+    periodicInterval?: number;
+    minLatency?: number;
+    lastRunTime?: number;
+    nextRunTime?: number;
+  };
+  isPersisted: boolean;
+}
+
+export interface JobSchedulerInfo {
+  timestamp: number;
+  packageName?: string;
+  jobs: ScheduledJob[];
+}
+
+// Alarm Monitor types
+export interface ScheduledAlarm {
+  id: string;
+  packageName: string;
+  type: 'RTC' | 'RTC_WAKEUP' | 'ELAPSED_REALTIME' | 'ELAPSED_REALTIME_WAKEUP';
+  triggerTime: number;
+  repeatInterval?: number;
+  operation: string;
+  tag?: string;
+  isExact: boolean;
+  isRepeating: boolean;
+}
+
+export interface AlarmMonitorInfo {
+  timestamp: number;
+  packageName?: string;
+  alarms: ScheduledAlarm[];
+  nextAlarmTime?: number;
+}
+
+// Zustand (SDK) types
+export interface ZustandStoreSnapshot {
+  name: string;
+  state: unknown;
+  previousState?: unknown;
+  timestamp: number;
+}
+
+// WebSocket (SDK) types
+export interface WebSocketConnection {
+  id: string;
+  url: string;
+  protocol?: string;
+  readyState: 0 | 1 | 2 | 3;
+  openedAt?: number;
+  closedAt?: number;
+}
+
+export interface WebSocketMessage {
+  id: string;
+  connectionId: string;
+  direction: 'sent' | 'received';
+  type: 'text' | 'binary';
+  data: string;
+  size: number;
+  timestamp: number;
+}
+
+export interface WebSocketEvent {
+  connectionId: string;
+  event: 'open' | 'close' | 'error' | 'message';
+  timestamp: number;
+  data?: WebSocketMessage;
+  error?: string;
 }

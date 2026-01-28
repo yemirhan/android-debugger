@@ -1,11 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import type { SdkMessage, ConsoleMessage, CustomEvent, StateSnapshot, NetworkRequest } from '@android-debugger/shared';
+import type { SdkMessage, ConsoleMessage, CustomEvent, StateSnapshot, NetworkRequest, ZustandStoreSnapshot, WebSocketConnection, WebSocketMessage, WebSocketEvent } from '@android-debugger/shared';
 
 interface ConsoleLine {
   id: string;
   level: ConsoleMessage['level'];
   message: string;
   timestamp: number;
+}
+
+interface WebSocketConnectionWithMessages extends WebSocketConnection {
+  messages: WebSocketMessage[];
 }
 
 interface SdkContextValue {
@@ -18,12 +22,23 @@ interface SdkContextValue {
   requests: NetworkRequest[];
   selectedRequest: NetworkRequest | null;
 
+  // Zustand data
+  zustandStores: Map<string, ZustandStoreSnapshot>;
+
+  // WebSocket data
+  wsConnections: Map<string, WebSocketConnectionWithMessages>;
+  wsEvents: WebSocketEvent[];
+  selectedWsConnection: string | null;
+
   // Actions
   clearConsoleLogs: () => void;
   clearEvents: () => void;
   clearStates: () => void;
   clearRequests: () => void;
   setSelectedRequest: (request: NetworkRequest | null) => void;
+  clearZustandStores: () => void;
+  clearWebSocket: () => void;
+  setSelectedWsConnection: (connectionId: string | null) => void;
 }
 
 const SdkContext = createContext<SdkContextValue | null>(null);
@@ -50,6 +65,14 @@ export function SdkProvider({ children }: SdkProviderProps) {
   const [requests, setRequests] = useState<NetworkRequest[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<NetworkRequest | null>(null);
 
+  // Zustand data
+  const [zustandStores, setZustandStores] = useState<Map<string, ZustandStoreSnapshot>>(new Map());
+
+  // WebSocket data
+  const [wsConnections, setWsConnections] = useState<Map<string, WebSocketConnectionWithMessages>>(new Map());
+  const [wsEvents, setWsEvents] = useState<WebSocketEvent[]>([]);
+  const [selectedWsConnection, setSelectedWsConnection] = useState<string | null>(null);
+
   // Clear functions
   const clearConsoleLogs = useCallback(() => setConsoleLogs([]), []);
   const clearEvents = useCallback(() => setEvents([]), []);
@@ -57,6 +80,12 @@ export function SdkProvider({ children }: SdkProviderProps) {
   const clearRequests = useCallback(() => {
     setRequests([]);
     setSelectedRequest(null);
+  }, []);
+  const clearZustandStores = useCallback(() => setZustandStores(new Map()), []);
+  const clearWebSocket = useCallback(() => {
+    setWsConnections(new Map());
+    setWsEvents([]);
+    setSelectedWsConnection(null);
   }, []);
 
   // Listen for SDK messages from logcat
@@ -110,6 +139,81 @@ export function SdkProvider({ children }: SdkProviderProps) {
           });
           break;
         }
+        case 'zustand': {
+          const snapshot = message.payload as ZustandStoreSnapshot;
+          setZustandStores((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(snapshot.name, snapshot);
+            return newMap;
+          });
+          // Also add to states for backward compatibility
+          setStates((prev) => {
+            const existing = prev.findIndex((s) => s.name === `zustand:${snapshot.name}`);
+            const stateSnapshot: StateSnapshot = {
+              name: `zustand:${snapshot.name}`,
+              state: snapshot.state,
+              timestamp: snapshot.timestamp,
+            };
+            if (existing >= 0) {
+              const updated = [...prev];
+              updated[existing] = stateSnapshot;
+              return updated;
+            }
+            return [...prev, stateSnapshot];
+          });
+          break;
+        }
+        case 'websocket': {
+          const payload = message.payload as {
+            type: 'connection' | 'message' | 'event';
+            connection?: WebSocketConnection;
+            message?: WebSocketMessage;
+            event?: WebSocketEvent;
+            closeCode?: number;
+            closeReason?: string;
+          };
+
+          if (payload.type === 'connection' && payload.connection) {
+            setWsConnections((prev) => {
+              const newMap = new Map(prev);
+              newMap.set(payload.connection!.id, {
+                ...payload.connection!,
+                messages: [],
+              });
+              return newMap;
+            });
+          } else if (payload.type === 'message' && payload.message) {
+            const msg = payload.message;
+            setWsConnections((prev) => {
+              const newMap = new Map(prev);
+              const conn = newMap.get(msg.connectionId);
+              if (conn) {
+                newMap.set(msg.connectionId, {
+                  ...conn,
+                  messages: [...conn.messages.slice(-999), msg],
+                });
+              }
+              return newMap;
+            });
+          } else if (payload.type === 'event' && payload.event) {
+            setWsEvents((prev) => [...prev.slice(-99), payload.event!]);
+            // Update connection state if provided
+            if (payload.connection) {
+              setWsConnections((prev) => {
+                const newMap = new Map(prev);
+                const existing = newMap.get(payload.connection!.id);
+                if (existing) {
+                  newMap.set(payload.connection!.id, {
+                    ...existing,
+                    ...payload.connection!,
+                  });
+                }
+                return newMap;
+              });
+            }
+          }
+          break;
+        }
       }
     });
 
@@ -124,11 +228,18 @@ export function SdkProvider({ children }: SdkProviderProps) {
     states,
     requests,
     selectedRequest,
+    zustandStores,
+    wsConnections,
+    wsEvents,
+    selectedWsConnection,
     clearConsoleLogs,
     clearEvents,
     clearStates,
     clearRequests,
     setSelectedRequest,
+    clearZustandStores,
+    clearWebSocket,
+    setSelectedWsConnection,
   };
 
   return <SdkContext.Provider value={value}>{children}</SdkContext.Provider>;

@@ -25,6 +25,13 @@ import type {
   ServiceInfo,
   AppNetworkStats,
   NetworkStats,
+  ActivityStackInfo,
+  ActivityInfo,
+  TaskStack,
+  JobSchedulerInfo,
+  ScheduledJob,
+  AlarmMonitorInfo,
+  ScheduledAlarm,
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
@@ -1592,6 +1599,425 @@ export class AdbService extends EventEmitter {
       clearInterval(this.networkStatsInterval);
       this.networkStatsInterval = null;
     }
+  }
+
+  // ==================== Activity Stack ====================
+
+  async getActivityStack(deviceId: string, packageName: string): Promise<ActivityStackInfo | null> {
+    try {
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell dumpsys activity activities ${packageName}`
+      );
+      return this.parseActivityStack(packageName, stdout);
+    } catch (error) {
+      console.error('Error getting activity stack:', error);
+      return null;
+    }
+  }
+
+  private parseActivityStack(packageName: string, output: string): ActivityStackInfo | null {
+    try {
+      const info: ActivityStackInfo = {
+        timestamp: Date.now(),
+        packageName,
+        tasks: [],
+      };
+
+      const lines = output.split('\n');
+      let currentTask: TaskStack | null = null;
+      let inTaskSection = false;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Parse focused activity
+        const focusedMatch = trimmed.match(/mFocusedActivity:\s*ActivityRecord\{[^}]+\s+([^\s}]+)/);
+        if (focusedMatch) {
+          info.focusedActivity = focusedMatch[1];
+        }
+
+        // Parse Task block: Task{xxx #123 ...} or Task #123
+        const taskMatch = trimmed.match(/Task(?:\{[^}]+)?\s*#(\d+)/);
+        if (taskMatch) {
+          if (currentTask && currentTask.activities.length > 0) {
+            info.tasks.push(currentTask);
+          }
+          currentTask = {
+            taskId: parseInt(taskMatch[1], 10),
+            rootActivity: '',
+            activities: [],
+            isVisible: trimmed.includes('visible=true') || trimmed.includes('isVisible=true'),
+          };
+          inTaskSection = true;
+        }
+
+        // Parse ActivityRecord: * ActivityRecord{xxx com.example/.MainActivity t123}
+        if (currentTask && inTaskSection) {
+          const activityMatch = trimmed.match(/ActivityRecord\{[^}]+\s+([^\s]+)\s+t(\d+)/);
+          if (activityMatch) {
+            const fullName = activityMatch[1];
+            const taskId = parseInt(activityMatch[2], 10);
+
+            // Parse activity name parts
+            let activityPackage = packageName;
+            let shortName = fullName;
+
+            if (fullName.includes('/')) {
+              const parts = fullName.split('/');
+              activityPackage = parts[0];
+              shortName = parts[1].startsWith('.')
+                ? parts[1].substring(1)
+                : parts[1];
+            }
+
+            // Parse state from the line
+            let state: ActivityInfo['state'] = 'stopped';
+            if (trimmed.includes('state=RESUMED') || trimmed.includes('RESUMED')) {
+              state = 'resumed';
+            } else if (trimmed.includes('state=PAUSED') || trimmed.includes('PAUSED')) {
+              state = 'paused';
+            } else if (trimmed.includes('state=STOPPED') || trimmed.includes('STOPPED')) {
+              state = 'stopped';
+            } else if (trimmed.includes('state=DESTROYED') || trimmed.includes('DESTROYED')) {
+              state = 'destroyed';
+            }
+
+            const activityInfo: ActivityInfo = {
+              name: fullName,
+              shortName,
+              packageName: activityPackage,
+              taskId,
+              state,
+              isTop: currentTask.activities.length === 0, // First activity is on top
+            };
+
+            currentTask.activities.push(activityInfo);
+
+            if (!currentTask.rootActivity) {
+              currentTask.rootActivity = fullName;
+            }
+          }
+        }
+      }
+
+      // Add last task
+      if (currentTask && currentTask.activities.length > 0) {
+        info.tasks.push(currentTask);
+      }
+
+      return info;
+    } catch (error) {
+      console.error('Error parsing activity stack:', error);
+      return null;
+    }
+  }
+
+  // ==================== Job Scheduler ====================
+
+  async getScheduledJobs(deviceId: string, packageName?: string): Promise<JobSchedulerInfo | null> {
+    try {
+      const cmd = packageName
+        ? `adb -s ${deviceId} shell dumpsys jobscheduler ${packageName}`
+        : `adb -s ${deviceId} shell dumpsys jobscheduler`;
+
+      const { stdout } = await execAsync(cmd);
+      return this.parseScheduledJobs(stdout, packageName);
+    } catch (error) {
+      console.error('Error getting scheduled jobs:', error);
+      return null;
+    }
+  }
+
+  private parseScheduledJobs(output: string, filterPackage?: string): JobSchedulerInfo | null {
+    try {
+      const info: JobSchedulerInfo = {
+        timestamp: Date.now(),
+        packageName: filterPackage,
+        jobs: [],
+      };
+
+      const lines = output.split('\n');
+      let currentJob: Partial<ScheduledJob> | null = null;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Parse JOB block: JOB #u0aXXX/ID: ...
+        const jobMatch = trimmed.match(/JOB\s+#([^/]+)\/(\d+)/);
+        if (jobMatch) {
+          // Save previous job
+          if (currentJob && currentJob.jobId !== undefined) {
+            info.jobs.push(this.finalizeJob(currentJob));
+          }
+
+          currentJob = {
+            packageName: '',
+            serviceName: '',
+            jobId: parseInt(jobMatch[2], 10),
+            state: 'pending',
+            constraints: {
+              requiresCharging: false,
+              requiresDeviceIdle: false,
+              requiresNetwork: 'none',
+              requiresBatteryNotLow: false,
+              requiresStorageNotLow: false,
+            },
+            timing: {},
+            isPersisted: false,
+          };
+        }
+
+        if (currentJob) {
+          // Parse service/package: Service: com.example/.JobService
+          const serviceMatch = trimmed.match(/Service:\s*([^\s]+)/);
+          if (serviceMatch) {
+            const fullService = serviceMatch[1];
+            if (fullService.includes('/')) {
+              const parts = fullService.split('/');
+              currentJob.packageName = parts[0];
+              currentJob.serviceName = parts[1].startsWith('.')
+                ? parts[1].substring(1)
+                : parts[1];
+            } else {
+              currentJob.serviceName = fullService;
+            }
+          }
+
+          // Parse state
+          if (trimmed.includes('state=active') || trimmed.includes('Active:')) {
+            currentJob.state = 'active';
+          } else if (trimmed.includes('state=ready') || trimmed.includes('Ready')) {
+            currentJob.state = 'ready';
+          } else if (trimmed.includes('state=waiting') || trimmed.includes('Waiting')) {
+            currentJob.state = 'waiting';
+          }
+
+          // Parse constraints
+          if (trimmed.includes('Requires: charging=true') || trimmed.includes('requiresCharging=true')) {
+            currentJob.constraints!.requiresCharging = true;
+          }
+          if (trimmed.includes('Requires: idle=true') || trimmed.includes('requiresDeviceIdle=true')) {
+            currentJob.constraints!.requiresDeviceIdle = true;
+          }
+          if (trimmed.includes('Requires: batteryNotLow=true') || trimmed.includes('requiresBatteryNotLow=true')) {
+            currentJob.constraints!.requiresBatteryNotLow = true;
+          }
+          if (trimmed.includes('Requires: storageNotLow=true') || trimmed.includes('requiresStorageNotLow=true')) {
+            currentJob.constraints!.requiresStorageNotLow = true;
+          }
+
+          // Parse network requirement
+          if (trimmed.includes('network=any') || trimmed.includes('Network type: any')) {
+            currentJob.constraints!.requiresNetwork = 'any';
+          } else if (trimmed.includes('network=unmetered') || trimmed.includes('Network type: unmetered')) {
+            currentJob.constraints!.requiresNetwork = 'unmetered';
+          } else if (trimmed.includes('network=cellular') || trimmed.includes('Network type: cellular')) {
+            currentJob.constraints!.requiresNetwork = 'cellular';
+          }
+
+          // Parse timing
+          const intervalMatch = trimmed.match(/Periodic:\s*interval=(\d+)/);
+          if (intervalMatch) {
+            currentJob.timing!.periodicInterval = parseInt(intervalMatch[1], 10);
+          }
+
+          const latencyMatch = trimmed.match(/Min latency:\s*(\d+)/);
+          if (latencyMatch) {
+            currentJob.timing!.minLatency = parseInt(latencyMatch[1], 10);
+          }
+
+          // Parse persisted
+          if (trimmed.includes('persisted=true') || trimmed.includes('Persisted: true')) {
+            currentJob.isPersisted = true;
+          }
+        }
+      }
+
+      // Add last job
+      if (currentJob && currentJob.jobId !== undefined) {
+        info.jobs.push(this.finalizeJob(currentJob));
+      }
+
+      // Filter by package if specified
+      if (filterPackage) {
+        info.jobs = info.jobs.filter(j => j.packageName === filterPackage);
+      }
+
+      return info;
+    } catch (error) {
+      console.error('Error parsing scheduled jobs:', error);
+      return null;
+    }
+  }
+
+  private finalizeJob(partial: Partial<ScheduledJob>): ScheduledJob {
+    return {
+      jobId: partial.jobId || 0,
+      packageName: partial.packageName || 'Unknown',
+      serviceName: partial.serviceName || 'Unknown',
+      state: partial.state || 'pending',
+      constraints: partial.constraints || {
+        requiresCharging: false,
+        requiresDeviceIdle: false,
+        requiresNetwork: 'none',
+        requiresBatteryNotLow: false,
+        requiresStorageNotLow: false,
+      },
+      timing: partial.timing || {},
+      isPersisted: partial.isPersisted || false,
+    };
+  }
+
+  // ==================== Alarm Monitor ====================
+
+  async getScheduledAlarms(deviceId: string, packageName?: string): Promise<AlarmMonitorInfo | null> {
+    try {
+      const cmd = packageName
+        ? `adb -s ${deviceId} shell dumpsys alarm ${packageName}`
+        : `adb -s ${deviceId} shell dumpsys alarm`;
+
+      const { stdout } = await execAsync(cmd);
+      return this.parseScheduledAlarms(stdout, packageName);
+    } catch (error) {
+      console.error('Error getting scheduled alarms:', error);
+      return null;
+    }
+  }
+
+  private parseScheduledAlarms(output: string, filterPackage?: string): AlarmMonitorInfo | null {
+    try {
+      const info: AlarmMonitorInfo = {
+        timestamp: Date.now(),
+        packageName: filterPackage,
+        alarms: [],
+      };
+
+      const lines = output.split('\n');
+      let currentAlarm: Partial<ScheduledAlarm> | null = null;
+      let alarmIndex = 0;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Parse next alarm time
+        const nextAlarmMatch = trimmed.match(/Next\s+(?:non-wakeup\s+)?alarm:\s*(\d+)/);
+        if (nextAlarmMatch) {
+          info.nextAlarmTime = parseInt(nextAlarmMatch[1], 10);
+        }
+
+        // Parse Alarm block - various formats
+        // RTC_WAKEUP #0: Alarm{xxx type 0 ...}
+        // or Batch{...} containing alarms
+        const typeMatch = trimmed.match(/(RTC_WAKEUP|RTC|ELAPSED_REALTIME_WAKEUP|ELAPSED_REALTIME)/);
+        const alarmMatch = trimmed.match(/Alarm\{([^}]+)\}/);
+
+        if (typeMatch || alarmMatch) {
+          // Save previous alarm
+          if (currentAlarm && currentAlarm.packageName) {
+            info.alarms.push(this.finalizeAlarm(currentAlarm, alarmIndex++));
+          }
+
+          currentAlarm = {
+            packageName: '',
+            type: (typeMatch?.[1] as ScheduledAlarm['type']) || 'RTC',
+            triggerTime: 0,
+            operation: '',
+            isExact: false,
+            isRepeating: false,
+          };
+
+          // Check for exact alarm indicator
+          if (trimmed.includes('STANDALONE') || trimmed.includes('EXACT') || trimmed.includes('WAKEUP')) {
+            currentAlarm.isExact = true;
+          }
+        }
+
+        if (currentAlarm) {
+          // Parse package from operation: PendingIntent{xxx: PendingIntentRecord{xxx com.example ...}}
+          const packageMatch = trimmed.match(/PendingIntentRecord\{[^\s]+\s+([^\s]+)\s/);
+          if (packageMatch) {
+            currentAlarm.packageName = packageMatch[1];
+          }
+
+          // Alternative package parsing: operation=PendingIntent{...}
+          const opPackageMatch = trimmed.match(/operation=.*?([a-zA-Z][a-zA-Z0-9_.]+)\//);
+          if (opPackageMatch) {
+            currentAlarm.packageName = opPackageMatch[1];
+          }
+
+          // Parse when trigger time: when=+XXXms or triggerTime=XXXXXX
+          const whenMatch = trimmed.match(/when=([^\s,]+)/);
+          if (whenMatch) {
+            const whenStr = whenMatch[1];
+            if (whenStr.startsWith('+')) {
+              // Relative time, convert to absolute
+              const msMatch = whenStr.match(/\+(\d+)(?:ms)?/);
+              if (msMatch) {
+                currentAlarm.triggerTime = Date.now() + parseInt(msMatch[1], 10);
+              }
+            } else {
+              currentAlarm.triggerTime = parseInt(whenStr, 10);
+            }
+          }
+
+          const triggerMatch = trimmed.match(/triggerTime=(\d+)/);
+          if (triggerMatch) {
+            currentAlarm.triggerTime = parseInt(triggerMatch[1], 10);
+          }
+
+          // Parse repeat interval
+          const repeatMatch = trimmed.match(/repeatInterval=(\d+)/);
+          if (repeatMatch) {
+            const interval = parseInt(repeatMatch[1], 10);
+            if (interval > 0) {
+              currentAlarm.repeatInterval = interval;
+              currentAlarm.isRepeating = true;
+            }
+          }
+
+          // Parse operation/tag
+          const tagMatch = trimmed.match(/tag=([^\s,}]+)/);
+          if (tagMatch) {
+            currentAlarm.tag = tagMatch[1];
+          }
+
+          // Parse operation string
+          const operationMatch = trimmed.match(/operation=([^\s}]+)/);
+          if (operationMatch) {
+            currentAlarm.operation = operationMatch[1];
+          }
+        }
+      }
+
+      // Add last alarm
+      if (currentAlarm && currentAlarm.packageName) {
+        info.alarms.push(this.finalizeAlarm(currentAlarm, alarmIndex));
+      }
+
+      // Filter by package if specified
+      if (filterPackage) {
+        info.alarms = info.alarms.filter(a => a.packageName === filterPackage);
+      }
+
+      return info;
+    } catch (error) {
+      console.error('Error parsing scheduled alarms:', error);
+      return null;
+    }
+  }
+
+  private finalizeAlarm(partial: Partial<ScheduledAlarm>, index: number): ScheduledAlarm {
+    return {
+      id: `alarm-${index}-${Date.now()}`,
+      packageName: partial.packageName || 'Unknown',
+      type: partial.type || 'RTC',
+      triggerTime: partial.triggerTime || 0,
+      repeatInterval: partial.repeatInterval,
+      operation: partial.operation || '',
+      tag: partial.tag,
+      isExact: partial.isExact || false,
+      isRepeating: partial.isRepeating || false,
+    };
   }
 
   stopAll(): void {

@@ -42,6 +42,11 @@ export function useLogs(device: Device | null) {
 
   // Filter logs
   const filteredLogs = logs.filter((log) => {
+    // Hide SDK internal messages (these are handled separately by the SDK panel)
+    if (log.message.includes('SDKMSG:')) {
+      return false;
+    }
+
     // Filter by level
     if (!filter.levels.has(log.level)) {
       return false;
