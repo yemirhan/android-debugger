@@ -75,14 +75,21 @@ export type SdkMessageType =
   | 'network'
   | 'state'
   | 'performance'
-  | 'custom'
-  | 'ping'
-  | 'pong';
+  | 'custom';
 
 export interface SdkMessage {
   type: SdkMessageType;
   timestamp: number;
   payload: unknown;
+}
+
+// Logcat transport chunk data
+export interface ChunkData {
+  sequenceId: string;
+  index: number;
+  total: number;
+  compressed: boolean;
+  data: string;
 }
 
 export interface ConsoleMessage {
@@ -240,10 +247,6 @@ export interface IpcChannels {
   'adb:kill-app': (deviceId: string, packageName: string) => Promise<void>;
   'adb:clear-app-data': (deviceId: string, packageName: string) => Promise<void>;
 
-  // WebSocket server
-  'ws:start-server': (port: number) => Promise<void>;
-  'ws:stop-server': () => Promise<void>;
-  'ws:get-connections': () => number;
 
   // App Metadata
   'adb:get-app-metadata': (deviceId: string, packageName: string) => Promise<AppMetadata | null>;
@@ -287,7 +290,6 @@ export interface IpcEvents {
   'device-connected': Device;
   'device-disconnected': string;
   'sdk-message': SdkMessage;
-  'sdk-connection': { connected: boolean; clientId: string };
   'error': { source: string; message: string };
   'recording-update': RecordingState;
 }

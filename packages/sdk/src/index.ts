@@ -1,16 +1,10 @@
 import type { SdkMessage, CustomEvent, StateSnapshot, PerformanceMark } from '@android-debugger/shared';
-import { DEFAULT_WS_PORT } from '@android-debugger/shared';
-import { DebuggerClient, ClientOptions } from './client';
+import { DebuggerClient } from './client';
 import { interceptConsole, interceptNetwork, interceptAxios } from './interceptors';
 
 export interface AndroidDebuggerOptions {
-  host: string;
-  port?: number;
-  autoReconnect?: boolean;
   interceptConsole?: boolean;
   interceptNetwork?: boolean;
-  onConnect?: () => void;
-  onDisconnect?: () => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,41 +20,22 @@ class AndroidDebuggerSDK {
 
   /**
    * Initialize the Android Debugger SDK
+   *
+   * No host/port configuration needed - messages are sent via logcat
+   * and captured by the desktop app through ADB.
    */
-  init(options: AndroidDebuggerOptions): void {
+  init(options: AndroidDebuggerOptions = {}): void {
     if (this.isInitialized) {
       console.warn('[AndroidDebugger] SDK is already initialized');
       return;
     }
 
     const {
-      host,
-      port = DEFAULT_WS_PORT,
-      autoReconnect = true,
       interceptConsole: shouldInterceptConsole = true,
       interceptNetwork: shouldInterceptNetwork = true,
-      onConnect,
-      onDisconnect,
     } = options;
 
-    const clientOptions: ClientOptions = {
-      host,
-      port,
-      autoReconnect,
-      onConnect: () => {
-        console.log('[AndroidDebugger] Connected to desktop app');
-        onConnect?.();
-      },
-      onDisconnect: () => {
-        console.log('[AndroidDebugger] Disconnected from desktop app');
-        onDisconnect?.();
-      },
-      onError: (error) => {
-        console.error('[AndroidDebugger] Connection error:', error.message);
-      },
-    };
-
-    this.client = new DebuggerClient(clientOptions);
+    this.client = new DebuggerClient();
 
     // Setup interceptors
     if (shouldInterceptConsole) {
@@ -71,9 +46,8 @@ class AndroidDebuggerSDK {
       this.restoreNetwork = interceptNetwork((msg) => this.send(msg));
     }
 
-    // Connect
-    this.client.connect();
     this.isInitialized = true;
+    console.log('[AndroidDebugger] SDK initialized - messages will be sent via logcat');
   }
 
   /**
@@ -111,7 +85,6 @@ class AndroidDebuggerSDK {
     this.restoreConsole?.();
     this.restoreNetwork?.();
     this.axiosRestoreFns.forEach((fn) => fn());
-    this.client?.disconnect();
 
     this.restoreConsole = null;
     this.restoreNetwork = null;
@@ -122,10 +95,10 @@ class AndroidDebuggerSDK {
   }
 
   /**
-   * Check if SDK is connected to desktop app
+   * Check if SDK is initialized
    */
-  isConnected(): boolean {
-    return this.client?.getConnectionStatus() ?? false;
+  isReady(): boolean {
+    return this.isInitialized;
   }
 
   /**
@@ -226,7 +199,6 @@ export const AndroidDebugger = new AndroidDebuggerSDK();
 
 // Re-export client
 export { DebuggerClient } from './client';
-export type { ClientOptions } from './client';
 
 // Re-export interceptors for advanced usage
 export { interceptAxios, interceptNetwork, interceptConsole } from './interceptors';

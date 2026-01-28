@@ -1,6 +1,3 @@
-// WebSocket default port
-export const DEFAULT_WS_PORT = 8347;
-
 // Polling intervals (ms)
 export const MEMORY_POLL_INTERVAL = 1000;
 export const CPU_POLL_INTERVAL = 1000;

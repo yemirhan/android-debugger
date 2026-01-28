@@ -2,11 +2,9 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AndroidDebugger } from '@android-debugger/sdk';
 import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
-import { useConnection } from './_layout';
 import { apiHelpers } from '@/utils/api';
 
 export default function PerformanceScreen() {
-  const { isConnected } = useConnection();
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
 
@@ -173,7 +171,7 @@ export default function PerformanceScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <ConnectionStatus isConnected={isConnected} />
+      <ConnectionStatus />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Basic Measurements</Text>

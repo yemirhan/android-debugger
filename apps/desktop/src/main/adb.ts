@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { EventEmitter } from 'events';
 import type {
   Device,
   MemoryInfo,
@@ -18,18 +19,34 @@ import type {
   DatabaseQueryResult,
   IntentConfig,
   ScreenshotResult,
+  SdkMessage,
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
+import { LogcatMessageParser } from './logcat-parser';
 
 const execAsync = promisify(exec);
 
 type LogCallback = (entry: LogEntry) => void;
+type SdkMessageCallback = (message: SdkMessage) => void;
 
-export class AdbService {
+export class AdbService extends EventEmitter {
   private logcatProcess: ChildProcess | null = null;
   private memoryInterval: NodeJS.Timeout | null = null;
   private cpuInterval: NodeJS.Timeout | null = null;
   private fpsInterval: NodeJS.Timeout | null = null;
+  private logcatParser: LogcatMessageParser = new LogcatMessageParser();
+  private sdkMessageCallback: SdkMessageCallback | null = null;
+
+  constructor() {
+    super();
+  }
+
+  /**
+   * Set callback for SDK messages parsed from logcat
+   */
+  onSdkMessage(callback: SdkMessageCallback): void {
+    this.sdkMessageCallback = callback;
+  }
 
   async getDevices(): Promise<Device[]> {
     try {
@@ -229,6 +246,9 @@ export class AdbService {
   ): void {
     this.stopLogcat();
 
+    // Reset the parser when starting fresh
+    this.logcatParser.reset();
+
     const defaultFilters = ['*:S', 'ReactNative:V', 'ReactNativeJS:V'];
     const logFilters = filters || defaultFilters;
 
@@ -243,9 +263,25 @@ export class AdbService {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
+        // Try to parse as SDK message first
+        const sdkMessage = this.logcatParser.parseLogLine(line);
+        if (sdkMessage) {
+          // Emit SDK message event
+          console.log('[AdbService] Emitting SDK message:', sdkMessage.type);
+          this.emit('sdk-message', sdkMessage);
+          if (this.sdkMessageCallback) {
+            this.sdkMessageCallback(sdkMessage);
+          }
+          // Don't skip - also parse as regular log entry so it shows in Logs panel
+        }
+
+        // Regular log entry
         const entry = this.parseLogLine(line);
         if (entry) {
           callback(entry);
+        } else if (line.trim()) {
+          // Debug: log lines that don't match the expected format
+          console.log('[AdbService] Line did not match log format:', line.substring(0, 80));
         }
       }
     });
