@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import type { Device } from '@android-debugger/shared';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { Dashboard } from './components/dashboard';
 import { MemoryPanel } from './components/MemoryPanel';
 import { LogsPanel } from './components/LogsPanel';
 import { CpuFpsPanel } from './components/CpuFpsPanel';
@@ -25,10 +26,10 @@ import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { SdkProvider, LogsProvider } from './contexts';
 
-export type TabId = 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket';
+export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('memory');
+  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [packageName, setPackageName] = useState<string>('');
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
@@ -60,6 +61,18 @@ function App() {
   }, []);
 
   const renderPanel = () => {
+    // Dashboard handles its own "no device" state
+    if (activeTab === 'dashboard') {
+      return (
+        <Dashboard
+          device={selectedDevice}
+          packageName={packageName}
+          onNavigate={setActiveTab}
+          onRefreshDevices={refreshDevices}
+        />
+      );
+    }
+
     if (!selectedDevice) {
       return (
         <div className="flex-1 flex items-center justify-center text-text-secondary panel-content">
