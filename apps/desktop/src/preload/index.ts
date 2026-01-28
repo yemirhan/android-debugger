@@ -43,7 +43,7 @@ export interface ElectronAPI {
   onMemoryUpdate: (callback: (info: MemoryInfo) => void) => UnsubscribeFn;
 
   // Logs
-  startLogcat: (deviceId: string, filters?: string[]) => void;
+  startLogcat: (deviceId: string, filters?: string[], packageName?: string) => void;
   stopLogcat: () => void;
   clearLogcat: (deviceId: string) => Promise<void>;
   onLogEntry: (callback: (entry: LogEntry) => void) => UnsubscribeFn;
@@ -167,7 +167,7 @@ const electronAPI: ElectronAPI = {
   },
 
   // Logs
-  startLogcat: (deviceId, filters) => ipcRenderer.send('adb:start-logcat', deviceId, filters),
+  startLogcat: (deviceId, filters, packageName) => ipcRenderer.send('adb:start-logcat', deviceId, filters, packageName),
   stopLogcat: () => ipcRenderer.send('adb:stop-logcat'),
   clearLogcat: (deviceId) => ipcRenderer.invoke('adb:clear-logcat', deviceId),
   onLogEntry: (callback) => {

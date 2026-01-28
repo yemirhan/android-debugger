@@ -9,7 +9,7 @@ export interface LogFilter {
 }
 
 export function useLogs(device: Device | null) {
-  const { logs, isStreaming, isPaused, clearLogs: clearLogsContext, togglePause } = useLogsContext();
+  const { logs, isStreaming, isPaused, logMode, clearLogs: clearLogsContext, togglePause, setLogMode } = useLogsContext();
 
   const [filter, setFilter] = useState<LogFilter>({
     search: '',
@@ -90,9 +90,11 @@ export function useLogs(device: Device | null) {
     totalLogs: logs.length,
     isStreaming,
     isPaused,
+    logMode,
     filter,
     clearLogs,
     togglePause,
+    setLogMode,
     updateFilter,
     toggleLevel,
     exportLogs,

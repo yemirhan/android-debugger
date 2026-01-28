@@ -132,7 +132,7 @@ function App() {
 
   return (
     <SdkProvider>
-      <LogsProvider selectedDevice={selectedDevice}>
+      <LogsProvider selectedDevice={selectedDevice} packageName={packageName}>
         <div className="h-screen flex flex-col bg-background text-text-primary">
           <Header
             devices={devices}

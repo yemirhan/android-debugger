@@ -31,9 +31,11 @@ export function LogsPanel({ device }: LogsPanelProps) {
     totalLogs,
     isStreaming,
     isPaused,
+    logMode,
     filter,
     clearLogs,
     togglePause,
+    setLogMode,
     updateFilter,
     toggleLevel,
     exportLogs,
@@ -66,10 +68,32 @@ export function LogsPanel({ device }: LogsPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
-      {/* Header */}
+      {/* Header with tabs */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-base font-semibold">Logs</h2>
+        <div className="flex items-center gap-4">
+          {/* Tabs */}
+          <div className="flex items-center gap-1 border-b border-border-muted">
+            <button
+              onClick={() => setLogMode('rn')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                logMode === 'rn'
+                  ? 'text-accent border-b-2 border-accent -mb-px'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              React Native
+            </button>
+            <button
+              onClick={() => setLogMode('all')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                logMode === 'all'
+                  ? 'text-accent border-b-2 border-accent -mb-px'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              All App
+            </button>
+          </div>
           <span className="text-xs text-text-muted font-mono">
             {logs.length.toLocaleString()} / {totalLogs.toLocaleString()}
           </span>

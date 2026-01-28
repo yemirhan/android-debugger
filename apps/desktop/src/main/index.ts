@@ -245,15 +245,28 @@ function setupIpcHandlers(): void {
   });
 
   // Log handlers
-  ipcMain.on('adb:start-logcat', (_, deviceId: string, filters?: string[]) => {
-    console.log('[Main] Starting logcat for device:', deviceId);
+  ipcMain.on('adb:start-logcat', async (_, deviceId: string, filters?: string[], packageName?: string) => {
+    console.log('[Main] Starting logcat for device:', deviceId, 'packageName:', packageName);
+
+    let pid: number | undefined;
+    if (packageName) {
+      const fetchedPid = await adbService.getPid(deviceId, packageName);
+      if (fetchedPid) {
+        pid = fetchedPid;
+        console.log('[Main] Using PID filtering:', pid);
+      } else {
+        console.log('[Main] Could not get PID, falling back to filter-based logcat');
+      }
+    }
+
     adbService.startLogcat(
       deviceId,
       (entry: LogEntry) => {
         console.log('[Main] Sending log entry:', entry.tag, entry.message.substring(0, 50));
         mainWindow?.webContents.send('log-entry', entry);
       },
-      filters
+      filters,
+      pid
     );
   });
 

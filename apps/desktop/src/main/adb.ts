@@ -255,10 +255,27 @@ export class AdbService extends EventEmitter {
     }
   }
 
+  /**
+   * Get the PID of a running app by package name
+   */
+  async getPid(deviceId: string, packageName: string): Promise<number | null> {
+    try {
+      const { stdout } = await execAsync(
+        `adb -s ${deviceId} shell pidof -s ${packageName}`
+      );
+      const pid = parseInt(stdout.trim(), 10);
+      return isNaN(pid) ? null : pid;
+    } catch (error) {
+      console.log(`[AdbService] Could not get PID for ${packageName}:`, error);
+      return null;
+    }
+  }
+
   startLogcat(
     deviceId: string,
     callback: LogCallback,
-    filters?: string[]
+    filters?: string[],
+    pid?: number
   ): void {
     this.stopLogcat();
 
@@ -268,7 +285,13 @@ export class AdbService extends EventEmitter {
     const defaultFilters = ['*:S', 'ReactNative:V', 'ReactNativeJS:V'];
     const logFilters = filters || defaultFilters;
 
-    const args = ['-s', deviceId, 'logcat', '-v', 'time', ...logFilters];
+    // Build args - use --pid if provided, otherwise use filters
+    const args = ['-s', deviceId, 'logcat', '-v', 'time'];
+    if (pid) {
+      args.push('--pid', pid.toString());
+    } else {
+      args.push(...logFilters);
+    }
     this.logcatProcess = spawn('adb', args);
 
     let buffer = '';
