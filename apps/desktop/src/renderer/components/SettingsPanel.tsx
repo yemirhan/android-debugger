@@ -1,7 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL } from '@android-debugger/shared';
 
+interface AdbInfo {
+  path: string;
+  version: string;
+  source: 'bundled' | 'system' | 'android-sdk';
+}
+
 export function SettingsPanel() {
+  const [adbInfo, setAdbInfo] = useState<AdbInfo | null>(null);
   const [settings, setSettings] = useState({
     memoryInterval: MEMORY_POLL_INTERVAL,
     cpuInterval: CPU_POLL_INTERVAL,
@@ -16,6 +23,10 @@ export function SettingsPanel() {
   const updateSetting = (key: keyof typeof settings, value: number | boolean) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
+
+  useEffect(() => {
+    window.electronAPI.getAdbInfo().then(setAdbInfo);
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-5">
@@ -161,6 +172,18 @@ export function SettingsPanel() {
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">React</span>
             <span className="text-sm font-mono text-text-primary">19.0.0</span>
+          </div>
+          <div className="flex justify-between items-center py-1">
+            <span className="text-sm text-text-secondary">ADB</span>
+            <span className="text-sm font-mono text-text-primary">
+              {adbInfo ? `${adbInfo.version} (${adbInfo.source})` : 'Not found'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1">
+            <span className="text-sm text-text-secondary">ADB Path</span>
+            <span className="text-xs font-mono text-text-muted truncate max-w-[200px]" title={adbInfo?.path}>
+              {adbInfo?.path || 'N/A'}
+            </span>
           </div>
         </div>
       </section>

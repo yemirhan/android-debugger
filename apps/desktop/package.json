@@ -10,7 +10,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-builder",
-    "clean": "rm -rf dist out"
+    "clean": "rm -rf dist out",
+    "copy-adb": "mkdir -p resources/platform-tools && cp ~/Library/Android/sdk/platform-tools/adb resources/platform-tools/ && chmod +x resources/platform-tools/adb"
   },
   "dependencies": {
     "@android-debugger/shared": "workspace:*",
@@ -26,6 +27,12 @@
     },
     "files": [
       "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/platform-tools",
+        "to": "platform-tools"
+      }
     ],
     "npmRebuild": false,
     "mac": {

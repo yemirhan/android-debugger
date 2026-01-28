@@ -2,11 +2,32 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join } from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { execSync } from 'child_process';
+
+interface AdbInfo {
+  path: string;
+  version: string;
+  source: 'bundled' | 'system' | 'android-sdk';
+}
 
 // Fix PATH for packaged app - add common ADB locations
 function fixPath(): void {
   const homeDir = os.homedir();
+
+  // Check for bundled ADB first (in packaged app)
+  let bundledAdbPath: string | null = null;
+  if (app.isPackaged) {
+    bundledAdbPath = join(process.resourcesPath, 'platform-tools');
+  } else {
+    // In development, check local resources folder
+    const devResourcesPath = join(__dirname, '../../resources/platform-tools');
+    if (fs.existsSync(devResourcesPath)) {
+      bundledAdbPath = devResourcesPath;
+    }
+  }
+
   const adbPaths = [
+    ...(bundledAdbPath ? [bundledAdbPath] : []), // Bundled ADB first
     join(homeDir, 'Library/Android/sdk/platform-tools'), // macOS Android Studio default
     join(homeDir, 'Android/Sdk/platform-tools'), // Linux default
     '/usr/local/bin', // Homebrew
@@ -16,7 +37,9 @@ function fixPath(): void {
   // Check ANDROID_HOME and ANDROID_SDK_ROOT
   const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
   if (androidHome) {
-    adbPaths.unshift(join(androidHome, 'platform-tools'));
+    // Insert after bundled path but before other system paths
+    const insertIndex = bundledAdbPath ? 1 : 0;
+    adbPaths.splice(insertIndex, 0, join(androidHome, 'platform-tools'));
   }
 
   const existingPath = process.env.PATH || '';
@@ -35,6 +58,36 @@ function fixPath(): void {
 
 // Fix PATH before importing adb service
 fixPath();
+
+function getAdbInfo(): AdbInfo | null {
+  const paths = process.env.PATH?.split(':') || [];
+
+  for (const p of paths) {
+    const adbPath = join(p, 'adb');
+    if (fs.existsSync(adbPath)) {
+      // Determine source
+      let source: AdbInfo['source'] = 'system';
+      if (app.isPackaged && p.includes(process.resourcesPath)) {
+        source = 'bundled';
+      } else if (p.includes('resources/platform-tools')) {
+        source = 'bundled';
+      } else if (p.includes('Android/sdk') || p.includes('Android/Sdk')) {
+        source = 'android-sdk';
+      }
+
+      // Get version
+      try {
+        const version = execSync(`"${adbPath}" version`, { encoding: 'utf-8' })
+          .split('\n')[0]
+          .replace('Android Debug Bridge version ', '');
+        return { path: adbPath, version, source };
+      } catch {
+        return { path: adbPath, version: 'unknown', source };
+      }
+    }
+  }
+  return null;
+}
 
 import { adbService } from './adb';
 import type {
@@ -406,6 +459,11 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('intent:clear-history', async () => {
     saveIntentHistory([]);
+  });
+
+  // App info handlers
+  ipcMain.handle('app:get-adb-info', async () => {
+    return getAdbInfo();
   });
 }
 

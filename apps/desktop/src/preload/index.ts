@@ -90,6 +90,9 @@ export interface ElectronAPI {
   deleteSavedIntent: (id: string) => Promise<void>;
   getIntentHistory: () => Promise<IntentHistoryEntry[]>;
   clearIntentHistory: () => Promise<void>;
+
+  // App Info
+  getAdbInfo: () => Promise<{ path: string; version: string; source: 'bundled' | 'system' | 'android-sdk' } | null>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -203,6 +206,9 @@ const electronAPI: ElectronAPI = {
   deleteSavedIntent: (id) => ipcRenderer.invoke('intent:delete-saved', id),
   getIntentHistory: () => ipcRenderer.invoke('intent:get-history'),
   clearIntentHistory: () => ipcRenderer.invoke('intent:clear-history'),
+
+  // App Info
+  getAdbInfo: () => ipcRenderer.invoke('app:get-adb-info'),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
