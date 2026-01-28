@@ -42,9 +42,12 @@ export class LogcatTransport {
   private readonly prefix = 'SDKMSG';
 
   send(message: SdkMessage): void {
+    // Get a single sequence number for ALL chunks of this message
+    const seq = String(++this.sequenceNumber).padStart(6, '0');
     const chunks = this.chunkMessage(message);
+
     for (const chunk of chunks) {
-      const logEntry = this.formatLogEntry(message.type, chunk);
+      const logEntry = this.formatLogEntry(message.type, chunk, seq);
       // Use the ORIGINAL console.log to avoid infinite loop with console interceptor
       // React Native console.log appears in logcat under ReactNativeJS tag
       originalConsoleLog(logEntry);
@@ -90,8 +93,7 @@ export class LogcatTransport {
     return chunks;
   }
 
-  private formatLogEntry(type: SdkMessageType, chunk: ChunkInfo): string {
-    const seq = String(++this.sequenceNumber).padStart(6, '0');
+  private formatLogEntry(type: SdkMessageType, chunk: ChunkInfo, seq: string): string {
     const compressFlag = chunk.compressed ? 'Z' : '-';
     // Format: SDKMSG:000001:NETWORK:Z:1/3 {...data...}
     return `${this.prefix}:${seq}:${type.toUpperCase()}:${compressFlag}:${chunk.index}/${chunk.total} ${chunk.data}`;

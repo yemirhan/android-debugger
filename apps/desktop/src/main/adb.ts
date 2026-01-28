@@ -272,13 +272,16 @@ export class AdbService extends EventEmitter {
           if (this.sdkMessageCallback) {
             this.sdkMessageCallback(sdkMessage);
           }
-          continue;
+          // Don't skip - also parse as regular log entry so it shows in Logs panel
         }
 
         // Regular log entry
         const entry = this.parseLogLine(line);
         if (entry) {
           callback(entry);
+        } else if (line.trim()) {
+          // Debug: log lines that don't match the expected format
+          console.log('[AdbService] Line did not match log format:', line.substring(0, 80));
         }
       }
     });
