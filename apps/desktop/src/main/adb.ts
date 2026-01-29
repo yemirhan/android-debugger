@@ -119,6 +119,9 @@ export class AdbService extends EventEmitter {
   }
 
   async getMemInfo(deviceId: string, packageName: string): Promise<MemoryInfo | null> {
+    if (!deviceId || !packageName) {
+      return null;
+    }
     try {
       const { stdout } = await execAsync(
         `adb -s ${deviceId} shell dumpsys meminfo ${packageName}`
@@ -240,6 +243,10 @@ export class AdbService extends EventEmitter {
   ): void {
     this.stopMemoryMonitor();
 
+    if (!deviceId || !packageName) {
+      return;
+    }
+
     this.memoryInterval = setInterval(async () => {
       const info = await this.getMemInfo(deviceId, packageName);
       if (info) {
@@ -278,6 +285,10 @@ export class AdbService extends EventEmitter {
     pid?: number
   ): void {
     this.stopLogcat();
+
+    if (!deviceId) {
+      return;
+    }
 
     // Reset the parser when starting fresh
     this.logcatParser.reset();
@@ -385,6 +396,9 @@ export class AdbService extends EventEmitter {
   }
 
   async getCpuInfo(deviceId: string, packageName: string): Promise<CpuInfo | null> {
+    if (!deviceId || !packageName) {
+      return null;
+    }
     try {
       const { stdout } = await execAsync(
         `adb -s ${deviceId} shell top -n 1 -b | grep ${packageName}`
@@ -426,6 +440,10 @@ export class AdbService extends EventEmitter {
   ): void {
     this.stopCpuMonitor();
 
+    if (!deviceId || !packageName) {
+      return;
+    }
+
     this.cpuInterval = setInterval(async () => {
       const info = await this.getCpuInfo(deviceId, packageName);
       if (info) {
@@ -442,6 +460,9 @@ export class AdbService extends EventEmitter {
   }
 
   async getFpsInfo(deviceId: string, packageName: string): Promise<FpsInfo | null> {
+    if (!deviceId || !packageName) {
+      return null;
+    }
     try {
       // Reset gfxinfo stats
       await execAsync(`adb -s ${deviceId} shell dumpsys gfxinfo ${packageName} reset`);
@@ -527,6 +548,10 @@ export class AdbService extends EventEmitter {
     callback: (info: FpsInfo) => void
   ): void {
     this.stopFpsMonitor();
+
+    if (!deviceId || !packageName) {
+      return;
+    }
 
     this.fpsInterval = setInterval(async () => {
       const info = await this.getFpsInfo(deviceId, packageName);
@@ -1179,6 +1204,9 @@ export class AdbService extends EventEmitter {
   // ==================== Battery Monitor ====================
 
   async getBatteryInfo(deviceId: string): Promise<BatteryInfo | null> {
+    if (!deviceId) {
+      return null;
+    }
     try {
       const { stdout } = await execAsync(`adb -s ${deviceId} shell dumpsys battery`);
       return this.parseBatteryInfo(stdout);
@@ -1287,6 +1315,10 @@ export class AdbService extends EventEmitter {
   ): void {
     this.stopBatteryMonitor();
 
+    if (!deviceId) {
+      return;
+    }
+
     this.batteryInterval = setInterval(async () => {
       const info = await this.getBatteryInfo(deviceId);
       if (info) {
@@ -1306,6 +1338,10 @@ export class AdbService extends EventEmitter {
 
   startCrashLogcat(deviceId: string, callback: CrashCallback): void {
     this.stopCrashLogcat();
+
+    if (!deviceId) {
+      return;
+    }
 
     const args = ['-s', deviceId, 'logcat', '-b', 'crash', '-v', 'time'];
     this.crashLogcatProcess = spawn('adb', args);
@@ -1505,6 +1541,9 @@ export class AdbService extends EventEmitter {
   // ==================== Network Stats ====================
 
   async getNetworkStats(deviceId: string, packageName?: string): Promise<AppNetworkStats | null> {
+    if (!deviceId) {
+      return null;
+    }
     try {
       // First get the UID for the package
       let uid: number | null = null;
@@ -1608,6 +1647,10 @@ export class AdbService extends EventEmitter {
     callback: (stats: AppNetworkStats) => void
   ): void {
     this.stopNetworkStatsMonitor();
+
+    if (!deviceId || !packageName) {
+      return;
+    }
 
     this.networkStatsInterval = setInterval(async () => {
       const stats = await this.getNetworkStats(deviceId, packageName);

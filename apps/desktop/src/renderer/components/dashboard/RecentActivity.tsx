@@ -27,11 +27,11 @@ export function RecentActivity({
   // Combine all activity into a single sorted list
   const activities: ActivityItem[] = [
     ...crashes.map((crash): ActivityItem => ({
-      id: crash.timestamp.toString(),
+      id: crash.id,
       type: 'crash',
       title: crash.processName || 'App Crash',
-      subtitle: crash.stackTrace?.split('\n')[0] || 'Unknown error',
-      timestamp: crash.timestamp,
+      subtitle: crash.stackTrace?.[0] || crash.message || 'Unknown error',
+      timestamp: typeof crash.timestamp === 'string' ? Date.parse(crash.timestamp) : crash.timestamp,
     })),
     ...networkErrors
       .filter((req) => req.status && req.status >= 400)
