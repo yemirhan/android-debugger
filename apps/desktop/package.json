@@ -62,6 +62,8 @@
     }
   },
   "devDependencies": {
+    "@yemirhan/android-debugger-sdk": "workspace:*",
+    "@yemirhan/android-debugger-ui": "workspace:*",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.6",

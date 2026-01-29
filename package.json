@@ -8,7 +8,8 @@
     "dev:example": "pnpm --filter @android-debugger/example-expo dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "publish:packages": "pnpm build && pnpm --filter @yemirhan/android-debugger-sdk publish --access public && pnpm --filter @yemirhan/android-debugger-ui publish --access public"
   },
   "devDependencies": {
     "turbo": "^2.3.3",
