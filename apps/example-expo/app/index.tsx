@@ -1,5 +1,5 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { FeatureCard, ConnectionStatus } from '@/components';
+import { FeatureCard, ConnectionStatus } from '@yemirhan/android-debugger-ui';
 
 export default function HomeScreen() {
   return (

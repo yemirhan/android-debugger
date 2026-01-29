@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@yemirhan/android-debugger-sdk": "workspace:*",
+    "@yemirhan/android-debugger-ui": "workspace:*",
 
     "@expo/vector-icons": "^15.0.3",
     "@react-navigation/native": "^7.0.14",

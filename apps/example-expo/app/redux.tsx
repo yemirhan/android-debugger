@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, TextInput } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
+import { ActionButton, ResultDisplay, ConnectionStatus } from '@yemirhan/android-debugger-ui';
 import {
   RootState,
   increment,

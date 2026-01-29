@@ -1,0 +1,62 @@
+{
+  "name": "@yemirhan/android-debugger-ui",
+  "version": "1.0.0",
+  "description": "Reusable UI components for Android Debugger apps",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm build"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "peerDependencies": {
+    "@expo/vector-icons": ">=14.0.0",
+    "expo-router": ">=4.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.70.0"
+  },
+  "peerDependenciesMeta": {
+    "@expo/vector-icons": {
+      "optional": false
+    },
+    "expo-router": {
+      "optional": false
+    },
+    "react": {
+      "optional": false
+    },
+    "react-native": {
+      "optional": false
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "android",
+    "ui-components",
+    "debugging"
+  ],
+  "license": "MIT"
+}

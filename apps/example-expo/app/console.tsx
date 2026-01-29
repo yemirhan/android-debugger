@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ActionButton, ResultDisplay, ConnectionStatus } from '@/components';
+import { ActionButton, ResultDisplay, ConnectionStatus } from '@yemirhan/android-debugger-ui';
 
 export default function ConsoleScreen() {
   const [results, setResults] = useState<string[]>([]);

@@ -1,3 +1,4 @@
+import React from 'react';
 import { Pressable, StyleSheet, Text, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
