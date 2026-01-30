@@ -25,19 +25,26 @@ import { WebSocketPanel } from './components/WebSocketPanel';
 import { AppInstallerPanel } from './components/AppInstallerPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
-import { SdkProvider, LogsProvider } from './contexts';
+import { SdkProvider, LogsProvider, UpdateProvider, useUpdateContext } from './contexts';
+import { UpdateAvailableModal } from './components/UpdateAvailableModal';
 
 export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app';
 
-function App() {
+function AppContent() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [packageName, setPackageName] = useState<string>('');
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
+  const { setNavigateToSettings } = useUpdateContext();
 
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
   useBackgroundLogcat(selectedDevice);
+
+  // Register settings navigation for update modal
+  useEffect(() => {
+    setNavigateToSettings(() => setActiveTab('settings'));
+  }, [setNavigateToSettings]);
 
   // Auto-select first device
   useEffect(() => {
@@ -171,8 +178,17 @@ function App() {
             </main>
           </div>
         </div>
+        <UpdateAvailableModal />
       </LogsProvider>
     </SdkProvider>
+  );
+}
+
+function App() {
+  return (
+    <UpdateProvider>
+      <AppContent />
+    </UpdateProvider>
   );
 }
 
