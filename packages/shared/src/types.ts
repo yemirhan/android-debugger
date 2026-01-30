@@ -308,6 +308,25 @@ export interface IpcChannels {
 
   // Alarm Monitor
   'adb:get-scheduled-alarms': (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
+
+  // Thread Monitor
+  'profiler:get-threads': (deviceId: string, packageName: string) => Promise<ThreadSnapshot | null>;
+  'profiler:start-thread-monitor': (deviceId: string, packageName: string, interval: number) => void;
+  'profiler:stop-thread-monitor': () => void;
+
+  // GC Monitor
+  'profiler:start-gc-monitor': (deviceId: string, packageName: string) => void;
+  'profiler:stop-gc-monitor': () => void;
+
+  // Heap Dump
+  'profiler:capture-heap-dump': (deviceId: string, packageName: string) => Promise<HeapDumpInfo>;
+  'profiler:analyze-heap-dump': (filePath: string) => Promise<HeapAnalysis | null>;
+  'profiler:get-heap-instances': (filePath: string, classId: number) => Promise<HeapInstance[]>;
+
+  // Method Trace
+  'profiler:start-method-trace': (deviceId: string, packageName: string) => Promise<{ success: boolean; error?: string }>;
+  'profiler:stop-method-trace': (deviceId: string, packageName: string) => Promise<MethodTraceInfo>;
+  'profiler:analyze-method-trace': (filePath: string) => Promise<MethodTraceAnalysis | null>;
 }
 
 // Event types from main to renderer
@@ -324,6 +343,10 @@ export interface IpcEvents {
   'battery-update': BatteryInfo;
   'crash-entry': CrashEntry;
   'network-stats-update': AppNetworkStats;
+  'thread-update': ThreadSnapshot;
+  'gc-event': GcEvent;
+  'heap-dump-progress': { id: string; status: HeapDumpStatus; progress?: number; error?: string };
+  'method-trace-progress': { id: string; status: MethodTraceStatus; duration?: number; error?: string };
 }
 
 // Auto-updater types
@@ -512,6 +535,108 @@ export interface SelectedAppFile {
   fileName: string;
   fileSize: number;
   fileType: 'apk' | 'aab';
+}
+
+// Thread Monitor types
+export type ThreadState = 'running' | 'sleeping' | 'waiting' | 'blocked' | 'zombie' | 'stopped' | 'unknown';
+
+export interface ThreadInfo {
+  id: number;
+  name: string;
+  state: ThreadState;
+  cpuTime: number;
+  priority: number;
+}
+
+export interface ThreadSnapshot {
+  timestamp: number;
+  threads: ThreadInfo[];
+}
+
+// GC Monitor types
+export type GcReason = 'ALLOC' | 'CONCURRENT' | 'EXPLICIT' | 'FOR_ALLOC' | 'BACKGROUND' | 'UNKNOWN';
+
+export interface GcEvent {
+  id: string;
+  timestamp: number;
+  reason: GcReason;
+  freedBytes: number;
+  heapUsed: number;
+  heapTotal: number;
+  pauseTimeMs: number;
+}
+
+export interface GcStats {
+  totalGcCount: number;
+  totalPauseTime: number;
+  avgPauseTime: number;
+  allocationRate: number;
+}
+
+// Heap Dump types
+export type HeapDumpStatus = 'capturing' | 'parsing' | 'ready' | 'error';
+
+export interface HeapDumpInfo {
+  id: string;
+  timestamp: number;
+  filePath: string;
+  fileSize: number;
+  status: HeapDumpStatus;
+  error?: string;
+}
+
+export interface HeapClass {
+  id: number;
+  name: string;
+  instanceCount: number;
+  shallowSize: number;
+  retainedSize: number;
+}
+
+export interface HeapInstance {
+  id: number;
+  classId: number;
+  className: string;
+  shallowSize: number;
+  fields: { name: string; type: string; value: unknown }[];
+}
+
+export interface HeapAnalysis {
+  totalObjects: number;
+  totalSize: number;
+  classes: HeapClass[];
+}
+
+// Method Trace types
+export type MethodTraceStatus = 'recording' | 'parsing' | 'ready' | 'error';
+
+export interface MethodTraceInfo {
+  id: string;
+  timestamp: number;
+  duration: number;
+  filePath?: string;
+  status: MethodTraceStatus;
+  error?: string;
+}
+
+export interface MethodStats {
+  className: string;
+  methodName: string;
+  inclusiveTime: number;
+  exclusiveTime: number;
+  callCount: number;
+}
+
+export interface FlameChartEntry {
+  name: string;
+  value: number;
+  children?: FlameChartEntry[];
+}
+
+export interface MethodTraceAnalysis {
+  totalTime: number;
+  methods: MethodStats[];
+  flameChart: FlameChartEntry;
 }
 
 // WebSocket (SDK) types

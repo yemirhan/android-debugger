@@ -23,13 +23,17 @@ import { JobSchedulerPanel } from './components/JobSchedulerPanel';
 import { AlarmMonitorPanel } from './components/AlarmMonitorPanel';
 import { WebSocketPanel } from './components/WebSocketPanel';
 import { AppInstallerPanel } from './components/AppInstallerPanel';
+import { ThreadMonitorPanel } from './components/ThreadMonitorPanel';
+import { GcMonitorPanel } from './components/GcMonitorPanel';
+import { HeapDumpPanel } from './components/HeapDumpPanel';
+import { MethodTracePanel } from './components/MethodTracePanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { useNavigationState } from './hooks/useNavigationState';
 import { SdkProvider, LogsProvider, UpdateProvider, useUpdateContext } from './contexts';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
 
-export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app';
+export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -153,6 +157,14 @@ function AppContent() {
         return <WebSocketPanel />;
       case 'install-app':
         return <AppInstallerPanel device={selectedDevice} />;
+      case 'thread-monitor':
+        return <ThreadMonitorPanel device={selectedDevice} packageName={packageName} />;
+      case 'gc-monitor':
+        return <GcMonitorPanel device={selectedDevice} packageName={packageName} />;
+      case 'heap-dump':
+        return <HeapDumpPanel device={selectedDevice} packageName={packageName} />;
+      case 'method-trace':
+        return <MethodTracePanel device={selectedDevice} packageName={packageName} />;
       default:
         return null;
     }

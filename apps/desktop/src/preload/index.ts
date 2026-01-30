@@ -32,6 +32,13 @@ import type {
   InstallProgress,
   DeviceSpec,
   SelectedAppFile,
+  ThreadSnapshot,
+  GcEvent,
+  HeapDumpInfo,
+  HeapAnalysis,
+  HeapInstance,
+  MethodTraceInfo,
+  MethodTraceAnalysis,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -169,6 +176,29 @@ export interface ElectronAPI {
 
   // Shell
   openExternal: (url: string) => Promise<void>;
+
+  // Thread Monitor
+  getThreads: (deviceId: string, packageName: string) => Promise<ThreadSnapshot | null>;
+  startThreadMonitor: (deviceId: string, packageName: string, interval: number) => void;
+  stopThreadMonitor: () => void;
+  onThreadUpdate: (callback: (snapshot: ThreadSnapshot) => void) => UnsubscribeFn;
+
+  // GC Monitor
+  startGcMonitor: (deviceId: string, packageName: string) => void;
+  stopGcMonitor: () => void;
+  onGcEvent: (callback: (event: GcEvent) => void) => UnsubscribeFn;
+
+  // Heap Dump
+  captureHeapDump: (deviceId: string, packageName: string) => Promise<HeapDumpInfo>;
+  analyzeHeapDump: (filePath: string) => Promise<HeapAnalysis | null>;
+  getHeapInstances: (filePath: string, classId: number) => Promise<HeapInstance[]>;
+  onHeapDumpProgress: (callback: (progress: { id: string; status: string; progress?: number; error?: string }) => void) => UnsubscribeFn;
+
+  // Method Trace
+  startMethodTrace: (deviceId: string, packageName: string) => Promise<{ success: boolean; error?: string }>;
+  stopMethodTrace: (deviceId: string, packageName: string) => Promise<MethodTraceInfo>;
+  analyzeMethodTrace: (filePath: string) => Promise<MethodTraceAnalysis | null>;
+  onMethodTraceProgress: (callback: (progress: { id: string; status: string; duration?: number; error?: string }) => void) => UnsubscribeFn;
 }
 
 const electronAPI: ElectronAPI = {
@@ -397,6 +427,54 @@ const electronAPI: ElectronAPI = {
 
   // Shell
   openExternal: (url) => shell.openExternal(url),
+
+  // Thread Monitor
+  getThreads: (deviceId, packageName) =>
+    ipcRenderer.invoke('profiler:get-threads', deviceId, packageName),
+  startThreadMonitor: (deviceId, packageName, interval) =>
+    ipcRenderer.send('profiler:start-thread-monitor', deviceId, packageName, interval),
+  stopThreadMonitor: () => ipcRenderer.send('profiler:stop-thread-monitor'),
+  onThreadUpdate: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, snapshot: ThreadSnapshot) => callback(snapshot);
+    ipcRenderer.on('thread-update', listener);
+    return () => ipcRenderer.removeListener('thread-update', listener);
+  },
+
+  // GC Monitor
+  startGcMonitor: (deviceId, packageName) =>
+    ipcRenderer.send('profiler:start-gc-monitor', deviceId, packageName),
+  stopGcMonitor: () => ipcRenderer.send('profiler:stop-gc-monitor'),
+  onGcEvent: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, event: GcEvent) => callback(event);
+    ipcRenderer.on('gc-event', listener);
+    return () => ipcRenderer.removeListener('gc-event', listener);
+  },
+
+  // Heap Dump
+  captureHeapDump: (deviceId, packageName) =>
+    ipcRenderer.invoke('profiler:capture-heap-dump', deviceId, packageName),
+  analyzeHeapDump: (filePath) =>
+    ipcRenderer.invoke('profiler:analyze-heap-dump', filePath),
+  getHeapInstances: (filePath, classId) =>
+    ipcRenderer.invoke('profiler:get-heap-instances', filePath, classId),
+  onHeapDumpProgress: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, progress: { id: string; status: string; progress?: number; error?: string }) => callback(progress);
+    ipcRenderer.on('heap-dump-progress', listener);
+    return () => ipcRenderer.removeListener('heap-dump-progress', listener);
+  },
+
+  // Method Trace
+  startMethodTrace: (deviceId, packageName) =>
+    ipcRenderer.invoke('profiler:start-method-trace', deviceId, packageName),
+  stopMethodTrace: (deviceId, packageName) =>
+    ipcRenderer.invoke('profiler:stop-method-trace', deviceId, packageName),
+  analyzeMethodTrace: (filePath) =>
+    ipcRenderer.invoke('profiler:analyze-method-trace', filePath),
+  onMethodTraceProgress: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, progress: { id: string; status: string; duration?: number; error?: string }) => callback(progress);
+    ipcRenderer.on('method-trace-progress', listener);
+    return () => ipcRenderer.removeListener('method-trace-progress', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

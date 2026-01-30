@@ -139,6 +139,8 @@ import type {
   AlarmMonitorInfo,
   InstallOptions,
   InstallProgress,
+  ThreadSnapshot,
+  GcEvent,
 } from '@android-debugger/shared';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
@@ -757,6 +759,71 @@ function setupIpcHandlers(): void {
   ipcMain.handle('updater:set-settings', async (_, settings: UpdateSettings) => {
     saveUpdateSettings(settings);
     autoUpdater.autoDownload = settings.autoDownload;
+  });
+
+  // ==================== Profiler Handlers ====================
+
+  // Thread Monitor
+  ipcMain.handle('profiler:get-threads', async (_, deviceId: string, packageName: string) => {
+    return adbService.getThreads(deviceId, packageName);
+  });
+
+  ipcMain.on('profiler:start-thread-monitor', (_, deviceId: string, packageName: string, interval: number) => {
+    adbService.startThreadMonitor(
+      deviceId,
+      packageName,
+      interval,
+      (snapshot: ThreadSnapshot) => {
+        mainWindow?.webContents.send('thread-update', snapshot);
+      }
+    );
+  });
+
+  ipcMain.on('profiler:stop-thread-monitor', () => {
+    adbService.stopThreadMonitor();
+  });
+
+  // GC Monitor
+  ipcMain.on('profiler:start-gc-monitor', (_, deviceId: string, packageName: string) => {
+    adbService.startGcMonitor(
+      deviceId,
+      packageName,
+      (event: GcEvent) => {
+        mainWindow?.webContents.send('gc-event', event);
+      }
+    );
+  });
+
+  ipcMain.on('profiler:stop-gc-monitor', () => {
+    adbService.stopGcMonitor();
+  });
+
+  // Heap Dump
+  ipcMain.handle('profiler:capture-heap-dump', async (_, deviceId: string, packageName: string) => {
+    return adbService.captureHeapDump(deviceId, packageName, (status, progress) => {
+      mainWindow?.webContents.send('heap-dump-progress', { id: '', status, progress });
+    });
+  });
+
+  ipcMain.handle('profiler:analyze-heap-dump', async (_, filePath: string) => {
+    return adbService.analyzeHeapDump(filePath);
+  });
+
+  ipcMain.handle('profiler:get-heap-instances', async (_, filePath: string, classId: number) => {
+    return adbService.getHeapInstances(filePath, classId);
+  });
+
+  // Method Trace
+  ipcMain.handle('profiler:start-method-trace', async (_, deviceId: string, packageName: string) => {
+    return adbService.startMethodTrace(deviceId, packageName);
+  });
+
+  ipcMain.handle('profiler:stop-method-trace', async (_, deviceId: string, packageName: string) => {
+    return adbService.stopMethodTrace(deviceId, packageName);
+  });
+
+  ipcMain.handle('profiler:analyze-method-trace', async (_, filePath: string) => {
+    return adbService.analyzeMethodTrace(filePath);
   });
 }
 

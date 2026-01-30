@@ -36,6 +36,19 @@ import type {
   InstallResult,
   DeviceSpec,
   InstallProgress,
+  ThreadInfo,
+  ThreadSnapshot,
+  ThreadState,
+  GcEvent,
+  GcReason,
+  HeapDumpInfo,
+  HeapClass,
+  HeapInstance,
+  HeapAnalysis,
+  MethodTraceInfo,
+  MethodStats,
+  FlameChartEntry,
+  MethodTraceAnalysis,
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
@@ -45,6 +58,8 @@ const execAsync = promisify(exec);
 type LogCallback = (entry: LogEntry) => void;
 type SdkMessageCallback = (message: SdkMessage) => void;
 type CrashCallback = (entry: CrashEntry) => void;
+type ThreadCallback = (snapshot: ThreadSnapshot) => void;
+type GcEventCallback = (event: GcEvent) => void;
 
 export class AdbService extends EventEmitter {
   private logcatProcess: ChildProcess | null = null;
@@ -56,6 +71,12 @@ export class AdbService extends EventEmitter {
   private networkStatsInterval: NodeJS.Timeout | null = null;
   private logcatParser: LogcatMessageParser = new LogcatMessageParser();
   private sdkMessageCallback: SdkMessageCallback | null = null;
+
+  // Profiler properties
+  private threadMonitorInterval: NodeJS.Timeout | null = null;
+  private gcMonitorProcess: ChildProcess | null = null;
+  private methodTraceActive: boolean = false;
+  private methodTraceStartTime: number = 0;
 
   constructor() {
     super();
@@ -2573,6 +2594,676 @@ export class AdbService extends EventEmitter {
     return messages[errorCode] || rawOutput?.substring(0, 200) || 'Installation failed.';
   }
 
+  // ==================== Thread Monitor ====================
+
+  async getThreads(deviceId: string, packageName: string): Promise<ThreadSnapshot | null> {
+    if (!deviceId || !packageName) {
+      return null;
+    }
+
+    try {
+      const pid = await this.getPid(deviceId, packageName);
+      if (!pid) {
+        return null;
+      }
+
+      // Get thread list from /proc/<pid>/task
+      const { stdout: taskList } = await execAsync(
+        `adb -s ${deviceId} shell ls /proc/${pid}/task`
+      );
+
+      const threadIds = taskList.trim().split('\n').filter(Boolean).map(t => parseInt(t.trim(), 10));
+      const threads: ThreadInfo[] = [];
+
+      // Get info for each thread
+      for (const tid of threadIds) {
+        try {
+          const [statResult, commResult] = await Promise.all([
+            execAsync(`adb -s ${deviceId} shell cat /proc/${pid}/task/${tid}/stat`).catch(() => ({ stdout: '' })),
+            execAsync(`adb -s ${deviceId} shell cat /proc/${pid}/task/${tid}/comm`).catch(() => ({ stdout: '' })),
+          ]);
+
+          const stat = statResult.stdout.trim();
+          const comm = commResult.stdout.trim();
+
+          if (stat) {
+            const threadInfo = this.parseThreadStat(tid, stat, comm);
+            if (threadInfo) {
+              threads.push(threadInfo);
+            }
+          }
+        } catch {
+          // Skip threads that can't be read
+        }
+      }
+
+      return {
+        timestamp: Date.now(),
+        threads,
+      };
+    } catch (error) {
+      console.error('Error getting threads:', error);
+      return null;
+    }
+  }
+
+  private parseThreadStat(tid: number, stat: string, comm: string): ThreadInfo | null {
+    try {
+      // /proc/[pid]/task/[tid]/stat format:
+      // pid (comm) state ppid pgrp session tty_nr tpgid flags minflt cminflt majflt cmajflt utime stime...
+      const match = stat.match(/^\d+\s+\(([^)]+)\)\s+(\S)\s+.+/);
+      if (!match) return null;
+
+      const name = comm || match[1];
+      const stateChar = match[2];
+
+      // Parse state character
+      const stateMap: Record<string, ThreadState> = {
+        'R': 'running',
+        'S': 'sleeping',
+        'D': 'waiting',  // Disk sleep (uninterruptible)
+        'Z': 'zombie',
+        'T': 'stopped',
+        't': 'stopped',  // Tracing stop
+        'W': 'waiting',  // Paging
+        'X': 'zombie',   // Dead
+        'x': 'zombie',
+        'K': 'waiting',  // Wakekill
+        'P': 'waiting',  // Parked
+      };
+
+      const state = stateMap[stateChar] || 'unknown';
+
+      // Parse CPU time from stat fields (utime + stime are fields 14 and 15, 1-indexed)
+      const fields = stat.split(/\s+/);
+      const utime = parseInt(fields[13], 10) || 0;  // User mode jiffies
+      const stime = parseInt(fields[14], 10) || 0;  // Kernel mode jiffies
+      const cpuTime = (utime + stime) / 100;  // Convert jiffies to seconds (approximate)
+
+      const priority = parseInt(fields[17], 10) || 0;
+
+      return {
+        id: tid,
+        name,
+        state,
+        cpuTime,
+        priority,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  startThreadMonitor(
+    deviceId: string,
+    packageName: string,
+    interval: number,
+    callback: ThreadCallback
+  ): void {
+    this.stopThreadMonitor();
+
+    if (!deviceId || !packageName) {
+      return;
+    }
+
+    this.threadMonitorInterval = setInterval(async () => {
+      const snapshot = await this.getThreads(deviceId, packageName);
+      if (snapshot) {
+        callback(snapshot);
+      }
+    }, interval);
+  }
+
+  stopThreadMonitor(): void {
+    if (this.threadMonitorInterval) {
+      clearInterval(this.threadMonitorInterval);
+      this.threadMonitorInterval = null;
+    }
+  }
+
+  // ==================== GC Monitor ====================
+
+  startGcMonitor(
+    deviceId: string,
+    packageName: string,
+    callback: GcEventCallback
+  ): void {
+    this.stopGcMonitor();
+
+    if (!deviceId) {
+      return;
+    }
+
+    // Monitor GC events via logcat filtering for ART/Dalvik GC messages
+    this.gcMonitorProcess = spawn('adb', [
+      '-s', deviceId,
+      'logcat',
+      '-s',
+      'art:D',
+      'dalvikvm:D',
+      'dalvikvm-heap:D',
+    ]);
+
+    let buffer = '';
+
+    this.gcMonitorProcess.stdout?.on('data', (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const gcEvent = this.parseGcLogLine(line, packageName);
+        if (gcEvent) {
+          callback(gcEvent);
+        }
+      }
+    });
+
+    this.gcMonitorProcess.on('error', (error) => {
+      console.error('GC monitor process error:', error);
+    });
+  }
+
+  private parseGcLogLine(line: string, packageName: string): GcEvent | null {
+    try {
+      // Check if line is from our app (optional - might want all GC events)
+      // ART GC format examples:
+      // Background concurrent copying GC freed 12K(1%), AllocSpace 4MB/6MB, LOS 2MB, Paused 3ms
+      // Explicit concurrent copying GC freed 2048K, 42% free 3584K/6144K, paused 2ms+1ms
+
+      // Pattern for ART GC logs
+      const artMatch = line.match(
+        /(\w+)\s+(?:concurrent\s+)?(?:copying\s+)?GC\s+freed\s+([\d.]+)([KMG]?)(?:\([\d.]+%\))?,?\s*(?:AllocSpace\s+)?([\d.]+)([KMG]?)\/([\d.]+)([KMG]?).*?(?:[Pp]aused?\s+([\d.]+)\s*ms)?/i
+      );
+
+      if (artMatch) {
+        const [, reason, freedStr, freedUnit, usedStr, usedUnit, totalStr, totalUnit, pauseStr] = artMatch;
+
+        const freed = this.parseSize(freedStr, freedUnit);
+        const heapUsed = this.parseSize(usedStr, usedUnit);
+        const heapTotal = this.parseSize(totalStr, totalUnit);
+        const pauseTime = parseFloat(pauseStr) || 0;
+
+        const gcReason = this.parseGcReason(reason);
+
+        return {
+          id: `gc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: Date.now(),
+          reason: gcReason,
+          freedBytes: freed,
+          heapUsed,
+          heapTotal,
+          pauseTimeMs: pauseTime,
+        };
+      }
+
+      // Pattern for Dalvik GC logs
+      const dalvikMatch = line.match(
+        /GC_(\w+)\s+freed\s+([\d.]+)([KMG]?),\s*([\d.]+)%\s*free\s*([\d.]+)([KMG]?)\/([\d.]+)([KMG]?),\s*paused\s*([\d.]+)ms/i
+      );
+
+      if (dalvikMatch) {
+        const [, reason, freedStr, freedUnit, , usedStr, usedUnit, totalStr, totalUnit, pauseStr] = dalvikMatch;
+
+        const freed = this.parseSize(freedStr, freedUnit);
+        const heapUsed = this.parseSize(usedStr, usedUnit);
+        const heapTotal = this.parseSize(totalStr, totalUnit);
+        const pauseTime = parseFloat(pauseStr) || 0;
+
+        const gcReason = this.parseGcReason(reason);
+
+        return {
+          id: `gc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: Date.now(),
+          reason: gcReason,
+          freedBytes: freed,
+          heapUsed,
+          heapTotal,
+          pauseTimeMs: pauseTime,
+        };
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseSize(value: string, unit: string): number {
+    const num = parseFloat(value) || 0;
+    switch (unit.toUpperCase()) {
+      case 'K': return num * 1024;
+      case 'M': return num * 1024 * 1024;
+      case 'G': return num * 1024 * 1024 * 1024;
+      default: return num;
+    }
+  }
+
+  private parseGcReason(reason: string): GcReason {
+    const upper = reason.toUpperCase();
+    if (upper.includes('ALLOC') || upper === 'FOR_ALLOC') return 'FOR_ALLOC';
+    if (upper.includes('CONCURRENT') || upper === 'CONC') return 'CONCURRENT';
+    if (upper.includes('EXPLICIT')) return 'EXPLICIT';
+    if (upper.includes('BACKGROUND') || upper === 'BG') return 'BACKGROUND';
+    return 'UNKNOWN';
+  }
+
+  stopGcMonitor(): void {
+    if (this.gcMonitorProcess) {
+      this.gcMonitorProcess.kill();
+      this.gcMonitorProcess = null;
+    }
+  }
+
+  // ==================== Heap Dump ====================
+
+  async captureHeapDump(
+    deviceId: string,
+    packageName: string,
+    onProgress?: (status: string, progress?: number) => void
+  ): Promise<HeapDumpInfo> {
+    const id = `heap-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const remotePath = `/data/local/tmp/${id}.hprof`;
+    const localPath = path.join(os.tmpdir(), `${id}.hprof`);
+
+    try {
+      onProgress?.('capturing', 10);
+
+      // Check if app is debuggable
+      const metadata = await this.getAppMetadata(deviceId, packageName);
+      if (!metadata?.isDebuggable) {
+        throw new Error('App must be debuggable to capture heap dump');
+      }
+
+      // Get PID
+      const pid = await this.getPid(deviceId, packageName);
+      if (!pid) {
+        throw new Error('App is not running');
+      }
+
+      // Capture heap dump
+      onProgress?.('capturing', 30);
+      await execAsync(
+        `adb -s ${deviceId} shell am dumpheap ${pid} ${remotePath}`,
+        { timeout: 120000 }
+      );
+
+      // Wait for dump to complete
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      onProgress?.('capturing', 60);
+
+      // Pull the file
+      await execAsync(
+        `adb -s ${deviceId} pull ${remotePath} "${localPath}"`,
+        { timeout: 300000 }
+      );
+
+      onProgress?.('capturing', 90);
+
+      // Clean up remote file
+      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`).catch(() => {});
+
+      // Get file size
+      const stats = fs.statSync(localPath);
+
+      onProgress?.('ready', 100);
+
+      return {
+        id,
+        timestamp: Date.now(),
+        filePath: localPath,
+        fileSize: stats.size,
+        status: 'ready',
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        id,
+        timestamp: Date.now(),
+        filePath: '',
+        fileSize: 0,
+        status: 'error',
+        error: message,
+      };
+    }
+  }
+
+  async analyzeHeapDump(filePath: string): Promise<HeapAnalysis | null> {
+    // HPROF parsing is complex - this is a simplified implementation
+    // For production use, consider using a proper HPROF parser library
+    try {
+      if (!fs.existsSync(filePath)) {
+        return null;
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      return this.parseHprof(buffer);
+    } catch (error) {
+      console.error('Error analyzing heap dump:', error);
+      return null;
+    }
+  }
+
+  private parseHprof(buffer: Buffer): HeapAnalysis | null {
+    try {
+      // HPROF format: header + records
+      // Header: "JAVA PROFILE 1.0.3\0" or similar + identifier size (4 bytes) + timestamp (8 bytes)
+
+      // Check magic
+      const header = buffer.slice(0, 18).toString('utf8');
+      if (!header.startsWith('JAVA PROFILE')) {
+        console.error('Invalid HPROF file');
+        return null;
+      }
+
+      // Find null terminator
+      let headerEnd = 0;
+      while (headerEnd < 30 && buffer[headerEnd] !== 0) {
+        headerEnd++;
+      }
+
+      const idSize = buffer.readUInt32BE(headerEnd + 1);
+      // const timestamp = buffer.readBigUInt64BE(headerEnd + 5);
+
+      let offset = headerEnd + 1 + 4 + 8; // After header + id size + timestamp
+
+      const classes = new Map<number, { name: string; instanceCount: number; shallowSize: number }>();
+      const strings = new Map<number, string>();
+      let totalObjects = 0;
+      let totalSize = 0;
+
+      // Parse records
+      while (offset < buffer.length - 9) {
+        const tag = buffer[offset];
+        // const time = buffer.readUInt32BE(offset + 1);
+        const length = buffer.readUInt32BE(offset + 5);
+        offset += 9;
+
+        if (offset + length > buffer.length) break;
+
+        const recordData = buffer.slice(offset, offset + length);
+
+        switch (tag) {
+          case 0x01: // STRING
+            {
+              const stringId = idSize === 4
+                ? recordData.readUInt32BE(0)
+                : Number(recordData.readBigUInt64BE(0));
+              const str = recordData.slice(idSize).toString('utf8');
+              strings.set(stringId, str);
+            }
+            break;
+
+          case 0x02: // LOAD_CLASS
+            {
+              // Class serial, class object ID, stack trace serial, class name string ID
+              const classObjId = idSize === 4
+                ? recordData.readUInt32BE(4)
+                : Number(recordData.readBigUInt64BE(4));
+              const classNameId = idSize === 4
+                ? recordData.readUInt32BE(4 + idSize + 4)
+                : Number(recordData.readBigUInt64BE(4 + idSize + 4));
+
+              const className = strings.get(classNameId) || `Class@${classObjId}`;
+              classes.set(classObjId, { name: className, instanceCount: 0, shallowSize: 0 });
+            }
+            break;
+
+          case 0x0C: // HEAP_DUMP
+          case 0x1C: // HEAP_DUMP_SEGMENT
+            {
+              // Parse heap dump records
+              let heapOffset = 0;
+              while (heapOffset < length - 1) {
+                const heapTag = recordData[heapOffset];
+                heapOffset++;
+
+                if (heapTag === 0x21) { // INSTANCE_DUMP
+                  // object ID, stack trace serial, class object ID, data length, data
+                  const classId = idSize === 4
+                    ? recordData.readUInt32BE(heapOffset + idSize + 4)
+                    : Number(recordData.readBigUInt64BE(heapOffset + idSize + 4));
+                  const dataLen = recordData.readUInt32BE(heapOffset + idSize + 4 + idSize);
+
+                  totalObjects++;
+                  totalSize += dataLen;
+
+                  const classInfo = classes.get(classId);
+                  if (classInfo) {
+                    classInfo.instanceCount++;
+                    classInfo.shallowSize += dataLen;
+                  }
+
+                  heapOffset += idSize + 4 + idSize + 4 + dataLen;
+                } else {
+                  // Skip other heap record types - this is simplified
+                  break;
+                }
+              }
+            }
+            break;
+        }
+
+        offset += length;
+      }
+
+      // Convert to HeapClass array
+      const classArray: HeapClass[] = Array.from(classes.entries())
+        .map(([id, info]) => ({
+          id,
+          name: info.name.replace(/\//g, '.'),
+          instanceCount: info.instanceCount,
+          shallowSize: info.shallowSize,
+          retainedSize: info.shallowSize, // Simplified - retained size calculation is complex
+        }))
+        .filter(c => c.instanceCount > 0)
+        .sort((a, b) => b.shallowSize - a.shallowSize);
+
+      return {
+        totalObjects,
+        totalSize,
+        classes: classArray.slice(0, 500), // Limit to top 500 classes
+      };
+    } catch (error) {
+      console.error('Error parsing HPROF:', error);
+      return null;
+    }
+  }
+
+  async getHeapInstances(filePath: string, classId: number): Promise<HeapInstance[]> {
+    // Simplified - in a full implementation, this would parse the HPROF file
+    // and return instances of the specified class
+    return [];
+  }
+
+  // ==================== Method Trace ====================
+
+  async startMethodTrace(
+    deviceId: string,
+    packageName: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Check if app is debuggable
+      const metadata = await this.getAppMetadata(deviceId, packageName);
+      if (!metadata?.isDebuggable) {
+        return { success: false, error: 'App must be debuggable to capture method trace' };
+      }
+
+      // Start profiling
+      await execAsync(
+        `adb -s ${deviceId} shell am profile start ${packageName} /data/local/tmp/trace.trace`,
+        { timeout: 10000 }
+      );
+
+      this.methodTraceActive = true;
+      this.methodTraceStartTime = Date.now();
+
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: message };
+    }
+  }
+
+  async stopMethodTrace(
+    deviceId: string,
+    packageName: string
+  ): Promise<MethodTraceInfo> {
+    const id = `trace-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const remotePath = '/data/local/tmp/trace.trace';
+    const localPath = path.join(os.tmpdir(), `${id}.trace`);
+
+    try {
+      if (!this.methodTraceActive) {
+        return {
+          id,
+          timestamp: Date.now(),
+          duration: 0,
+          status: 'error',
+          error: 'No trace is active',
+        };
+      }
+
+      const duration = Date.now() - this.methodTraceStartTime;
+      this.methodTraceActive = false;
+
+      // Stop profiling
+      await execAsync(
+        `adb -s ${deviceId} shell am profile stop ${packageName}`,
+        { timeout: 10000 }
+      );
+
+      // Wait for trace to be written
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Pull the trace file
+      await execAsync(
+        `adb -s ${deviceId} pull ${remotePath} "${localPath}"`,
+        { timeout: 60000 }
+      );
+
+      // Clean up remote file
+      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`).catch(() => {});
+
+      return {
+        id,
+        timestamp: Date.now(),
+        duration,
+        filePath: localPath,
+        status: 'ready',
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.methodTraceActive = false;
+      return {
+        id,
+        timestamp: Date.now(),
+        duration: 0,
+        status: 'error',
+        error: message,
+      };
+    }
+  }
+
+  async analyzeMethodTrace(filePath: string): Promise<MethodTraceAnalysis | null> {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return null;
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      return this.parseTrace(buffer);
+    } catch (error) {
+      console.error('Error analyzing method trace:', error);
+      return null;
+    }
+  }
+
+  private parseTrace(buffer: Buffer): MethodTraceAnalysis | null {
+    try {
+      // Android trace format:
+      // Header section with method names
+      // Binary section with trace data
+
+      // Find the header end (marked by *end)
+      const content = buffer.toString('utf8', 0, Math.min(buffer.length, 1024 * 1024));
+      const headerEnd = content.indexOf('*end');
+      if (headerEnd === -1) {
+        return null;
+      }
+
+      const header = content.slice(0, headerEnd);
+      const lines = header.split('\n');
+
+      const methods = new Map<number, { className: string; methodName: string }>();
+      const methodStats = new Map<number, { inclusive: number; exclusive: number; count: number }>();
+
+      // Parse method definitions from header
+      let inMethods = false;
+      for (const line of lines) {
+        if (line.startsWith('*methods')) {
+          inMethods = true;
+          continue;
+        }
+        if (line.startsWith('*')) {
+          inMethods = false;
+          continue;
+        }
+
+        if (inMethods && line.trim()) {
+          // Format: methodId className methodName signature
+          const parts = line.split('\t');
+          if (parts.length >= 3) {
+            const methodId = parseInt(parts[0], 16);
+            const className = parts[1];
+            const methodName = parts[2];
+            methods.set(methodId, { className, methodName });
+            methodStats.set(methodId, { inclusive: 0, exclusive: 0, count: 0 });
+          }
+        }
+      }
+
+      // Parse binary trace data (simplified)
+      // Full implementation would parse the binary section to calculate actual timings
+      // For now, return placeholder data based on method definitions
+
+      const result: MethodStats[] = [];
+      for (const [methodId, info] of methods) {
+        const stats = methodStats.get(methodId);
+        result.push({
+          className: info.className,
+          methodName: info.methodName,
+          inclusiveTime: stats?.inclusive || 0,
+          exclusiveTime: stats?.exclusive || 0,
+          callCount: stats?.count || 1,
+        });
+      }
+
+      // Sort by inclusive time
+      result.sort((a, b) => b.inclusiveTime - a.inclusiveTime);
+
+      // Build a simple flame chart
+      const flameChart: FlameChartEntry = {
+        name: 'root',
+        value: result.reduce((sum, m) => sum + m.exclusiveTime, 0),
+        children: result.slice(0, 100).map(m => ({
+          name: `${m.className}.${m.methodName}`,
+          value: m.exclusiveTime,
+        })),
+      };
+
+      return {
+        totalTime: flameChart.value,
+        methods: result.slice(0, 500),
+        flameChart,
+      };
+    } catch (error) {
+      console.error('Error parsing trace:', error);
+      return null;
+    }
+  }
+
   stopAll(): void {
     this.stopMemoryMonitor();
     this.stopCpuMonitor();
@@ -2581,6 +3272,8 @@ export class AdbService extends EventEmitter {
     this.stopBatteryMonitor();
     this.stopCrashLogcat();
     this.stopNetworkStatsMonitor();
+    this.stopThreadMonitor();
+    this.stopGcMonitor();
     if (this.recordingProcess) {
       this.recordingProcess.kill('SIGINT');
       this.recordingProcess = null;
