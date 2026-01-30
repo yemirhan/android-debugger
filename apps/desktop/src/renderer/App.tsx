@@ -25,6 +25,7 @@ import { WebSocketPanel } from './components/WebSocketPanel';
 import { AppInstallerPanel } from './components/AppInstallerPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
+import { useNavigationState } from './hooks/useNavigationState';
 import { SdkProvider, LogsProvider, UpdateProvider, useUpdateContext } from './contexts';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
 
@@ -36,6 +37,7 @@ function AppContent() {
   const [packageName, setPackageName] = useState<string>('');
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
   const { setNavigateToSettings } = useUpdateContext();
+  const { sidebarExpanded, toggleSidebar, isGroupExpanded, toggleGroup } = useNavigationState(activeTab);
 
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
@@ -111,7 +113,7 @@ function AppContent() {
           />
         );
       case 'logs':
-        return <LogsPanel device={selectedDevice} />;
+        return <LogsPanel device={selectedDevice} packageName={packageName} />;
       case 'cpu-fps':
         return (
           <CpuFpsPanel
@@ -168,9 +170,17 @@ function AppContent() {
             loading={devicesLoading}
             packageName={packageName}
             onPackageChange={handlePackageChange}
+            sidebarExpanded={sidebarExpanded}
+            onToggleSidebar={toggleSidebar}
           />
-          <div className="flex-1 flex overflow-hidden">
-            <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+          <div className="flex-1 flex min-h-0">
+            <Sidebar
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              sidebarExpanded={sidebarExpanded}
+              isGroupExpanded={isGroupExpanded}
+              toggleGroup={toggleGroup}
+            />
             <main className="flex-1 flex flex-col overflow-hidden">
               <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
                 {renderPanel()}

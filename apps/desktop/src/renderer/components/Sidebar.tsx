@@ -1,7 +1,6 @@
 import React from 'react';
 import type { TabId } from '../App';
 import type { NavGroup, NavItem } from '../types/navigation';
-import { useNavigationState } from '../hooks/useNavigationState';
 import { SidebarGroup, SidebarItem } from './layout';
 import {
   DashboardIcon,
@@ -29,12 +28,14 @@ import {
   AppInfoIcon,
   InstallAppIcon,
   SettingsIcon,
-  MenuIcon,
 } from './icons';
 
 interface SidebarProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
+  sidebarExpanded: boolean;
+  isGroupExpanded: (groupId: string) => boolean;
+  toggleGroup: (groupId: string) => void;
 }
 
 // Navigation structure with groups
@@ -88,14 +89,7 @@ const navigationGroups: NavGroup[] = [
   },
 ];
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
-  const {
-    sidebarExpanded,
-    toggleSidebar,
-    isGroupExpanded,
-    toggleGroup,
-  } = useNavigationState(activeTab);
-
+export function Sidebar({ activeTab, onTabChange, sidebarExpanded, isGroupExpanded, toggleGroup }: SidebarProps) {
   return (
     <aside
       className={`
@@ -103,17 +97,6 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         ${sidebarExpanded ? 'w-[200px]' : 'w-14'}
       `}
     >
-      {/* Sidebar Toggle */}
-      <div className={`p-2 border-b border-border-muted ${sidebarExpanded ? '' : 'flex justify-center'}`}>
-        <button
-          onClick={toggleSidebar}
-          className="w-10 h-10 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
-          title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-        >
-          <MenuIcon />
-        </button>
-      </div>
-
       {/* Dashboard */}
       <div className="p-2 border-b border-border-muted">
         <SidebarItem
@@ -127,7 +110,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       </div>
 
       {/* Navigation Groups */}
-      <nav className="flex-1 py-2 px-2 overflow-y-auto hide-scrollbar">
+      <nav className={`flex-1 py-2 px-2 ${sidebarExpanded ? 'overflow-y-auto hide-scrollbar' : 'overflow-visible'}`}>
         <div className="space-y-1">
           {navigationGroups.map((group) => (
             <SidebarGroup

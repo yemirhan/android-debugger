@@ -107,6 +107,7 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsOpen(false);
+        setSearch('');
       }
     };
 
@@ -159,9 +160,14 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
-    onChange(e.target.value);
     if (!isOpen) setIsOpen(true);
   };
+
+  const handleClose = useCallback(() => {
+    setIsOpen(false);
+    setSearch('');
+    setHighlightedIndex(0);
+  }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     const maxIndex = Math.min(filteredPackages.length, 50) - 1;
@@ -193,11 +199,15 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
       case 'Escape':
         e.preventDefault();
         setIsOpen(false);
+        setSearch('');
         break;
 
       case 'Tab':
         if (isOpen && filteredPackages[highlightedIndex]) {
           handleSelect(filteredPackages[highlightedIndex].pkg);
+        } else {
+          setIsOpen(false);
+          setSearch('');
         }
         break;
     }
@@ -255,11 +265,14 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
         <input
           ref={inputRef}
           type="text"
-          value={value}
+          value={isOpen ? search : value}
           onChange={handleInputChange}
-          onFocus={() => setIsOpen(true)}
+          onFocus={() => {
+            setIsOpen(true);
+            setSearch('');
+          }}
           onKeyDown={handleKeyDown}
-          placeholder="com.example.app"
+          placeholder={value || "Select a package"}
           className="w-52 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none font-mono"
         />
         <button

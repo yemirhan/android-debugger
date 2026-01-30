@@ -8,6 +8,7 @@ import { tabGuides } from '../data/tabGuides';
 
 interface LogsPanelProps {
   device: Device;
+  packageName: string;
 }
 
 const LOG_LEVELS: LogLevel[] = ['V', 'D', 'I', 'W', 'E', 'F'];
@@ -28,7 +29,7 @@ const SearchIcon = () => (
   </svg>
 );
 
-export function LogsPanel({ device }: LogsPanelProps) {
+export function LogsPanel({ device, packageName }: LogsPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
   const {
     logs,
@@ -163,6 +164,14 @@ export function LogsPanel({ device }: LogsPanelProps) {
 
         {/* Level filters */}
         <div className="flex items-center gap-1 p-1 bg-surface rounded-md border border-border-muted">
+          <button
+            onClick={() => updateFilter({ levels: new Set(LOG_LEVELS) })}
+            title="Select all levels"
+            className="px-1.5 h-7 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-surface-hover transition-all duration-150"
+          >
+            All
+          </button>
+          <div className="w-px h-4 bg-border-muted" />
           {LOG_LEVELS.map((level) => (
             <button
               key={level}
@@ -182,6 +191,14 @@ export function LogsPanel({ device }: LogsPanelProps) {
               {level}
             </button>
           ))}
+          <div className="w-px h-4 bg-border-muted" />
+          <button
+            onClick={() => updateFilter({ levels: new Set() })}
+            title="Deselect all levels"
+            className="px-1.5 h-7 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-surface-hover transition-all duration-150"
+          >
+            None
+          </button>
         </div>
 
         {/* Streaming status */}
@@ -197,56 +214,67 @@ export function LogsPanel({ device }: LogsPanelProps) {
         </div>
       </div>
 
-      {/* Logs list */}
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="flex-1 bg-surface rounded-lg border border-border-muted overflow-y-auto"
-      >
-        <table className="w-full">
-          <thead className="sticky top-0 bg-surface-hover border-b border-border-muted">
-            <tr className="text-xs text-text-muted">
-              <th className="px-3 py-2 text-left font-medium w-[130px]">Time</th>
-              <th className="px-2 py-2 text-center font-medium w-8">Lvl</th>
-              <th className="px-2 py-2 text-left font-medium w-[140px]">Tag</th>
-              <th className="px-3 py-2 text-left font-medium">Message</th>
-            </tr>
-          </thead>
-          <tbody className="font-mono text-xs">
-            {logs.map((log) => (
-              <tr
-                key={log.id}
-                className={`log-${log.level} hover:bg-surface-hover/50 border-b border-border-muted/50 transition-colors`}
-              >
-                <td className="px-3 py-1.5 text-text-muted whitespace-nowrap">
-                  {log.timestamp}
-                </td>
-                <td
-                  className="px-2 py-1.5 font-semibold text-center"
-                  style={{ color: LOG_LEVEL_COLORS[log.level] }}
-                >
-                  {log.level}
-                </td>
-                <td className="px-2 py-1.5 text-cyan-400 whitespace-nowrap truncate max-w-[140px]">
-                  {log.tag}
-                </td>
-                <td className="px-3 py-1.5 text-text-primary break-all">{log.message}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-64 text-text-muted">
-            <div className="w-12 h-12 mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h7" />
-              </svg>
-            </div>
-            <p className="text-sm">No logs to display</p>
+      {/* Logs list or package required message */}
+      {logMode === 'all' && !packageName ? (
+        <div className="flex-1 bg-surface rounded-lg border border-border-muted flex flex-col items-center justify-center text-text-muted">
+          <div className="w-12 h-12 mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
           </div>
-        )}
-      </div>
+          <p className="text-sm">Select a package to view all app logs</p>
+        </div>
+      ) : (
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          className="flex-1 bg-surface rounded-lg border border-border-muted overflow-y-auto"
+        >
+          <table className="w-full">
+            <thead className="sticky top-0 bg-surface-hover border-b border-border-muted">
+              <tr className="text-xs text-text-muted">
+                <th className="px-3 py-2 text-left font-medium w-[130px]">Time</th>
+                <th className="px-2 py-2 text-center font-medium w-8">Lvl</th>
+                <th className="px-2 py-2 text-left font-medium w-[140px]">Tag</th>
+                <th className="px-3 py-2 text-left font-medium">Message</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono text-xs">
+              {logs.map((log) => (
+                <tr
+                  key={log.id}
+                  className={`log-${log.level} hover:bg-surface-hover/50 border-b border-border-muted/50 transition-colors`}
+                >
+                  <td className="px-3 py-1.5 text-text-muted whitespace-nowrap">
+                    {log.timestamp}
+                  </td>
+                  <td
+                    className="px-2 py-1.5 font-semibold text-center"
+                    style={{ color: LOG_LEVEL_COLORS[log.level] }}
+                  >
+                    {log.level}
+                  </td>
+                  <td className="px-2 py-1.5 text-cyan-400 whitespace-nowrap truncate max-w-[140px]">
+                    {log.tag}
+                  </td>
+                  <td className="px-3 py-1.5 text-text-primary break-all">{log.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {logs.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-64 text-text-muted">
+              <div className="w-12 h-12 mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h7" />
+                </svg>
+              </div>
+              <p className="text-sm">No logs to display</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Paused indicator */}
       {isPaused && (

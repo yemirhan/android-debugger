@@ -1,7 +1,6 @@
 import React from 'react';
 import type { Device } from '@android-debugger/shared';
 import { PackageSelector } from './PackageSelector';
-import { useSdkContext } from '../contexts/SdkContext';
 
 interface HeaderProps {
   devices: Device[];
@@ -11,6 +10,8 @@ interface HeaderProps {
   loading: boolean;
   packageName: string;
   onPackageChange: (pkg: string) => void;
+  sidebarExpanded: boolean;
+  onToggleSidebar: () => void;
 }
 
 const RefreshIcon = () => (
@@ -25,15 +26,15 @@ const DeviceIcon = () => (
   </svg>
 );
 
-const ServerIcon = () => (
-  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-  </svg>
-);
-
 const ChevronDownIcon = () => (
   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+  </svg>
+);
+
+const MenuIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
   </svg>
 );
 
@@ -45,13 +46,22 @@ export function Header({
   loading,
   packageName,
   onPackageChange,
+  sidebarExpanded,
+  onToggleSidebar,
 }: HeaderProps) {
-  const { port, setPort, isRunning, startServer, stopServer, connectionCount } = useSdkContext();
-
   return (
     <header className="h-12 bg-surface border-b border-border flex items-center justify-between px-4 drag-region">
       {/* Left section - macOS traffic lights spacing */}
       <div className="flex items-center gap-3 no-drag pl-16">
+        {/* Sidebar toggle */}
+        <button
+          onClick={onToggleSidebar}
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+          title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        >
+          <MenuIcon />
+        </button>
+
         {/* Device selector */}
         <div className="flex items-center gap-1.5">
           <button
@@ -102,53 +112,13 @@ export function Header({
 
       {/* Right section */}
       <div className="flex items-center gap-3 no-drag">
-        {/* SDK Server controls in pill container */}
-        <div className="flex items-center gap-2 px-2 py-1 bg-background rounded-lg border border-border-muted">
-          <ServerIcon />
-          {!isRunning && (
-            <input
-              type="number"
-              value={port}
-              onChange={(e) => setPort(parseInt(e.target.value, 10))}
-              className="w-14 px-1.5 py-0.5 bg-surface-hover rounded text-xs text-text-primary outline-none focus:ring-1 focus:ring-accent font-mono"
-              title="WebSocket port"
-            />
-          )}
-          <button
-            onClick={isRunning ? stopServer : startServer}
-            className={`px-2.5 py-1 text-xs font-medium rounded transition-all duration-150 btn-press ${
-              isRunning
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-accent/15 text-accent hover:bg-accent/25'
-            }`}
-          >
-            {isRunning ? 'Stop' : 'Start'}
-          </button>
-          {isRunning && (
-            <span className="text-xs text-text-muted font-mono">:{port}</span>
-          )}
-        </div>
-
-        {/* Connection indicators */}
-        <div className="flex items-center gap-2">
-          {/* SDK connections */}
-          {connectionCount > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent/10">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-              <span className="text-xs text-accent font-medium">
-                {connectionCount} SDK
-              </span>
-            </div>
-          )}
-
-          {/* Device connected indicator */}
-          {selectedDevice && (
-            <div className="flex items-center gap-1.5 px-2 py-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-              <span className="text-xs text-text-muted">Connected</span>
-            </div>
-          )}
-        </div>
+        {/* Device connected indicator */}
+        {selectedDevice && (
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
+            <span className="text-xs text-text-muted">Connected</span>
+          </div>
+        )}
       </div>
     </header>
   );

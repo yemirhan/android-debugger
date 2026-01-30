@@ -106,10 +106,11 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
     setTimeout(() => {
       if (mode === 'rn') {
         window.electronAPI.startLogcat(selectedDevice.id, ['*:S', 'ReactNative:V', 'ReactNativeJS:V']);
-      } else {
-        // 'all' mode - filter by app PID if package name is set
-        window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], packageName || undefined);
+      } else if (packageName) {
+        // 'all' mode - only start if package name is set
+        window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], packageName);
       }
+      // If 'all' mode without package, don't start logcat
     }, 50);
   }, [selectedDevice, logMode, packageName]);
 
@@ -178,10 +179,14 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
     setAllLogs([]);
     pausedAllLogsRef.current = [];
 
-    // Start with new package PID after a small delay
-    setTimeout(() => {
-      window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], packageName || undefined);
-    }, 50);
+    // Only start logcat if package is set
+    if (packageName) {
+      // Start with new package PID after a small delay
+      setTimeout(() => {
+        window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], packageName);
+      }, 50);
+    }
+    // If package is empty, don't start logcat (stay stopped)
   }, [packageName, selectedDevice?.id, logMode]);
 
   const value: LogsContextValue = {
