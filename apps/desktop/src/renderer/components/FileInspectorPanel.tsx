@@ -345,19 +345,32 @@ function FileBrowserView({ device, packageName }: { device: Device; packageName:
   return (
     <div className="h-full flex flex-col gap-4">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 text-sm flex-wrap">
         <button
           onClick={() => listFiles('')}
           className="text-accent hover:text-accent/80 transition-colors"
         >
           /data/data/{packageName}
         </button>
-        {currentPath && (
-          <>
-            <span className="text-text-muted">/</span>
-            <span className="text-text-secondary font-mono">{currentPath}</span>
-          </>
-        )}
+        {currentPath && currentPath.split('/').map((segment, index, segments) => {
+          const pathUpToSegment = segments.slice(0, index + 1).join('/');
+          const isLast = index === segments.length - 1;
+          return (
+            <React.Fragment key={pathUpToSegment}>
+              <span className="text-text-muted">/</span>
+              {isLast ? (
+                <span className="text-text-secondary font-mono">{segment}</span>
+              ) : (
+                <button
+                  onClick={() => listFiles(pathUpToSegment)}
+                  className="text-accent hover:text-accent/80 transition-colors font-mono"
+                >
+                  {segment}
+                </button>
+              )}
+            </React.Fragment>
+          );
+        })}
         <div className="flex-1" />
         <button
           onClick={refresh}
