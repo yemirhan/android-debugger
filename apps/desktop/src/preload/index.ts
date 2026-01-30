@@ -109,6 +109,7 @@ export interface ElectronAPI {
 
   // App Info
   getAdbInfo: () => Promise<{ path: string; version: string; source: 'bundled' | 'system' | 'android-sdk' } | null>;
+  getJavaInfo: () => Promise<{ path: string; version: string } | null>;
 
   // Auto-updater
   checkForUpdates: () => Promise<UpdateCheckResult>;
@@ -284,6 +285,7 @@ const electronAPI: ElectronAPI = {
 
   // App Info
   getAdbInfo: () => ipcRenderer.invoke('app:get-adb-info'),
+  getJavaInfo: () => ipcRenderer.invoke('app:get-java-info'),
 
   // Auto-updater
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),

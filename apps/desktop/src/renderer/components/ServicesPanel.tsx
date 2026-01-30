@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ServiceInfo, Device } from '@android-debugger/shared';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface ServicesPanelProps {
   device: Device;
@@ -7,9 +10,11 @@ interface ServicesPanelProps {
 }
 
 export function ServicesPanel({ device, packageName }: ServicesPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const [services, setServices] = useState<ServiceInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAllPackages, setShowAllPackages] = useState(false);
+  const guide = tabGuides['services'];
 
   const fetchServices = useCallback(async () => {
     if (!device) return;
@@ -48,10 +53,26 @@ export function ServicesPanel({ device, packageName }: ServicesPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">Running Services</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           {services.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-medium bg-surface-hover text-text-secondary rounded-full">
               {services.length} service{services.length !== 1 ? 's' : ''}

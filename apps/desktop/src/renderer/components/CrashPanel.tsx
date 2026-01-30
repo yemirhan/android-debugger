@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { CrashEntry, Device } from '@android-debugger/shared';
 import { MAX_CRASH_ENTRIES } from '@android-debugger/shared';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface CrashPanelProps {
   device: Device;
 }
 
 export function CrashPanel({ device }: CrashPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const [crashes, setCrashes] = useState<CrashEntry[]>([]);
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [expandedCrash, setExpandedCrash] = useState<string | null>(null);
+  const guide = tabGuides['crashes'];
 
   const startMonitoring = useCallback(() => {
     if (!device) return;
@@ -68,10 +73,26 @@ export function CrashPanel({ device }: CrashPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">Crash Monitor</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           {crashes.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-medium bg-red-500/15 text-red-400 rounded-full">
               {crashes.length} crash{crashes.length !== 1 ? 'es' : ''}

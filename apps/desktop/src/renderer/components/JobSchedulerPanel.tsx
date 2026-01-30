@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import type { Device, ScheduledJob } from '@android-debugger/shared';
 import { useJobScheduler } from '../hooks/useJobScheduler';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface JobSchedulerPanelProps {
   device: Device;
@@ -8,7 +11,9 @@ interface JobSchedulerPanelProps {
 }
 
 export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const [showAllPackages, setShowAllPackages] = useState(false);
+  const guide = tabGuides['jobs'];
   const { data, isLoading, error, isPolling, refresh, stopPolling, startPolling } = useJobScheduler(
     device,
     showAllPackages ? undefined : packageName || undefined
@@ -58,10 +63,26 @@ export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProp
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">Job Scheduler</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           {data?.jobs && data.jobs.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-medium bg-surface-hover text-text-secondary rounded-full">
               {data.jobs.length} job{data.jobs.length !== 1 ? 's' : ''}

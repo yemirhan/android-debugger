@@ -12,6 +12,11 @@ interface AdbInfo {
   source: 'bundled' | 'system' | 'android-sdk';
 }
 
+interface JavaInfo {
+  path: string;
+  version: string;
+}
+
 // Fix PATH for packaged app - add common ADB locations
 function fixPath(): void {
   const homeDir = os.homedir();
@@ -89,6 +94,31 @@ function getAdbInfo(): AdbInfo | null {
     }
   }
   return null;
+}
+
+function getJavaInfo(): JavaInfo | null {
+  try {
+    // Try to get java path using 'which' on Unix or 'where' on Windows
+    const isWindows = process.platform === 'win32';
+    const whichCommand = isWindows ? 'where java' : 'which java';
+
+    let javaPath: string;
+    try {
+      javaPath = execSync(whichCommand, { encoding: 'utf-8' }).trim().split('\n')[0];
+    } catch {
+      return null;
+    }
+
+    // Get version
+    const versionOutput = execSync('java -version 2>&1', { encoding: 'utf-8' });
+    // Java version output is on stderr and looks like: java version "17.0.1" or openjdk version "11.0.12"
+    const versionMatch = versionOutput.match(/(?:java|openjdk) version "([^"]+)"/i);
+    const version = versionMatch ? versionMatch[1] : 'unknown';
+
+    return { path: javaPath, version };
+  } catch {
+    return null;
+  }
 }
 
 import { adbService } from './adb';
@@ -518,6 +548,10 @@ function setupIpcHandlers(): void {
   // App info handlers
   ipcMain.handle('app:get-adb-info', async () => {
     return getAdbInfo();
+  });
+
+  ipcMain.handle('app:get-java-info', async () => {
+    return getJavaInfo();
   });
 
   // Battery handlers

@@ -3,6 +3,9 @@ import type { Device } from '@android-debugger/shared';
 import { useFileInspector } from '../hooks/useFileInspector';
 import { useSharedPreferences } from '../hooks/useSharedPreferences';
 import { useDatabaseInspector } from '../hooks/useDatabaseInspector';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface FileInspectorPanelProps {
   device: Device;
@@ -12,7 +15,9 @@ interface FileInspectorPanelProps {
 type TabType = 'files' | 'sharedprefs' | 'database';
 
 export function FileInspectorPanel({ device, packageName }: FileInspectorPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('sharedprefs');
+  const guide = tabGuides['file-inspector'];
 
   if (!packageName) {
     return (
@@ -28,9 +33,27 @@ export function FileInspectorPanel({ device, packageName }: FileInspectorPanelPr
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">File Inspector</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">File Inspector</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

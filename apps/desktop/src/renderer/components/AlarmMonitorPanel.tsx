@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import type { Device, ScheduledAlarm } from '@android-debugger/shared';
 import { useAlarmMonitor } from '../hooks/useAlarmMonitor';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface AlarmMonitorPanelProps {
   device: Device;
@@ -8,7 +11,9 @@ interface AlarmMonitorPanelProps {
 }
 
 export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const [showAllPackages, setShowAllPackages] = useState(false);
+  const guide = tabGuides['alarms'];
   const { data, isLoading, error, isPolling, refresh, stopPolling, startPolling, getTimeUntilNextAlarm } = useAlarmMonitor(
     device,
     showAllPackages ? undefined : packageName || undefined
@@ -85,10 +90,26 @@ export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProp
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">Alarm Monitor</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           {data?.alarms && data.alarms.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-medium bg-surface-hover text-text-secondary rounded-full">
               {data.alarms.length} alarm{data.alarms.length !== 1 ? 's' : ''}

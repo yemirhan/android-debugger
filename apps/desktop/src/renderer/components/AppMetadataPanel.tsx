@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Device } from '@android-debugger/shared';
 import { useAppMetadata } from '../hooks/useAppMetadata';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface AppMetadataPanelProps {
   device: Device;
@@ -8,7 +11,9 @@ interface AppMetadataPanelProps {
 }
 
 export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const { metadata, loading, error, refresh } = useAppMetadata(device, packageName);
+  const guide = tabGuides['app-metadata'];
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -31,9 +36,27 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">App Metadata</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">App Metadata</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         <button
           onClick={refresh}
           disabled={loading}
@@ -171,13 +194,3 @@ function InfoRow({ label, value, mono, color }: InfoRowProps) {
   );
 }
 
-const InfoIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={1.5}
-      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
-);

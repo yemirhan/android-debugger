@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import type { NetworkRequest } from '@android-debugger/shared';
 import { useSdkContext } from '../contexts/SdkContext';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 type MethodFilter = 'all' | 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 type StatusFilter = 'all' | '2xx' | '3xx' | '4xx' | '5xx' | 'pending' | 'error';
@@ -78,12 +81,14 @@ function generateCurlCompact(request: NetworkRequest): string {
 type CopyType = 'curl' | 'curl-compact' | 'url' | 'response' | 'headers' | null;
 
 export function NetworkPanel() {
+  const [showInfo, setShowInfo] = useState(false);
   const { requests, selectedRequest, setSelectedRequest, clearRequests } = useSdkContext();
   const [urlFilter, setUrlFilter] = useState('');
   const [methodFilter, setMethodFilter] = useState<MethodFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [copied, setCopied] = useState<CopyType>(null);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const guide = tabGuides['network'];
 
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
@@ -169,10 +174,26 @@ export function NetworkPanel() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">Network</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           <span className="text-xs text-text-muted font-mono">
             {filteredRequests.length === requests.length
               ? `${requests.length} requests`

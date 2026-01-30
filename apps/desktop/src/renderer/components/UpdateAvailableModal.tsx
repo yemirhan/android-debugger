@@ -80,9 +80,10 @@ export function UpdateAvailableModal() {
               <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
                 What's New
               </h3>
-              <p className="text-sm text-text-secondary whitespace-pre-wrap">
-                {updateInfo.releaseNotes}
-              </p>
+              <div
+                className="text-sm text-text-secondary [&_p]:mb-2 [&_p:last-child]:mb-0 [&_br]:hidden"
+                dangerouslySetInnerHTML={{ __html: updateInfo.releaseNotes }}
+              />
             </div>
           </div>
         )}

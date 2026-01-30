@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Device } from '@android-debugger/shared';
 import type { TabId } from '../../App';
 import { useSdkContext } from '../../contexts/SdkContext';
@@ -12,6 +12,9 @@ import { RecentActivity } from './RecentActivity';
 import { QuickActions } from './QuickActions';
 import { MiniChart, MiniChartPlaceholder } from './MiniChart';
 import { NoDeviceState } from '../shared/EmptyState';
+import { InfoIcon } from '../icons';
+import { InfoModal } from '../shared/InfoModal';
+import { tabGuides } from '../../data/tabGuides';
 
 interface DashboardProps {
   device: Device | null;
@@ -21,7 +24,9 @@ interface DashboardProps {
 }
 
 export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }: DashboardProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const { requests, clearConsoleLogs, clearRequests } = useSdkContext();
+  const guide = tabGuides['dashboard'];
 
   // Get memory data (only if package is selected)
   const { data: memoryData, current: memoryStats } = useMemory(
@@ -104,6 +109,27 @@ export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }:
 
   return (
     <div className="flex-1 flex flex-col overflow-auto p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <h2 className="text-base font-semibold">Dashboard</h2>
+        <button
+          onClick={() => setShowInfo(true)}
+          className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+          title="Learn more about this feature"
+        >
+          <InfoIcon />
+        </button>
+      </div>
+
       {/* Quick Stats Row */}
       <QuickStats
         memoryMB={memoryStats ? Math.round(memoryStats.totalPss / 1024) : undefined}

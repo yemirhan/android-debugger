@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   LineChart,
   Line,
@@ -11,6 +11,9 @@ import {
 } from 'recharts';
 import type { Device } from '@android-debugger/shared';
 import { useMemory } from '../hooks/useMemory';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface MemoryPanelProps {
   device: Device;
@@ -18,10 +21,12 @@ interface MemoryPanelProps {
 }
 
 export function MemoryPanel({ device, packageName }: MemoryPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const { data, current, isMonitoring, alert, stopMonitoring, clearData } = useMemory(
     device,
     packageName
   );
+  const guide = tabGuides['memory'];
 
   // Format data for chart
   const chartData = data.map((d, i) => ({
@@ -36,9 +41,27 @@ export function MemoryPanel({ device, packageName }: MemoryPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Memory Usage</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Memory Usage</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={clearData}

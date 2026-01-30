@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   LineChart,
   Line,
@@ -11,6 +11,9 @@ import {
 import type { Device } from '@android-debugger/shared';
 import { useCpu } from '../hooks/useCpu';
 import { useFps } from '../hooks/useFps';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface CpuFpsPanelProps {
   device: Device;
@@ -18,8 +21,10 @@ interface CpuFpsPanelProps {
 }
 
 export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const { data: cpuData, current: currentCpu, clearData: clearCpu } = useCpu(device, packageName);
   const { data: fpsData, current: currentFps, clearData: clearFps } = useFps(device, packageName);
+  const guide = tabGuides['cpu-fps'];
 
   // Format data for charts
   const cpuChartData = cpuData.map((d, i) => ({
@@ -49,9 +54,27 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">CPU & FPS Monitor</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">CPU & FPS Monitor</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         <button
           onClick={clearAll}
           className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"

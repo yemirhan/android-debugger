@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -11,6 +11,9 @@ import {
 } from 'recharts';
 import type { Device } from '@android-debugger/shared';
 import { useNetworkStats } from '../hooks/useNetworkStats';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface NetworkStatsPanelProps {
   device: Device;
@@ -18,10 +21,12 @@ interface NetworkStatsPanelProps {
 }
 
 export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const { current, isMonitoring, stopMonitoring, clearData, fetchStats } = useNetworkStats(
     device,
     packageName
   );
+  const guide = tabGuides['network-stats'];
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -53,9 +58,27 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Network Stats</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Network Stats</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={fetchStats}

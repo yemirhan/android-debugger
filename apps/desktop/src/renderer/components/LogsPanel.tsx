@@ -1,7 +1,10 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import type { Device, LogLevel } from '@android-debugger/shared';
 import { LOG_LEVEL_COLORS } from '@android-debugger/shared';
 import { useLogs } from '../hooks/useLogs';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface LogsPanelProps {
   device: Device;
@@ -26,6 +29,7 @@ const SearchIcon = () => (
 );
 
 export function LogsPanel({ device }: LogsPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const {
     logs,
     totalLogs,
@@ -40,6 +44,7 @@ export function LogsPanel({ device }: LogsPanelProps) {
     toggleLevel,
     exportLogs,
   } = useLogs(device);
+  const guide = tabGuides['logs'];
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtTopRef = useRef(true);
@@ -68,9 +73,25 @@ export function LogsPanel({ device }: LogsPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header with tabs */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           {/* Tabs */}
           <div className="flex items-center gap-1 border-b border-border-muted">
             <button

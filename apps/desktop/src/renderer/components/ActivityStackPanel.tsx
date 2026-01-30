@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Device, ActivityInfo, TaskStack } from '@android-debugger/shared';
 import { useActivityStack } from '../hooks/useActivityStack';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface ActivityStackPanelProps {
   device: Device;
@@ -8,7 +11,9 @@ interface ActivityStackPanelProps {
 }
 
 export function ActivityStackPanel({ device, packageName }: ActivityStackPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const { data, isLoading, error, isPolling, refresh, stopPolling, startPolling } = useActivityStack(device, packageName);
+  const guide = tabGuides['activity-stack'];
 
   const getStateColor = (state: ActivityInfo['state']) => {
     switch (state) {
@@ -27,10 +32,26 @@ export function ActivityStackPanel({ device, packageName }: ActivityStackPanelPr
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">Activity Stack</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           {data?.tasks && data.tasks.length > 0 && (
             <span className="px-2 py-0.5 text-xs font-medium bg-surface-hover text-text-secondary rounded-full">
               {data.tasks.length} task{data.tasks.length !== 1 ? 's' : ''}

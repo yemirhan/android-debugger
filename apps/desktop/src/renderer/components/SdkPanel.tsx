@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import type { ConsoleMessage } from '@android-debugger/shared';
 import { useSdkContext } from '../contexts/SdkContext';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 export function SdkPanel() {
+  const [showInfo, setShowInfo] = useState(false);
   const {
     consoleLogs,
     events,
@@ -13,6 +17,7 @@ export function SdkPanel() {
   } = useSdkContext();
 
   const [activeTab, setActiveTab] = useState<'console' | 'events' | 'state'>('console');
+  const guide = tabGuides['sdk'];
 
   const getConsoleColor = (level: ConsoleMessage['level']) => {
     switch (level) {
@@ -34,10 +39,26 @@ export function SdkPanel() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-base font-semibold">SDK Data</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent/10">
             <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
             <span className="text-xs font-mono text-accent">

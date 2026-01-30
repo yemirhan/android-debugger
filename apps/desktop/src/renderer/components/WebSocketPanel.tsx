@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useSdkContext } from '../contexts/SdkContext';
 import type { WebSocketMessage } from '@android-debugger/shared';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 const WS_READY_STATE_LABELS: Record<number, string> = {
   0: 'Connecting',
@@ -17,9 +20,11 @@ const WS_READY_STATE_COLORS: Record<number, string> = {
 };
 
 export function WebSocketPanel() {
+  const [showInfo, setShowInfo] = useState(false);
   const { wsConnections, selectedWsConnection, setSelectedWsConnection, clearWebSocket } = useSdkContext();
   const [filterDirection, setFilterDirection] = useState<'all' | 'sent' | 'received'>('all');
   const [selectedMessage, setSelectedMessage] = useState<WebSocketMessage | null>(null);
+  const guide = tabGuides['websocket'];
 
   const connections = useMemo(() => Array.from(wsConnections.values()), [wsConnections]);
 
@@ -49,10 +54,28 @@ export function WebSocketPanel() {
 
   return (
     <div className="flex-1 flex overflow-hidden">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Connections sidebar */}
       <div className="w-64 bg-surface border-r border-border-muted flex flex-col">
         <div className="p-3 border-b border-border-muted flex items-center justify-between">
-          <h3 className="text-sm font-medium text-text-primary">Connections</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-text-primary">Connections</h3>
+            <button
+              onClick={() => setShowInfo(true)}
+              className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+              title="Learn more about this feature"
+            >
+              <InfoIcon />
+            </button>
+          </div>
           <button
             onClick={clearWebSocket}
             className="text-xs text-text-muted hover:text-text-secondary"

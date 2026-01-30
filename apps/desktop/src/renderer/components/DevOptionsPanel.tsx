@@ -1,12 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Device, DeveloperOptions } from '@android-debugger/shared';
 import { useDeveloperOptions } from '../hooks/useDeveloperOptions';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface DevOptionsPanelProps {
   device: Device;
 }
 
 export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const {
     options,
     loading,
@@ -19,14 +23,33 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
     setShowTouches,
     setPointerLocation,
   } = useDeveloperOptions(device);
+  const guide = tabGuides['dev-options'];
 
   const animationScales = [0, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Developer Options</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Developer Options</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         <button
           onClick={refresh}
           disabled={loading}

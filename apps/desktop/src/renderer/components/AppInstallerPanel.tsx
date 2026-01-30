@@ -1,12 +1,16 @@
 import React, { useState, useCallback, DragEvent } from 'react';
 import type { Device, InstallStage } from '@android-debugger/shared';
 import { useAppInstaller } from '../hooks/useAppInstaller';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface AppInstallerPanelProps {
   device: Device;
 }
 
 export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const {
     selectedFile,
     selectFile,
@@ -26,6 +30,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
     deviceSpec,
     reset,
   } = useAppInstaller(device);
+  const guide = tabGuides['app-installer'];
 
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -100,9 +105,27 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Install App</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Install App</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         {deviceSpec && (
           <div className="text-xs text-text-muted">
             SDK {deviceSpec.sdkVersion} | {deviceSpec.abis[0] || 'Unknown ABI'}

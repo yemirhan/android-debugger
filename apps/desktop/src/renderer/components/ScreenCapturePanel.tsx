@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import type { Device } from '@android-debugger/shared';
 import { useScreenCapture } from '../hooks/useScreenCapture';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface ScreenCapturePanelProps {
   device: Device;
 }
 
 export function ScreenCapturePanel({ device }: ScreenCapturePanelProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const {
     isRecording,
     recordingPath,
@@ -17,6 +21,7 @@ export function ScreenCapturePanel({ device }: ScreenCapturePanelProps) {
     startRecording,
     stopRecording,
   } = useScreenCapture(device);
+  const guide = tabGuides['screen-capture'];
 
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
@@ -50,9 +55,27 @@ export function ScreenCapturePanel({ device }: ScreenCapturePanelProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Screen Capture</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Screen Capture</h2>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Learn more about this feature"
+          >
+            <InfoIcon />
+          </button>
+        </div>
       </div>
 
       {/* Error */}

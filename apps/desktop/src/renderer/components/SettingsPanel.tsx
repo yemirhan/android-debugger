@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL } from '@android-debugger/shared';
 import type { UpdateInfo, UpdateProgress, UpdateSettings } from '@android-debugger/shared';
+import { InfoIcon } from './icons';
+import { InfoModal } from './shared/InfoModal';
+import { tabGuides } from '../data/tabGuides';
 
 interface AdbInfo {
   path: string;
@@ -13,11 +16,18 @@ interface BundletoolInfo {
   version: string;
 }
 
+interface JavaInfo {
+  path: string;
+  version: string;
+}
+
 type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
 
 export function SettingsPanel() {
+  const [showInfo, setShowInfo] = useState(false);
   const [adbInfo, setAdbInfo] = useState<AdbInfo | null>(null);
   const [bundletoolInfo, setBundletoolInfo] = useState<BundletoolInfo | null>(null);
+  const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null);
   const [appVersion, setAppVersion] = useState<string>('');
   const [updateSettings, setUpdateSettings] = useState<UpdateSettings>({
     autoCheckOnStartup: true,
@@ -45,6 +55,7 @@ export function SettingsPanel() {
   useEffect(() => {
     window.electronAPI.getAdbInfo().then(setAdbInfo);
     window.electronAPI.getBundletoolInfo().then(setBundletoolInfo);
+    window.electronAPI.getJavaInfo().then(setJavaInfo);
     window.electronAPI.getAppVersion().then(setAppVersion);
     window.electronAPI.getUpdateSettings().then(setUpdateSettings);
   }, []);
@@ -112,9 +123,29 @@ export function SettingsPanel() {
     await window.electronAPI.setUpdateSettings(newSettings);
   }, [updateSettings]);
 
+  const guide = tabGuides['settings'];
+
   return (
     <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-5">
-      <h2 className="text-base font-semibold">Settings</h2>
+      <InfoModal
+        isOpen={showInfo}
+        onClose={() => setShowInfo(false)}
+        title={guide.title}
+        description={guide.description}
+        features={guide.features}
+        tips={guide.tips}
+      />
+
+      <div className="flex items-center gap-2">
+        <h2 className="text-base font-semibold">Settings</h2>
+        <button
+          onClick={() => setShowInfo(true)}
+          className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+          title="Learn more about this feature"
+        >
+          <InfoIcon />
+        </button>
+      </div>
 
       {/* Monitoring Intervals */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
@@ -362,6 +393,18 @@ export function SettingsPanel() {
             <span className="text-sm text-text-secondary">ADB Path</span>
             <span className="text-xs font-mono text-text-muted truncate max-w-[200px]" title={adbInfo?.path}>
               {adbInfo?.path || 'N/A'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1">
+            <span className="text-sm text-text-secondary">Java</span>
+            <span className="text-sm font-mono text-text-primary">
+              {javaInfo ? javaInfo.version : 'Not found'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1">
+            <span className="text-sm text-text-secondary">Java Path</span>
+            <span className="text-xs font-mono text-text-muted truncate max-w-[200px]" title={javaInfo?.path}>
+              {javaInfo?.path || 'N/A'}
             </span>
           </div>
           <div className="flex justify-between items-center py-1">
