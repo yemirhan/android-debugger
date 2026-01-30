@@ -106,6 +106,7 @@ export function CrashPanel({ device }: CrashPanelProps) {
               <CrashItem
                 key={crash.id}
                 crash={crash}
+                device={device}
                 isExpanded={expandedCrash === crash.id}
                 onToggle={() => toggleExpand(crash.id)}
               />
@@ -131,11 +132,37 @@ export function CrashPanel({ device }: CrashPanelProps) {
 
 interface CrashItemProps {
   crash: CrashEntry;
+  device: Device;
   isExpanded: boolean;
   onToggle: () => void;
 }
 
-function CrashItem({ crash, isExpanded, onToggle }: CrashItemProps) {
+function CrashItem({ crash, device, isExpanded, onToggle }: CrashItemProps) {
+  const buildCrashQuery = () => {
+    const maxRawLength = 3000;
+    const truncatedRaw = crash.raw.length > maxRawLength
+      ? crash.raw.slice(0, maxRawLength) + '\n... [truncated]'
+      : crash.raw;
+
+    let query = `I have a crash in my Android React Native app.\n\n`;
+    query += `Device: ${device.model} (Android ${device.androidVersion})\n\n`;
+    query += `Crash output:\n${truncatedRaw}\n\n`;
+    query += 'What is causing this crash and how can I fix it?';
+    return query;
+  };
+
+  const askChatGPT = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const query = encodeURIComponent(buildCrashQuery());
+    window.electronAPI.openExternal(`https://chatgpt.com/?q=${query}`);
+  };
+
+  const askClaude = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const query = encodeURIComponent(buildCrashQuery());
+    window.electronAPI.openExternal(`https://claude.ai/new?q=${query}`);
+  };
+
   return (
     <div className="border-b border-border-muted last:border-b-0">
       <button
@@ -204,8 +231,20 @@ function CrashItem({ crash, isExpanded, onToggle }: CrashItemProps) {
             </div>
           </div>
 
-          {/* Copy button */}
-          <div className="mt-3 flex justify-end">
+          {/* Action buttons */}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              onClick={askChatGPT}
+              className="px-3 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/15 rounded-md hover:bg-emerald-500/25 transition-all duration-150 btn-press"
+            >
+              Ask ChatGPT
+            </button>
+            <button
+              onClick={askClaude}
+              className="px-3 py-1.5 text-xs font-medium text-orange-400 bg-orange-500/15 rounded-md hover:bg-orange-500/25 transition-all duration-150 btn-press"
+            >
+              Ask Claude
+            </button>
             <button
               onClick={(e) => {
                 e.stopPropagation();

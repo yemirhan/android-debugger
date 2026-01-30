@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FeatureCard, ConnectionStatus } from '@yemirhan/android-debugger-ui';
 
 export default function HomeScreen() {
@@ -69,6 +69,23 @@ export default function HomeScreen() {
         href="/websocket"
       />
 
+      <View style={styles.crashSection}>
+        <Text style={styles.crashLabel}>Crash testing</Text>
+        <Pressable
+          onPress={() => {
+            setTimeout(() => {
+              throw new Error('Manual crash triggered');
+            }, 0);
+          }}
+          style={({ pressed }) => [
+            styles.crashButton,
+            pressed && styles.crashButtonPressed,
+          ]}
+        >
+          <Text style={styles.crashButtonText}>Crash the app</Text>
+        </Pressable>
+      </View>
+
       <View style={styles.footer}>
         <Text style={styles.footerText}>
           SDK messages are sent via logcat and captured by the desktop app through ADB.
@@ -101,6 +118,37 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#9ca3af',
     lineHeight: 20,
+  },
+  crashSection: {
+    marginTop: 16,
+    padding: 16,
+    backgroundColor: '#111827',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  crashLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fca5a5',
+    marginBottom: 12,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  crashButton: {
+    alignItems: 'center',
+    backgroundColor: '#dc2626',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  crashButtonPressed: {
+    backgroundColor: '#b91c1c',
+  },
+  crashButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
   },
   footer: {
     marginTop: 24,

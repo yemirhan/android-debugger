@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, shell } from 'electron';
 import type {
   Device,
   MemoryInfo,
@@ -148,6 +148,9 @@ export interface ElectronAPI {
 
   // Alarm Monitor
   getScheduledAlarms: (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
+
+  // Shell
+  openExternal: (url: string) => Promise<void>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -351,6 +354,9 @@ const electronAPI: ElectronAPI = {
   // Alarm Monitor
   getScheduledAlarms: (deviceId, packageName) =>
     ipcRenderer.invoke('adb:get-scheduled-alarms', deviceId, packageName),
+
+  // Shell
+  openExternal: (url) => shell.openExternal(url),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
