@@ -160,6 +160,7 @@ export interface ElectronAPI {
   getDeviceSpec: (deviceId: string) => Promise<DeviceSpec>;
   checkJava: () => Promise<boolean>;
   checkBundletool: () => Promise<boolean>;
+  getBundletoolInfo: () => Promise<{ path: string; version: string } | null>;
   onInstallProgress: (callback: (progress: InstallProgress) => void) => UnsubscribeFn;
 
   // Shell
@@ -375,6 +376,7 @@ const electronAPI: ElectronAPI = {
   getDeviceSpec: (deviceId) => ipcRenderer.invoke('app:get-device-spec', deviceId),
   checkJava: () => ipcRenderer.invoke('app:check-java'),
   checkBundletool: () => ipcRenderer.invoke('app:check-bundletool'),
+  getBundletoolInfo: () => ipcRenderer.invoke('app:get-bundletool-info'),
   onInstallProgress: (callback) => {
     const listener = (_: Electron.IpcRendererEvent, progress: InstallProgress) => callback(progress);
     ipcRenderer.on('install-progress', listener);

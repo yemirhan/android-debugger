@@ -651,6 +651,17 @@ function setupIpcHandlers(): void {
     return !!bundletoolPath;
   });
 
+  ipcMain.handle('app:get-bundletool-info', async () => {
+    const bundletoolPath = adbService.getBundletoolPath();
+    if (!bundletoolPath) {
+      return null;
+    }
+    return {
+      path: bundletoolPath,
+      version: '1.17.2', // Bundled version
+    };
+  });
+
   // Auto-updater handlers
   ipcMain.handle('updater:check', async () => {
     try {

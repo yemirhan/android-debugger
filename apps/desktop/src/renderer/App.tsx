@@ -74,6 +74,11 @@ function App() {
       );
     }
 
+    // Settings doesn't require a device
+    if (activeTab === 'settings') {
+      return <SettingsPanel />;
+    }
+
     if (!selectedDevice) {
       return (
         <div className="flex-1 flex items-center justify-center text-text-secondary panel-content">
@@ -111,8 +116,6 @@ function App() {
         return <NetworkPanel />;
       case 'sdk':
         return <SdkPanel />;
-      case 'settings':
-        return <SettingsPanel />;
       case 'app-info':
         return <AppMetadataPanel device={selectedDevice} packageName={packageName} />;
       case 'screen-capture':

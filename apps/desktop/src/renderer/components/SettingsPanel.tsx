@@ -8,10 +8,16 @@ interface AdbInfo {
   source: 'bundled' | 'system' | 'android-sdk';
 }
 
+interface BundletoolInfo {
+  path: string;
+  version: string;
+}
+
 type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
 
 export function SettingsPanel() {
   const [adbInfo, setAdbInfo] = useState<AdbInfo | null>(null);
+  const [bundletoolInfo, setBundletoolInfo] = useState<BundletoolInfo | null>(null);
   const [appVersion, setAppVersion] = useState<string>('');
   const [updateSettings, setUpdateSettings] = useState<UpdateSettings>({
     autoCheckOnStartup: true,
@@ -38,6 +44,7 @@ export function SettingsPanel() {
 
   useEffect(() => {
     window.electronAPI.getAdbInfo().then(setAdbInfo);
+    window.electronAPI.getBundletoolInfo().then(setBundletoolInfo);
     window.electronAPI.getAppVersion().then(setAppVersion);
     window.electronAPI.getUpdateSettings().then(setUpdateSettings);
   }, []);
@@ -355,6 +362,18 @@ export function SettingsPanel() {
             <span className="text-sm text-text-secondary">ADB Path</span>
             <span className="text-xs font-mono text-text-muted truncate max-w-[200px]" title={adbInfo?.path}>
               {adbInfo?.path || 'N/A'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1">
+            <span className="text-sm text-text-secondary">Bundletool</span>
+            <span className="text-sm font-mono text-text-primary">
+              {bundletoolInfo ? `${bundletoolInfo.version}` : 'Not found'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1">
+            <span className="text-sm text-text-secondary">Bundletool Path</span>
+            <span className="text-xs font-mono text-text-muted truncate max-w-[200px]" title={bundletoolInfo?.path}>
+              {bundletoolInfo?.path || 'N/A'}
             </span>
           </div>
         </div>
