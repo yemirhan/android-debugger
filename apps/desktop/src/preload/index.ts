@@ -27,6 +27,11 @@ import type {
   ActivityStackInfo,
   JobSchedulerInfo,
   AlarmMonitorInfo,
+  InstallOptions,
+  InstallResult,
+  InstallProgress,
+  DeviceSpec,
+  SelectedAppFile,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -148,6 +153,14 @@ export interface ElectronAPI {
 
   // Alarm Monitor
   getScheduledAlarms: (deviceId: string, packageName?: string) => Promise<AlarmMonitorInfo | null>;
+
+  // App Installer
+  selectAppFile: () => Promise<SelectedAppFile | null>;
+  installApp: (deviceId: string, filePath: string, options: InstallOptions) => Promise<InstallResult>;
+  getDeviceSpec: (deviceId: string) => Promise<DeviceSpec>;
+  checkJava: () => Promise<boolean>;
+  checkBundletool: () => Promise<boolean>;
+  onInstallProgress: (callback: (progress: InstallProgress) => void) => UnsubscribeFn;
 
   // Shell
   openExternal: (url: string) => Promise<void>;
@@ -354,6 +367,19 @@ const electronAPI: ElectronAPI = {
   // Alarm Monitor
   getScheduledAlarms: (deviceId, packageName) =>
     ipcRenderer.invoke('adb:get-scheduled-alarms', deviceId, packageName),
+
+  // App Installer
+  selectAppFile: () => ipcRenderer.invoke('app:select-file'),
+  installApp: (deviceId, filePath, options) =>
+    ipcRenderer.invoke('app:install', deviceId, filePath, options),
+  getDeviceSpec: (deviceId) => ipcRenderer.invoke('app:get-device-spec', deviceId),
+  checkJava: () => ipcRenderer.invoke('app:check-java'),
+  checkBundletool: () => ipcRenderer.invoke('app:check-bundletool'),
+  onInstallProgress: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, progress: InstallProgress) => callback(progress);
+    ipcRenderer.on('install-progress', listener);
+    return () => ipcRenderer.removeListener('install-progress', listener);
+  },
 
   // Shell
   openExternal: (url) => shell.openExternal(url),

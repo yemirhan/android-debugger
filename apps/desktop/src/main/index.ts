@@ -107,6 +107,8 @@ import type {
   ActivityStackInfo,
   JobSchedulerInfo,
   AlarmMonitorInfo,
+  InstallOptions,
+  InstallProgress,
 } from '@android-debugger/shared';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
@@ -182,6 +184,8 @@ function saveIntentHistory(history: IntentHistoryEntry[]): void {
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
+  const isDev = !app.isPackaged;
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -189,6 +193,7 @@ function createWindow(): void {
     minHeight: 700,
     backgroundColor: '#0a0a0a',
     titleBarStyle: 'hiddenInset',
+    title: isDev ? 'Android Debugger (Dev)' : 'Android Debugger',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -584,6 +589,66 @@ function setupIpcHandlers(): void {
   // Alarm Monitor handlers
   ipcMain.handle('adb:get-scheduled-alarms', async (_, deviceId: string, packageName?: string) => {
     return adbService.getScheduledAlarms(deviceId, packageName);
+  });
+
+  // App Installation handlers
+  ipcMain.handle('app:select-file', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Select APK or AAB File',
+      filters: [
+        { name: 'Android Apps', extensions: ['apk', 'aab'] },
+        { name: 'APK Files', extensions: ['apk'] },
+        { name: 'AAB Files', extensions: ['aab'] },
+      ],
+      properties: ['openFile'],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const filePath = result.filePaths[0];
+    const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
+    const fileType = filePath.toLowerCase().endsWith('.aab') ? 'aab' : 'apk';
+
+    try {
+      const stats = fs.statSync(filePath);
+      return {
+        filePath,
+        fileName,
+        fileSize: stats.size,
+        fileType,
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('app:install', async (event, deviceId: string, filePath: string, options: InstallOptions) => {
+    const fileType = filePath.toLowerCase().endsWith('.aab') ? 'aab' : 'apk';
+
+    const onProgress = (progress: InstallProgress) => {
+      mainWindow?.webContents.send('install-progress', progress);
+    };
+
+    if (fileType === 'aab') {
+      return adbService.installAab(deviceId, filePath, options, onProgress);
+    } else {
+      return adbService.installApk(deviceId, filePath, options, onProgress);
+    }
+  });
+
+  ipcMain.handle('app:get-device-spec', async (_, deviceId: string) => {
+    return adbService.getDeviceSpec(deviceId);
+  });
+
+  ipcMain.handle('app:check-java', async () => {
+    return adbService.checkJavaAvailable();
+  });
+
+  ipcMain.handle('app:check-bundletool', async () => {
+    const bundletoolPath = adbService.getBundletoolPath();
+    return !!bundletoolPath;
   });
 
   // Auto-updater handlers

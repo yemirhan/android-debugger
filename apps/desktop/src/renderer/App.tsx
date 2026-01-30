@@ -22,11 +22,12 @@ import { ActivityStackPanel } from './components/ActivityStackPanel';
 import { JobSchedulerPanel } from './components/JobSchedulerPanel';
 import { AlarmMonitorPanel } from './components/AlarmMonitorPanel';
 import { WebSocketPanel } from './components/WebSocketPanel';
+import { AppInstallerPanel } from './components/AppInstallerPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { SdkProvider, LogsProvider } from './contexts';
 
-export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket';
+export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -138,6 +139,8 @@ function App() {
         return <AlarmMonitorPanel device={selectedDevice} packageName={packageName} />;
       case 'websocket':
         return <WebSocketPanel />;
+      case 'install-app':
+        return <AppInstallerPanel device={selectedDevice} />;
       default:
         return null;
     }

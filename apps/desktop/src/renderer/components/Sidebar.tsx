@@ -27,6 +27,7 @@ import {
   ScreenCaptureIcon,
   DevOptionsIcon,
   AppInfoIcon,
+  InstallAppIcon,
   SettingsIcon,
   MenuIcon,
 } from './icons';
@@ -78,6 +79,7 @@ const navigationGroups: NavGroup[] = [
     label: 'Tools',
     icon: <ToolsIcon />,
     items: [
+      { id: 'install-app', label: 'Install App', icon: <InstallAppIcon /> },
       { id: 'intent-tester', label: 'Intent Tester', icon: <IntentIcon /> },
       { id: 'screen-capture', label: 'Screen Capture', icon: <ScreenCaptureIcon /> },
       { id: 'dev-options', label: 'Dev Options', icon: <DevOptionsIcon /> },

@@ -479,6 +479,41 @@ export interface ZustandStoreSnapshot {
   timestamp: number;
 }
 
+// App Installer types
+export interface InstallOptions {
+  reinstall?: boolean;        // -r flag
+  allowDowngrade?: boolean;   // -d flag
+  grantPermissions?: boolean; // -g flag
+}
+
+export type InstallStage = 'idle' | 'validating' | 'extracting' | 'pushing' | 'installing' | 'complete' | 'error';
+
+export interface InstallProgress {
+  stage: InstallStage;
+  percent: number;
+  message: string;
+}
+
+export interface InstallResult {
+  success: boolean;
+  packageName?: string;
+  error?: string;
+  errorCode?: string;
+}
+
+export interface DeviceSpec {
+  abis: string[];
+  screenDensity: number;
+  sdkVersion: number;
+}
+
+export interface SelectedAppFile {
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+  fileType: 'apk' | 'aab';
+}
+
 // WebSocket (SDK) types
 export interface WebSocketConnection {
   id: string;

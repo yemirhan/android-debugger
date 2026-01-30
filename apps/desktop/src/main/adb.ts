@@ -32,6 +32,10 @@ import type {
   ScheduledJob,
   AlarmMonitorInfo,
   ScheduledAlarm,
+  InstallOptions,
+  InstallResult,
+  DeviceSpec,
+  InstallProgress,
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
@@ -2084,6 +2088,402 @@ export class AdbService extends EventEmitter {
       isExact: partial.isExact || false,
       isRepeating: partial.isRepeating || false,
     };
+  }
+
+  // ==================== App Installation ====================
+
+  /**
+   * Install an APK file to a device
+   */
+  async installApk(
+    deviceId: string,
+    apkPath: string,
+    options: InstallOptions = {},
+    onProgress?: (progress: InstallProgress) => void
+  ): Promise<InstallResult> {
+    try {
+      // Validate file exists
+      onProgress?.({ stage: 'validating', percent: 10, message: 'Validating APK file...' });
+
+      if (!fs.existsSync(apkPath)) {
+        return { success: false, error: 'APK file not found', errorCode: 'FILE_NOT_FOUND' };
+      }
+
+      // Build install command with flags
+      const flags: string[] = [];
+      if (options.reinstall) flags.push('-r');
+      if (options.allowDowngrade) flags.push('-d');
+      if (options.grantPermissions) flags.push('-g');
+
+      const flagStr = flags.length > 0 ? flags.join(' ') + ' ' : '';
+      const cmd = `adb -s ${deviceId} install ${flagStr}"${apkPath}"`;
+
+      onProgress?.({ stage: 'installing', percent: 50, message: 'Installing APK...' });
+
+      const { stdout, stderr } = await execAsync(cmd, { timeout: 120000 });
+      const output = stdout + stderr;
+
+      // Parse result
+      if (output.includes('Success')) {
+        // Try to extract package name from APK
+        let packageName: string | undefined;
+        try {
+          const { stdout: aapt } = await execAsync(`adb -s ${deviceId} shell pm path $(aapt2 dump badging "${apkPath}" 2>/dev/null | grep "package: name=" | sed "s/.*name='\\([^']*\\)'.*/\\1/")`, { timeout: 10000 });
+          packageName = aapt.trim().split('\n')[0]?.replace('package:', '');
+        } catch {
+          // Ignore aapt errors
+        }
+
+        onProgress?.({ stage: 'complete', percent: 100, message: 'Installation complete!' });
+        return { success: true, packageName };
+      }
+
+      // Parse error codes
+      const errorCode = this.parseInstallError(output);
+      const errorMessage = this.getInstallErrorMessage(errorCode, output);
+
+      onProgress?.({ stage: 'error', percent: 100, message: errorMessage });
+      return { success: false, error: errorMessage, errorCode };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      onProgress?.({ stage: 'error', percent: 100, message });
+      return { success: false, error: message, errorCode: 'UNKNOWN' };
+    }
+  }
+
+  /**
+   * Install multiple APKs (split APKs) to a device
+   */
+  async installMultipleApks(
+    deviceId: string,
+    apkPaths: string[],
+    options: InstallOptions = {},
+    onProgress?: (progress: InstallProgress) => void
+  ): Promise<InstallResult> {
+    try {
+      onProgress?.({ stage: 'validating', percent: 10, message: 'Validating APK files...' });
+
+      // Validate all files exist
+      for (const apkPath of apkPaths) {
+        if (!fs.existsSync(apkPath)) {
+          return { success: false, error: `APK file not found: ${apkPath}`, errorCode: 'FILE_NOT_FOUND' };
+        }
+      }
+
+      // Build install-multiple command
+      const flags: string[] = [];
+      if (options.reinstall) flags.push('-r');
+      if (options.allowDowngrade) flags.push('-d');
+      if (options.grantPermissions) flags.push('-g');
+
+      const flagStr = flags.length > 0 ? flags.join(' ') + ' ' : '';
+      const apkPathsStr = apkPaths.map(p => `"${p}"`).join(' ');
+      const cmd = `adb -s ${deviceId} install-multiple ${flagStr}${apkPathsStr}`;
+
+      onProgress?.({ stage: 'installing', percent: 50, message: 'Installing APKs...' });
+
+      const { stdout, stderr } = await execAsync(cmd, { timeout: 180000 });
+      const output = stdout + stderr;
+
+      if (output.includes('Success')) {
+        onProgress?.({ stage: 'complete', percent: 100, message: 'Installation complete!' });
+        return { success: true };
+      }
+
+      const errorCode = this.parseInstallError(output);
+      const errorMessage = this.getInstallErrorMessage(errorCode, output);
+
+      onProgress?.({ stage: 'error', percent: 100, message: errorMessage });
+      return { success: false, error: errorMessage, errorCode };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      onProgress?.({ stage: 'error', percent: 100, message });
+      return { success: false, error: message, errorCode: 'UNKNOWN' };
+    }
+  }
+
+  /**
+   * Get device ABIs (CPU architectures)
+   */
+  async getDeviceAbis(deviceId: string): Promise<string[]> {
+    try {
+      const { stdout } = await execAsync(`adb -s ${deviceId} shell getprop ro.product.cpu.abilist`);
+      return stdout.trim().split(',').filter(Boolean);
+    } catch (error) {
+      console.error('Error getting device ABIs:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get device screen density
+   */
+  async getDeviceScreenDensity(deviceId: string): Promise<number> {
+    try {
+      const { stdout } = await execAsync(`adb -s ${deviceId} shell getprop ro.sf.lcd_density`);
+      const density = parseInt(stdout.trim(), 10);
+      return isNaN(density) ? 0 : density;
+    } catch (error) {
+      console.error('Error getting device screen density:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get device SDK version
+   */
+  async getDeviceSdkVersion(deviceId: string): Promise<number> {
+    try {
+      const { stdout } = await execAsync(`adb -s ${deviceId} shell getprop ro.build.version.sdk`);
+      const sdk = parseInt(stdout.trim(), 10);
+      return isNaN(sdk) ? 0 : sdk;
+    } catch (error) {
+      console.error('Error getting device SDK version:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get full device spec for AAB installation
+   */
+  async getDeviceSpec(deviceId: string): Promise<DeviceSpec> {
+    const [abis, screenDensity, sdkVersion] = await Promise.all([
+      this.getDeviceAbis(deviceId),
+      this.getDeviceScreenDensity(deviceId),
+      this.getDeviceSdkVersion(deviceId),
+    ]);
+
+    return { abis, screenDensity, sdkVersion };
+  }
+
+  /**
+   * Check if Java is available on the system
+   */
+  async checkJavaAvailable(): Promise<boolean> {
+    try {
+      await execAsync('java -version');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get the path to bundletool.jar
+   */
+  getBundletoolPath(): string {
+    // Check for bundled bundletool (in packaged app or dev resources)
+    const bundledPaths = [
+      path.join(process.resourcesPath || '', 'bundletool', 'bundletool.jar'),
+      path.join(__dirname, '../../resources/bundletool/bundletool.jar'),
+      path.join(__dirname, '../../../resources/bundletool/bundletool.jar'),
+    ];
+
+    for (const p of bundledPaths) {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    }
+
+    return '';
+  }
+
+  /**
+   * Install an AAB file using bundletool
+   */
+  async installAab(
+    deviceId: string,
+    aabPath: string,
+    options: InstallOptions = {},
+    onProgress?: (progress: InstallProgress) => void
+  ): Promise<InstallResult> {
+    try {
+      // Check Java availability
+      onProgress?.({ stage: 'validating', percent: 5, message: 'Checking Java availability...' });
+
+      const javaAvailable = await this.checkJavaAvailable();
+      if (!javaAvailable) {
+        return {
+          success: false,
+          error: 'Java is required for AAB files. Install Java or use APK format.',
+          errorCode: 'JAVA_NOT_FOUND',
+        };
+      }
+
+      // Validate file exists
+      onProgress?.({ stage: 'validating', percent: 10, message: 'Validating AAB file...' });
+
+      if (!fs.existsSync(aabPath)) {
+        return { success: false, error: 'AAB file not found', errorCode: 'FILE_NOT_FOUND' };
+      }
+
+      // Find bundletool
+      const bundletoolPath = this.getBundletoolPath();
+      if (!bundletoolPath) {
+        return {
+          success: false,
+          error: 'Bundletool not found. Please ensure bundletool.jar is available.',
+          errorCode: 'BUNDLETOOL_NOT_FOUND',
+        };
+      }
+
+      // Create temp directory for APKs
+      const tempDir = path.join(os.tmpdir(), `aab-install-${Date.now()}`);
+      const apksPath = path.join(tempDir, 'output.apks');
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      try {
+        // Build APKs using bundletool
+        // Sign with debug keystore for local installation
+        onProgress?.({ stage: 'extracting', percent: 30, message: 'Building APKs from AAB...' });
+
+        // Find or create the debug keystore (standard Android location)
+        const homeDir = os.homedir();
+        const androidDir = path.join(homeDir, '.android');
+        const debugKeystorePath = path.join(androidDir, 'debug.keystore');
+
+        // Create .android directory if it doesn't exist
+        if (!fs.existsSync(androidDir)) {
+          fs.mkdirSync(androidDir, { recursive: true });
+        }
+
+        // Create debug keystore if it doesn't exist
+        if (!fs.existsSync(debugKeystorePath)) {
+          onProgress?.({ stage: 'extracting', percent: 20, message: 'Creating debug keystore...' });
+          try {
+            await execAsync(
+              `keytool -genkey -v -keystore "${debugKeystorePath}" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"`,
+              { timeout: 30000 }
+            );
+          } catch (e) {
+            console.error('Failed to create debug keystore:', e);
+            // Continue without keystore - let bundletool handle it
+          }
+        }
+
+        let buildCmd = `java -jar "${bundletoolPath}" build-apks --bundle="${aabPath}" --output="${apksPath}" --connected-device --device-id=${deviceId} --local-testing`;
+
+        // Use debug keystore for signing (required for installation)
+        if (fs.existsSync(debugKeystorePath)) {
+          buildCmd += ` --ks="${debugKeystorePath}" --ks-pass=pass:android --ks-key-alias=androiddebugkey --key-pass=pass:android`;
+        }
+
+        await execAsync(buildCmd, { timeout: 300000 }); // 5 min timeout for build
+
+        // Extract the APKs from the .apks archive and install via ADB directly
+        // This is more reliable than bundletool install-apks for debug builds
+        onProgress?.({ stage: 'installing', percent: 60, message: 'Extracting APKs...' });
+
+        const extractDir = path.join(tempDir, 'extracted');
+        fs.mkdirSync(extractDir, { recursive: true });
+
+        // Unzip the .apks file (it's a ZIP archive)
+        await execAsync(`unzip -o "${apksPath}" -d "${extractDir}"`, { timeout: 60000 });
+
+        // Find all APK files
+        const apkFiles: string[] = [];
+        const findApks = (dir: string) => {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              findApks(fullPath);
+            } else if (entry.name.endsWith('.apk')) {
+              apkFiles.push(fullPath);
+            }
+          }
+        };
+        findApks(extractDir);
+
+        if (apkFiles.length === 0) {
+          onProgress?.({ stage: 'error', percent: 100, message: 'No APK files found in AAB' });
+          return { success: false, error: 'No APK files found in AAB', errorCode: 'NO_APKS_FOUND' };
+        }
+
+        onProgress?.({ stage: 'installing', percent: 80, message: `Installing ${apkFiles.length} APK(s)...` });
+
+        // Install using adb install-multiple for split APKs
+        if (apkFiles.length === 1) {
+          // Single APK - use regular install
+          return await this.installApk(deviceId, apkFiles[0], options, onProgress);
+        } else {
+          // Multiple APKs - use install-multiple
+          return await this.installMultipleApks(deviceId, apkFiles, options, onProgress);
+        }
+      } finally {
+        // Clean up temp directory
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      onProgress?.({ stage: 'error', percent: 100, message });
+      return { success: false, error: message, errorCode: 'UNKNOWN' };
+    }
+  }
+
+  /**
+   * Parse install error code from ADB output
+   */
+  private parseInstallError(output: string): string {
+    const errorPatterns = [
+      'INSTALL_FAILED_ALREADY_EXISTS',
+      'INSTALL_FAILED_VERSION_DOWNGRADE',
+      'INSTALL_FAILED_INSUFFICIENT_STORAGE',
+      'INSTALL_FAILED_INVALID_APK',
+      'INSTALL_FAILED_UPDATE_INCOMPATIBLE',
+      'INSTALL_FAILED_OLDER_SDK',
+      'INSTALL_FAILED_CONFLICTING_PROVIDER',
+      'INSTALL_FAILED_NEWER_SDK',
+      'INSTALL_FAILED_TEST_ONLY',
+      'INSTALL_FAILED_CPU_ABI_INCOMPATIBLE',
+      'INSTALL_FAILED_MISSING_SHARED_LIBRARY',
+      'INSTALL_FAILED_NO_MATCHING_ABIS',
+      'INSTALL_FAILED_VERIFICATION_FAILURE',
+      'INSTALL_PARSE_FAILED_NO_CERTIFICATES',
+      'INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES',
+      'INSTALL_FAILED_USER_RESTRICTED',
+    ];
+
+    for (const pattern of errorPatterns) {
+      if (output.includes(pattern)) {
+        return pattern;
+      }
+    }
+
+    return 'UNKNOWN';
+  }
+
+  /**
+   * Get user-friendly error message from error code
+   */
+  private getInstallErrorMessage(errorCode: string, rawOutput?: string): string {
+    const messages: Record<string, string> = {
+      'INSTALL_FAILED_ALREADY_EXISTS': 'App already installed. Enable "Reinstall" option.',
+      'INSTALL_FAILED_VERSION_DOWNGRADE': 'Cannot install older version. Enable "Allow downgrade" option.',
+      'INSTALL_FAILED_INSUFFICIENT_STORAGE': 'Not enough storage space on device.',
+      'INSTALL_FAILED_INVALID_APK': 'Invalid APK file. File may be corrupted.',
+      'INSTALL_FAILED_UPDATE_INCOMPATIBLE': 'Incompatible update. Uninstall existing app first.',
+      'INSTALL_FAILED_OLDER_SDK': 'App requires newer Android version.',
+      'INSTALL_FAILED_CONFLICTING_PROVIDER': 'Conflicting content provider. Uninstall conflicting app.',
+      'INSTALL_FAILED_NEWER_SDK': 'App not compatible with device Android version.',
+      'INSTALL_FAILED_TEST_ONLY': 'Test-only APK cannot be installed.',
+      'INSTALL_FAILED_CPU_ABI_INCOMPATIBLE': 'APK not compatible with device CPU architecture.',
+      'INSTALL_FAILED_MISSING_SHARED_LIBRARY': 'Missing required shared library.',
+      'INSTALL_FAILED_NO_MATCHING_ABIS': 'No matching native libraries for device architecture.',
+      'INSTALL_FAILED_VERIFICATION_FAILURE': 'Package verification failed.',
+      'INSTALL_PARSE_FAILED_NO_CERTIFICATES': 'APK is not signed.',
+      'INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES': 'APK signature does not match installed version.',
+      'INSTALL_FAILED_USER_RESTRICTED': 'Installation blocked by user restrictions.',
+      'JAVA_NOT_FOUND': 'Java is required for AAB files. Install Java or use APK format.',
+      'BUNDLETOOL_NOT_FOUND': 'Bundletool not found. Please ensure bundletool.jar is available.',
+      'FILE_NOT_FOUND': 'File not found.',
+    };
+
+    return messages[errorCode] || rawOutput?.substring(0, 200) || 'Installation failed.';
   }
 
   stopAll(): void {

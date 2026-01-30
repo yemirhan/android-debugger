@@ -1,6 +1,6 @@
 {
   "name": "@android-debugger/desktop",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Android Debugger Desktop Application",
   "author": "Android Debugger Team",
   "private": true,
@@ -14,7 +14,8 @@
     "publish": "electron-builder --publish always",
     "publish:signed": "dotenv -e .env -- electron-builder --publish always",
     "clean": "rm -rf dist out",
-    "copy-adb": "mkdir -p resources/platform-tools && cp ~/Library/Android/sdk/platform-tools/adb resources/platform-tools/ && chmod +x resources/platform-tools/adb"
+    "copy-adb": "mkdir -p resources/platform-tools && cp ~/Library/Android/sdk/platform-tools/adb resources/platform-tools/ && chmod +x resources/platform-tools/adb",
+    "copy-bundletool": "mkdir -p resources/bundletool && curl -L -o resources/bundletool/bundletool.jar https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar"
   },
   "dependencies": {
     "@android-debugger/shared": "workspace:*",
@@ -37,6 +38,10 @@
       {
         "from": "resources/platform-tools",
         "to": "platform-tools"
+      },
+      {
+        "from": "resources/bundletool",
+        "to": "bundletool"
       }
     ],
     "npmRebuild": false,
