@@ -2269,23 +2269,110 @@ export class AdbService extends EventEmitter {
   }
 
   /**
+   * Get the bundletool directory in userData
+   */
+  private getBundletoolDir(): string {
+    // This will be set by the main process
+    return this.bundletoolDir;
+  }
+
+  private bundletoolDir: string = '';
+
+  /**
+   * Set the bundletool directory (called from main process with app.getPath('userData'))
+   */
+  setBundletoolDir(dir: string): void {
+    this.bundletoolDir = dir;
+  }
+
+  /**
    * Get the path to bundletool.jar
+   * Checks userData directory where bundletool is downloaded on-demand
    */
   getBundletoolPath(): string {
-    // Check for bundled bundletool (in packaged app or dev resources)
-    const bundledPaths = [
-      path.join(process.resourcesPath || '', 'bundletool', 'bundletool.jar'),
+    // Primary location: userData directory (downloaded on-demand)
+    if (this.bundletoolDir) {
+      const userDataPath = path.join(this.bundletoolDir, 'bundletool', 'bundletool.jar');
+      if (fs.existsSync(userDataPath)) {
+        return userDataPath;
+      }
+    }
+
+    // Fallback: check for bundled bundletool in dev resources (for development only)
+    const devPaths = [
       path.join(__dirname, '../../resources/bundletool/bundletool.jar'),
       path.join(__dirname, '../../../resources/bundletool/bundletool.jar'),
     ];
 
-    for (const p of bundledPaths) {
+    for (const p of devPaths) {
       if (fs.existsSync(p)) {
         return p;
       }
     }
 
     return '';
+  }
+
+  /**
+   * Check if bundletool needs to be downloaded
+   */
+  needsBundletoolDownload(): boolean {
+    return !this.getBundletoolPath();
+  }
+
+  /**
+   * Download bundletool to userData directory
+   */
+  async downloadBundletool(onProgress?: (percent: number, message: string) => void): Promise<{ success: boolean; error?: string }> {
+    const BUNDLETOOL_VERSION = '1.17.2';
+    const BUNDLETOOL_URL = `https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar`;
+
+    if (!this.bundletoolDir) {
+      return { success: false, error: 'Bundletool directory not set' };
+    }
+
+    const bundletoolDir = path.join(this.bundletoolDir, 'bundletool');
+    const bundletoolPath = path.join(bundletoolDir, 'bundletool.jar');
+
+    try {
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(bundletoolDir)) {
+        fs.mkdirSync(bundletoolDir, { recursive: true });
+      }
+
+      onProgress?.(10, 'Starting download...');
+
+      // Download using curl (available on macOS)
+      await execAsync(`curl -L -o "${bundletoolPath}" "${BUNDLETOOL_URL}"`, { timeout: 300000 });
+
+      onProgress?.(90, 'Verifying download...');
+
+      // Verify the file exists and has reasonable size
+      if (!fs.existsSync(bundletoolPath)) {
+        return { success: false, error: 'Download failed - file not found' };
+      }
+
+      const stats = fs.statSync(bundletoolPath);
+      if (stats.size < 1000000) { // Should be at least 1MB
+        fs.unlinkSync(bundletoolPath);
+        return { success: false, error: 'Download failed - file too small' };
+      }
+
+      onProgress?.(100, 'Download complete');
+      return { success: true };
+    } catch (error) {
+      // Clean up partial download
+      try {
+        if (fs.existsSync(bundletoolPath)) {
+          fs.unlinkSync(bundletoolPath);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, error: message };
+    }
   }
 
   /**

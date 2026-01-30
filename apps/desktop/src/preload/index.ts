@@ -161,6 +161,9 @@ export interface ElectronAPI {
   checkJava: () => Promise<boolean>;
   checkBundletool: () => Promise<boolean>;
   getBundletoolInfo: () => Promise<{ path: string; version: string } | null>;
+  needsBundletoolDownload: () => Promise<boolean>;
+  downloadBundletool: () => Promise<{ success: boolean; error?: string }>;
+  onBundletoolDownloadProgress: (callback: (progress: { percent: number; message: string }) => void) => UnsubscribeFn;
   onInstallProgress: (callback: (progress: InstallProgress) => void) => UnsubscribeFn;
 
   // Shell
@@ -377,6 +380,13 @@ const electronAPI: ElectronAPI = {
   checkJava: () => ipcRenderer.invoke('app:check-java'),
   checkBundletool: () => ipcRenderer.invoke('app:check-bundletool'),
   getBundletoolInfo: () => ipcRenderer.invoke('app:get-bundletool-info'),
+  needsBundletoolDownload: () => ipcRenderer.invoke('app:needs-bundletool-download'),
+  downloadBundletool: () => ipcRenderer.invoke('app:download-bundletool'),
+  onBundletoolDownloadProgress: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, progress: { percent: number; message: string }) => callback(progress);
+    ipcRenderer.on('bundletool-download-progress', listener);
+    return () => ipcRenderer.removeListener('bundletool-download-progress', listener);
+  },
   onInstallProgress: (callback) => {
     const listener = (_: Electron.IpcRendererEvent, progress: InstallProgress) => callback(progress);
     ipcRenderer.on('install-progress', listener);

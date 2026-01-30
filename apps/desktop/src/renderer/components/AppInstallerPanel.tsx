@@ -19,6 +19,10 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
     isInstalling,
     javaAvailable,
     bundletoolAvailable,
+    needsBundletoolDownload,
+    isDownloadingBundletool,
+    bundletoolDownloadProgress,
+    downloadBundletool,
     deviceSpec,
     reset,
   } = useAppInstaller(device);
@@ -192,15 +196,36 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
         </div>
       )}
 
-      {/* Bundletool Warning */}
+      {/* Bundletool Download */}
       {showBundletoolWarning && (
-        <div className="px-4 py-3 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400 flex items-start gap-3">
-          <WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="font-medium">Bundletool Not Found</p>
-            <p className="text-xs mt-0.5 opacity-80">
-              AAB files require bundletool to be bundled with the app.
-            </p>
+        <div className="px-4 py-3 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400">
+          <div className="flex items-start gap-3">
+            <DownloadIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium">Bundletool Required</p>
+              <p className="text-xs mt-0.5 opacity-80">
+                AAB files require bundletool. Click to download it (~18MB).
+              </p>
+              {isDownloadingBundletool && bundletoolDownloadProgress && (
+                <div className="mt-3">
+                  <div className="h-1.5 bg-amber-500/20 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400 transition-all duration-300"
+                      style={{ width: `${bundletoolDownloadProgress.percent}%` }}
+                    />
+                  </div>
+                  <p className="text-xs mt-1 opacity-70">{bundletoolDownloadProgress.message}</p>
+                </div>
+              )}
+              {!isDownloadingBundletool && (
+                <button
+                  onClick={downloadBundletool}
+                  className="mt-2 px-3 py-1.5 text-xs font-medium bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded transition-colors"
+                >
+                  Download Bundletool
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -262,7 +287,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
       {selectedFile && !result && (
         <button
           onClick={install}
-          disabled={isInstalling || showJavaWarning || showBundletoolWarning}
+          disabled={isInstalling || showJavaWarning || showBundletoolWarning || isDownloadingBundletool}
           className="w-full px-4 py-3 text-sm font-medium bg-accent hover:bg-accent/90 text-white rounded-lg transition-all duration-150 btn-press disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {isInstalling ? (
@@ -440,6 +465,17 @@ const WarningIcon = ({ className }: { className?: string }) => (
       strokeLinejoin="round"
       strokeWidth={2}
       d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+    />
+  </svg>
+);
+
+const DownloadIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
     />
   </svg>
 );

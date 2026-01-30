@@ -112,6 +112,9 @@ import type {
 } from '@android-debugger/shared';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
+// Set bundletool directory for on-demand download (not bundled due to notarization issues)
+adbService.setBundletoolDir(app.getPath('userData'));
+
 // Storage for saved intents and history
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
 const intentHistoryPath = join(app.getPath('userData'), 'intent-history.json');
@@ -658,8 +661,18 @@ function setupIpcHandlers(): void {
     }
     return {
       path: bundletoolPath,
-      version: '1.17.2', // Bundled version
+      version: '1.17.2', // Downloaded version
     };
+  });
+
+  ipcMain.handle('app:download-bundletool', async (_event) => {
+    return adbService.downloadBundletool((percent, message) => {
+      mainWindow?.webContents.send('bundletool-download-progress', { percent, message });
+    });
+  });
+
+  ipcMain.handle('app:needs-bundletool-download', async () => {
+    return adbService.needsBundletoolDownload();
   });
 
   // Auto-updater handlers

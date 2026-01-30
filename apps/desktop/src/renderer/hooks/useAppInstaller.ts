@@ -9,6 +9,11 @@ import type {
   InstallStage,
 } from '@android-debugger/shared';
 
+interface BundletoolDownloadProgress {
+  percent: number;
+  message: string;
+}
+
 interface UseAppInstallerReturn {
   // File selection
   selectedFile: SelectedAppFile | null;
@@ -28,6 +33,10 @@ interface UseAppInstallerReturn {
   // Environment checks
   javaAvailable: boolean | null;
   bundletoolAvailable: boolean | null;
+  needsBundletoolDownload: boolean;
+  isDownloadingBundletool: boolean;
+  bundletoolDownloadProgress: BundletoolDownloadProgress | null;
+  downloadBundletool: () => Promise<void>;
   deviceSpec: DeviceSpec | null;
   checkEnvironment: () => Promise<void>;
 
@@ -54,6 +63,9 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
   // Environment checks
   const [javaAvailable, setJavaAvailable] = useState<boolean | null>(null);
   const [bundletoolAvailable, setBundletoolAvailable] = useState<boolean | null>(null);
+  const [needsBundletoolDownload, setNeedsBundletoolDownload] = useState<boolean>(false);
+  const [isDownloadingBundletool, setIsDownloadingBundletool] = useState<boolean>(false);
+  const [bundletoolDownloadProgress, setBundletoolDownloadProgress] = useState<BundletoolDownloadProgress | null>(null);
   const [deviceSpec, setDeviceSpec] = useState<DeviceSpec | null>(null);
 
   // Select file via dialog
@@ -80,12 +92,14 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
   // Check environment (Java, bundletool, device spec)
   const checkEnvironment = useCallback(async () => {
     try {
-      const [java, bundletool] = await Promise.all([
+      const [java, bundletool, needsDownload] = await Promise.all([
         window.electronAPI.checkJava(),
         window.electronAPI.checkBundletool(),
+        window.electronAPI.needsBundletoolDownload(),
       ]);
       setJavaAvailable(java);
       setBundletoolAvailable(bundletool);
+      setNeedsBundletoolDownload(needsDownload);
 
       if (device) {
         const spec = await window.electronAPI.getDeviceSpec(device.id);
@@ -95,6 +109,28 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
       console.error('Error checking environment:', error);
     }
   }, [device]);
+
+  // Download bundletool
+  const downloadBundletool = useCallback(async () => {
+    setIsDownloadingBundletool(true);
+    setBundletoolDownloadProgress({ percent: 0, message: 'Starting download...' });
+
+    try {
+      const result = await window.electronAPI.downloadBundletool();
+      if (result.success) {
+        setBundletoolAvailable(true);
+        setNeedsBundletoolDownload(false);
+        setBundletoolDownloadProgress({ percent: 100, message: 'Download complete!' });
+      } else {
+        setBundletoolDownloadProgress({ percent: 0, message: result.error || 'Download failed' });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setBundletoolDownloadProgress({ percent: 0, message });
+    } finally {
+      setIsDownloadingBundletool(false);
+    }
+  }, []);
 
   // Install the selected app
   const install = useCallback(async () => {
@@ -138,6 +174,17 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
     };
   }, []);
 
+  // Listen for bundletool download progress
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onBundletoolDownloadProgress((progressUpdate) => {
+      setBundletoolDownloadProgress(progressUpdate);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   // Check environment when device changes
   useEffect(() => {
     if (device) {
@@ -169,6 +216,10 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
     // Environment checks
     javaAvailable,
     bundletoolAvailable,
+    needsBundletoolDownload,
+    isDownloadingBundletool,
+    bundletoolDownloadProgress,
+    downloadBundletool,
     deviceSpec,
     checkEnvironment,
 
