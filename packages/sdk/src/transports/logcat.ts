@@ -1,5 +1,6 @@
 import type { SdkMessage, SdkMessageType } from '@android-debugger/shared';
 import { Buffer } from 'buffer';
+import type { ITransport } from './types';
 
 const MAX_CHUNK_SIZE = 3500; // Safe limit for logcat line length
 const COMPRESSION_THRESHOLD = 1500; // Compress payloads larger than this
@@ -37,9 +38,25 @@ interface ChunkInfo {
 // This is captured at module load time, before interceptors are set up
 const originalConsoleLog = console.log.bind(console);
 
-export class LogcatTransport {
+/**
+ * LogcatTransport sends SDK messages via Android logcat.
+ * Messages are logged to console with a specific prefix that the desktop app
+ * parses from the ADB logcat stream.
+ *
+ * Implements ITransport for pluggable transport architecture.
+ */
+export class LogcatTransport implements ITransport {
+  readonly name = 'logcat';
   private sequenceNumber = 0;
   private readonly prefix = 'SDKMSG';
+
+  /**
+   * Logcat transport is always considered "connected" since it uses console.log
+   * which is always available in React Native.
+   */
+  isConnected(): boolean {
+    return true;
+  }
 
   send(message: SdkMessage): void {
     // Get a single sequence number for ALL chunks of this message

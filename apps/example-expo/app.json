@@ -30,7 +30,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      ["@yemirhan/android-debugger-native/plugin", { "port": 8765 }]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -122,6 +122,7 @@ function getJavaInfo(): JavaInfo | null {
 }
 
 import { adbService } from './adb';
+import { TransportManager } from './transport-manager';
 import type {
   LogEntry,
   MemoryInfo,
@@ -146,6 +147,9 @@ import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POL
 
 // Set bundletool directory for on-demand download (not bundled due to notarization issues)
 adbService.setBundletoolDir(app.getPath('userData'));
+
+// Create transport manager for socket communication
+const transportManager = new TransportManager(adbService);
 
 // Storage for saved intents and history
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
@@ -824,6 +828,59 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('profiler:analyze-method-trace', async (_, filePath: string) => {
     return adbService.analyzeMethodTrace(filePath);
+  });
+
+  // Socket Transport handlers
+  ipcMain.handle('socket:connect', async (_, deviceId: string, packageName: string, port?: number) => {
+    try {
+      await transportManager.configure(deviceId, packageName, { localPort: port, remotePort: port });
+      const status = transportManager.getStatus();
+      return { success: status.type === 'socket', status };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle('socket:disconnect', async () => {
+    await transportManager.disconnect();
+    return { success: true };
+  });
+
+  ipcMain.handle('socket:status', () => {
+    return transportManager.getStatus();
+  });
+
+  ipcMain.handle('socket:send-command', async (_, command: { type: string; payload?: unknown }) => {
+    return transportManager.sendCommand(command);
+  });
+
+  ipcMain.handle('socket:ping', async () => {
+    const latency = await transportManager.ping();
+    return { connected: latency !== null, latency };
+  });
+
+  // Port forwarding handlers
+  ipcMain.handle('adb:setup-port-forward', async (_, deviceId: string, localPort: number, remotePort: number) => {
+    return adbService.setupPortForward(deviceId, localPort, remotePort);
+  });
+
+  ipcMain.handle('adb:remove-port-forward', async (_, deviceId: string, localPort: number) => {
+    return adbService.removePortForward(deviceId, localPort);
+  });
+
+  ipcMain.handle('adb:list-port-forwards', async (_, deviceId?: string) => {
+    return adbService.listPortForwards(deviceId);
+  });
+
+  // Forward transport status changes to renderer
+  transportManager.on('transportChanged', (status: { type: string; connected: boolean; port?: number; deviceId?: string }) => {
+    mainWindow?.webContents.send('socket:status-changed', status);
+  });
+
+  // Forward SDK messages from socket transport to renderer
+  transportManager.on('sdkMessage', (message: SdkMessage) => {
+    console.log('[Main] Received SDK message via socket, forwarding to renderer:', message.type);
+    mainWindow?.webContents.send('sdk-message', { message });
   });
 }
 

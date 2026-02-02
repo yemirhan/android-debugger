@@ -3264,6 +3264,126 @@ export class AdbService extends EventEmitter {
     }
   }
 
+  // ==================== Port Forwarding ====================
+
+  /**
+   * Set up ADB port forwarding from a local port to a remote port on the device.
+   * This allows the desktop app to connect to a TCP server running on the device.
+   *
+   * @param deviceId The device ID to forward to
+   * @param localPort The local port to listen on (e.g., 8765)
+   * @param remotePort The remote port on the device to forward to (e.g., 8765)
+   * @returns true if successful, false otherwise
+   */
+  async setupPortForward(
+    deviceId: string,
+    localPort: number,
+    remotePort: number
+  ): Promise<boolean> {
+    try {
+      // First remove any existing forward for this port
+      try {
+        await execAsync(`adb -s ${deviceId} forward --remove tcp:${localPort}`);
+      } catch {
+        // Ignore error if no forward exists
+      }
+
+      // Set up the port forward
+      const { stderr } = await execAsync(
+        `adb -s ${deviceId} forward tcp:${localPort} tcp:${remotePort}`
+      );
+
+      // Check for errors
+      if (stderr && stderr.includes('error')) {
+        console.error('Port forward error:', stderr);
+        return false;
+      }
+
+      console.log(`Port forward set up: localhost:${localPort} -> device:${remotePort}`);
+      return true;
+    } catch (error) {
+      console.error('Error setting up port forward:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Remove an ADB port forward.
+   *
+   * @param deviceId The device ID
+   * @param localPort The local port to stop forwarding
+   * @returns true if successful, false otherwise
+   */
+  async removePortForward(deviceId: string, localPort: number): Promise<boolean> {
+    try {
+      await execAsync(`adb -s ${deviceId} forward --remove tcp:${localPort}`);
+      console.log(`Port forward removed: localhost:${localPort}`);
+      return true;
+    } catch (error) {
+      // Don't log error if forward doesn't exist
+      if (!String(error).includes('not found')) {
+        console.error('Error removing port forward:', error);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * List all active port forwards for a device.
+   *
+   * @param deviceId The device ID (optional - if not provided, lists all forwards)
+   * @returns Array of port forward entries
+   */
+  async listPortForwards(
+    deviceId?: string
+  ): Promise<Array<{ local: string; remote: string; deviceId: string }>> {
+    try {
+      const cmd = deviceId
+        ? `adb -s ${deviceId} forward --list`
+        : 'adb forward --list';
+
+      const { stdout } = await execAsync(cmd);
+
+      const forwards: Array<{ local: string; remote: string; deviceId: string }> = [];
+
+      for (const line of stdout.trim().split('\n')) {
+        if (!line.trim()) continue;
+
+        // Format: device_id local_spec remote_spec
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 3) {
+          forwards.push({
+            deviceId: parts[0],
+            local: parts[1],
+            remote: parts[2],
+          });
+        }
+      }
+
+      return forwards;
+    } catch (error) {
+      console.error('Error listing port forwards:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Remove all port forwards for a device.
+   *
+   * @param deviceId The device ID
+   * @returns true if successful
+   */
+  async removeAllPortForwards(deviceId: string): Promise<boolean> {
+    try {
+      await execAsync(`adb -s ${deviceId} forward --remove-all`);
+      console.log(`All port forwards removed for device: ${deviceId}`);
+      return true;
+    } catch (error) {
+      console.error('Error removing all port forwards:', error);
+      return false;
+    }
+  }
+
   stopAll(): void {
     this.stopMemoryMonitor();
     this.stopCpuMonitor();

@@ -69,6 +69,13 @@ export default function HomeScreen() {
         href="/websocket"
       />
 
+      <FeatureCard
+        title="Native Transport"
+        description="Test native socket transport features"
+        icon="wifi"
+        href="/native-transport"
+      />
+
       <View style={styles.crashSection}>
         <Text style={styles.crashLabel}>Crash testing</Text>
         <Pressable
@@ -88,8 +95,8 @@ export default function HomeScreen() {
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>
-          SDK messages are sent via logcat and captured by the desktop app through ADB.
-          No IP address or port configuration needed!
+          SDK messages are sent via native socket transport when available, or via logcat
+          as fallback. The desktop app connects automatically through ADB port forwarding.
         </Text>
       </View>
     </ScrollView>

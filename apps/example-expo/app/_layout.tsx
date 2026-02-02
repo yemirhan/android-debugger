@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Provider } from 'react-redux';
-import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
+import { initWithNativeTransport, AndroidDebugger } from '@yemirhan/android-debugger-native';
 import { createStore } from '@/store/redux';
 import { useCounterStore, useTodoStore } from '@/store/zustand';
 import { setupAxiosInterceptor } from '@/utils/api';
@@ -11,10 +11,11 @@ export default function RootLayout() {
   const store = useMemo(() => createStore(), []);
 
   useEffect(() => {
-    // Initialize the Android Debugger SDK
-    // No host/port configuration needed - messages are sent via logcat
-    // and captured by the desktop app through ADB
-    AndroidDebugger.init({
+    // Initialize the Android Debugger SDK with native socket transport
+    // This enables direct TCP communication with the desktop app for better performance
+    // Falls back to logcat if native transport is unavailable
+    initWithNativeTransport({
+      port: 8765,
       interceptConsole: true,
       interceptNetwork: true,
       interceptWebSocket: true,
@@ -27,10 +28,16 @@ export default function RootLayout() {
     const restoreCounterStore = AndroidDebugger.interceptZustandStore(useCounterStore, 'counter');
     const restoreTodoStore = AndroidDebugger.interceptZustandStore(useTodoStore, 'todos');
 
+    // Register custom command handlers for bi-directional communication
+    const unregisterGetUserData = AndroidDebugger.registerCommand('get_user_data', async () => {
+      return { user: 'example_user', loggedIn: true, timestamp: Date.now() };
+    });
+
     return () => {
       restoreAxios();
       restoreCounterStore();
       restoreTodoStore();
+      unregisterGetUserData();
       AndroidDebugger.destroy();
     };
   }, []);
@@ -104,6 +111,12 @@ export default function RootLayout() {
           name="websocket"
           options={{
             title: 'WebSocket',
+          }}
+        />
+        <Stack.Screen
+          name="native-transport"
+          options={{
+            title: 'Native Transport',
           }}
         />
       </Stack>

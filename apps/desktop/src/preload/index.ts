@@ -43,6 +43,21 @@ import type {
 
 export type UnsubscribeFn = () => void;
 
+export interface SocketTransportStatus {
+  type: 'socket' | 'logcat' | 'none';
+  connected: boolean;
+  port?: number;
+  deviceId?: string;
+}
+
+export interface SocketCommandResponse {
+  id: string;
+  type: 'response';
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
 export interface ElectronAPI {
   // Device
   getDevices: () => Promise<Device[]>;
@@ -199,6 +214,19 @@ export interface ElectronAPI {
   stopMethodTrace: (deviceId: string, packageName: string) => Promise<MethodTraceInfo>;
   analyzeMethodTrace: (filePath: string) => Promise<MethodTraceAnalysis | null>;
   onMethodTraceProgress: (callback: (progress: { id: string; status: string; duration?: number; error?: string }) => void) => UnsubscribeFn;
+
+  // Socket Transport
+  socketConnect: (deviceId: string, packageName: string, port?: number) => Promise<{ success: boolean; status?: SocketTransportStatus; error?: string }>;
+  socketDisconnect: () => Promise<{ success: boolean }>;
+  socketGetStatus: () => Promise<SocketTransportStatus>;
+  socketSendCommand: (command: { type: string; payload?: unknown }) => Promise<SocketCommandResponse>;
+  socketPing: () => Promise<{ connected: boolean; latency: number | null }>;
+  onSocketStatusChanged: (callback: (status: SocketTransportStatus) => void) => UnsubscribeFn;
+
+  // Port Forwarding
+  setupPortForward: (deviceId: string, localPort: number, remotePort: number) => Promise<boolean>;
+  removePortForward: (deviceId: string, localPort: number) => Promise<boolean>;
+  listPortForwards: (deviceId?: string) => Promise<Array<{ local: string; remote: string; deviceId: string }>>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -475,6 +503,26 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('method-trace-progress', listener);
     return () => ipcRenderer.removeListener('method-trace-progress', listener);
   },
+
+  // Socket Transport
+  socketConnect: (deviceId, packageName, port) =>
+    ipcRenderer.invoke('socket:connect', deviceId, packageName, port),
+  socketDisconnect: () => ipcRenderer.invoke('socket:disconnect'),
+  socketGetStatus: () => ipcRenderer.invoke('socket:status'),
+  socketSendCommand: (command) => ipcRenderer.invoke('socket:send-command', command),
+  socketPing: () => ipcRenderer.invoke('socket:ping'),
+  onSocketStatusChanged: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, status: SocketTransportStatus) => callback(status);
+    ipcRenderer.on('socket:status-changed', listener);
+    return () => ipcRenderer.removeListener('socket:status-changed', listener);
+  },
+
+  // Port Forwarding
+  setupPortForward: (deviceId, localPort, remotePort) =>
+    ipcRenderer.invoke('adb:setup-port-forward', deviceId, localPort, remotePort),
+  removePortForward: (deviceId, localPort) =>
+    ipcRenderer.invoke('adb:remove-port-forward', deviceId, localPort),
+  listPortForwards: (deviceId) => ipcRenderer.invoke('adb:list-port-forwards', deviceId),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

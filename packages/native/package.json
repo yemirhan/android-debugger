@@ -1,0 +1,67 @@
+{
+  "name": "@yemirhan/android-debugger-native",
+  "version": "1.0.0",
+  "description": "Native socket transport for Android Debugger SDK - enables direct TCP communication with the desktop app",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./plugin/build/index.d.ts",
+      "default": "./plugin/build/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "android",
+    "plugin/build",
+    "expo-module.config.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup && npm run build:plugin",
+    "build:plugin": "tsc --project plugin/tsconfig.json",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist plugin/build",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@yemirhan/android-debugger-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@android-debugger/shared": "workspace:*",
+    "@expo/config-plugins": "^9.0.0",
+    "expo-modules-core": "^2.3.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "peerDependencies": {
+    "expo": ">=52.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.74.0"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": false
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "android",
+    "debugging",
+    "devtools",
+    "socket",
+    "native"
+  ],
+  "license": "MIT"
+}

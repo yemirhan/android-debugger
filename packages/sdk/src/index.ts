@@ -1,11 +1,14 @@
 import type { SdkMessage, CustomEvent, StateSnapshot, PerformanceMark } from '@android-debugger/shared';
 import { DebuggerClient } from './client';
 import { interceptConsole, interceptNetwork, interceptAxios, interceptZustandStore, interceptWebSocket } from './interceptors';
+import type { ITransport, TransportConfig } from './transports';
 
 export interface AndroidDebuggerOptions {
   interceptConsole?: boolean;
   interceptNetwork?: boolean;
   interceptWebSocket?: boolean;
+  /** Optional custom transport configuration */
+  transport?: Partial<TransportConfig>;
 }
 
 interface ZustandStore {
@@ -16,6 +19,23 @@ interface ZustandStore {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AxiosInstance = any;
 
+// Command types for bi-directional communication
+export interface Command {
+  id: string;
+  type: string;
+  payload?: unknown;
+}
+
+export interface CommandResponse {
+  id: string;
+  type: 'response';
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+export type CommandHandler = (payload: unknown) => Promise<unknown> | unknown;
+
 class AndroidDebuggerSDK {
   private client: DebuggerClient | null = null;
   private restoreConsole: (() => void) | null = null;
@@ -25,6 +45,9 @@ class AndroidDebuggerSDK {
   private zustandRestoreFns: (() => void)[] = [];
   private performanceMarks: Map<string, number> = new Map();
   private isInitialized = false;
+  private commandHandlers: Map<string, CommandHandler> = new Map();
+  private commandListeners: Set<(command: Command) => void> = new Set();
+  private connectionListeners: Set<(connected: boolean) => void> = new Set();
 
   /**
    * Initialize the Android Debugger SDK
@@ -42,9 +65,15 @@ class AndroidDebuggerSDK {
       interceptConsole: shouldInterceptConsole = true,
       interceptNetwork: shouldInterceptNetwork = true,
       interceptWebSocket: shouldInterceptWebSocket = false,
+      transport,
     } = options;
 
-    this.client = new DebuggerClient();
+    this.client = new DebuggerClient(transport);
+
+    // Listen for connection changes from the client
+    this.client.onConnectionChange((connected) => {
+      this.notifyConnectionChange(connected);
+    });
 
     // Setup interceptors
     if (shouldInterceptConsole) {
@@ -59,8 +88,131 @@ class AndroidDebuggerSDK {
       this.restoreWebSocket = interceptWebSocket((msg) => this.send(msg));
     }
 
+    // Register built-in command handlers
+    this.registerBuiltInCommands();
+
     this.isInitialized = true;
     console.log('[AndroidDebugger] SDK initialized - messages will be sent via logcat');
+  }
+
+  /**
+   * Get the internal client instance.
+   * Useful for native transport injection.
+   */
+  getClient(): DebuggerClient | null {
+    return this.client;
+  }
+
+  /**
+   * Set a custom socket transport.
+   * This is called by the native package to inject the socket transport.
+   */
+  setSocketTransport(transport: ITransport | null): void {
+    if (!this.client) {
+      console.warn('[AndroidDebugger] SDK not initialized. Call init() first.');
+      return;
+    }
+    this.client.setSocketTransport(transport);
+  }
+
+  /**
+   * Check if socket transport is connected
+   */
+  isSocketConnected(): boolean {
+    return this.client?.isSocketConnected() ?? false;
+  }
+
+  /**
+   * Register a callback for connection status changes
+   */
+  onConnectionChange(callback: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(callback);
+    // Also listen to client directly
+    const clientUnsub = this.client?.onConnectionChange(callback);
+    return () => {
+      this.connectionListeners.delete(callback);
+      clientUnsub?.();
+    };
+  }
+
+  private notifyConnectionChange(connected: boolean): void {
+    this.connectionListeners.forEach((callback) => callback(connected));
+  }
+
+  /**
+   * Register a command handler for desktop → app communication
+   */
+  registerCommand(type: string, handler: CommandHandler): () => void {
+    this.commandHandlers.set(type, handler);
+    return () => {
+      this.commandHandlers.delete(type);
+    };
+  }
+
+  /**
+   * Register a listener for all incoming commands
+   */
+  onCommand(callback: (command: Command) => void): () => void {
+    this.commandListeners.add(callback);
+    return () => {
+      this.commandListeners.delete(callback);
+    };
+  }
+
+  /**
+   * Handle an incoming command from the desktop app.
+   * This is called by the native transport when a command is received.
+   */
+  async handleCommand(command: Command): Promise<CommandResponse> {
+    // Notify listeners
+    this.commandListeners.forEach((callback) => callback(command));
+
+    const handler = this.commandHandlers.get(command.type);
+    if (!handler) {
+      return {
+        id: command.id,
+        type: 'response',
+        success: false,
+        error: `Unknown command type: ${command.type}`,
+      };
+    }
+
+    try {
+      const data = await handler(command.payload);
+      return {
+        id: command.id,
+        type: 'response',
+        success: true,
+        data,
+      };
+    } catch (error) {
+      return {
+        id: command.id,
+        type: 'response',
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private registerBuiltInCommands(): void {
+    // Ping command for health check
+    this.registerCommand('ping', () => ({
+      timestamp: Date.now(),
+      sdk: 'android-debugger-sdk',
+    }));
+
+    // Get state command - returns registered state snapshots
+    this.registerCommand('get_state', () => {
+      // This would be populated by state interceptors
+      return { message: 'State query supported - register state handlers' };
+    });
+
+    // Set config command - update SDK config at runtime
+    this.registerCommand('set_config', (payload: unknown) => {
+      console.log('[AndroidDebugger] Config update:', payload);
+      return { success: true };
+    });
   }
 
   /**
@@ -136,9 +288,13 @@ class AndroidDebuggerSDK {
     this.restoreWebSocket = null;
     this.axiosRestoreFns = [];
     this.zustandRestoreFns = [];
+    this.client?.destroy();
     this.client = null;
     this.isInitialized = false;
     this.performanceMarks.clear();
+    this.commandHandlers.clear();
+    this.commandListeners.clear();
+    this.connectionListeners.clear();
   }
 
   /**
@@ -249,3 +405,7 @@ export { DebuggerClient } from './client';
 
 // Re-export interceptors for advanced usage
 export { interceptAxios, interceptNetwork, interceptConsole, interceptZustandStore, interceptWebSocket } from './interceptors';
+
+// Re-export transport types for custom transport implementations
+export type { ITransport, TransportConfig } from './transports';
+export { LogcatTransport, shouldUseSocket, SOCKET_MESSAGE_TYPES, LOGCAT_MESSAGE_TYPES } from './transports';
