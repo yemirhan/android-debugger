@@ -666,3 +666,22 @@ export interface WebSocketEvent {
   data?: WebSocketMessage;
   error?: string;
 }
+
+// Screen Mirror (scrcpy) types
+export interface ScrcpyConfig {
+  maxSize?: number;
+  bitRate?: number;
+  maxFps?: number;
+  showTouches?: boolean;
+  stayAwake?: boolean;
+  turnScreenOff?: boolean;
+  alwaysOnTop?: boolean;
+  windowTitle?: string;
+}
+
+export interface ScrcpyState {
+  isRunning: boolean;
+  deviceId: string | null;
+  pid: number | null;
+  error: string | null;
+}

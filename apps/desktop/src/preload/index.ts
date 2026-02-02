@@ -39,6 +39,8 @@ import type {
   HeapInstance,
   MethodTraceInfo,
   MethodTraceAnalysis,
+  ScrcpyConfig,
+  ScrcpyState,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -199,6 +201,20 @@ export interface ElectronAPI {
   stopMethodTrace: (deviceId: string, packageName: string) => Promise<MethodTraceInfo>;
   analyzeMethodTrace: (filePath: string) => Promise<MethodTraceAnalysis | null>;
   onMethodTraceProgress: (callback: (progress: { id: string; status: string; duration?: number; error?: string }) => void) => UnsubscribeFn;
+
+  // Screen Mirror (scrcpy)
+  checkScrcpy: () => Promise<boolean>;
+  getScrcpyInfo: () => Promise<{ path: string; version: string } | null>;
+  needsScrcpyDownload: () => Promise<boolean>;
+  downloadScrcpy: () => Promise<{ success: boolean; error?: string }>;
+  startMirror: (deviceId: string, config: ScrcpyConfig) => Promise<{ success: boolean; error?: string }>;
+  stopMirror: () => Promise<{ success: boolean }>;
+  getScrcpyState: () => Promise<ScrcpyState>;
+  isMirroring: (deviceId?: string) => Promise<boolean>;
+  onScrcpyDownloadProgress: (callback: (progress: { percent: number; message: string }) => void) => UnsubscribeFn;
+  onMirrorStarted: (callback: (state: ScrcpyState) => void) => UnsubscribeFn;
+  onMirrorStopped: (callback: () => void) => UnsubscribeFn;
+  onMirrorError: (callback: (error: string) => void) => UnsubscribeFn;
 }
 
 const electronAPI: ElectronAPI = {
@@ -474,6 +490,36 @@ const electronAPI: ElectronAPI = {
     const listener = (_: Electron.IpcRendererEvent, progress: { id: string; status: string; duration?: number; error?: string }) => callback(progress);
     ipcRenderer.on('method-trace-progress', listener);
     return () => ipcRenderer.removeListener('method-trace-progress', listener);
+  },
+
+  // Screen Mirror (scrcpy)
+  checkScrcpy: () => ipcRenderer.invoke('scrcpy:check'),
+  getScrcpyInfo: () => ipcRenderer.invoke('scrcpy:get-info'),
+  needsScrcpyDownload: () => ipcRenderer.invoke('scrcpy:needs-download'),
+  downloadScrcpy: () => ipcRenderer.invoke('scrcpy:download'),
+  startMirror: (deviceId, config) => ipcRenderer.invoke('scrcpy:start', deviceId, config),
+  stopMirror: () => ipcRenderer.invoke('scrcpy:stop'),
+  getScrcpyState: () => ipcRenderer.invoke('scrcpy:get-state'),
+  isMirroring: (deviceId) => ipcRenderer.invoke('scrcpy:is-mirroring', deviceId),
+  onScrcpyDownloadProgress: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, progress: { percent: number; message: string }) => callback(progress);
+    ipcRenderer.on('scrcpy-download-progress', listener);
+    return () => ipcRenderer.removeListener('scrcpy-download-progress', listener);
+  },
+  onMirrorStarted: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, state: ScrcpyState) => callback(state);
+    ipcRenderer.on('scrcpy-mirror-started', listener);
+    return () => ipcRenderer.removeListener('scrcpy-mirror-started', listener);
+  },
+  onMirrorStopped: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('scrcpy-mirror-stopped', listener);
+    return () => ipcRenderer.removeListener('scrcpy-mirror-stopped', listener);
+  },
+  onMirrorError: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, error: string) => callback(error);
+    ipcRenderer.on('scrcpy-mirror-error', listener);
+    return () => ipcRenderer.removeListener('scrcpy-mirror-error', listener);
   },
 };
 

@@ -122,6 +122,7 @@ function getJavaInfo(): JavaInfo | null {
 }
 
 import { adbService } from './adb';
+import { scrcpyService } from './scrcpy-service';
 import type {
   LogEntry,
   MemoryInfo,
@@ -141,11 +142,16 @@ import type {
   InstallProgress,
   ThreadSnapshot,
   GcEvent,
+  ScrcpyConfig,
+  ScrcpyState,
 } from '@android-debugger/shared';
 import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
 
 // Set bundletool directory for on-demand download (not bundled due to notarization issues)
 adbService.setBundletoolDir(app.getPath('userData'));
+
+// Set scrcpy directory for on-demand download (not bundled due to notarization issues)
+scrcpyService.setScrcpyDir(app.getPath('userData'));
 
 // Storage for saved intents and history
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
@@ -824,6 +830,54 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('profiler:analyze-method-trace', async (_, filePath: string) => {
     return adbService.analyzeMethodTrace(filePath);
+  });
+
+  // ==================== Scrcpy (Screen Mirror) Handlers ====================
+
+  // Set up scrcpy state change listener
+  scrcpyService.onState((state: ScrcpyState) => {
+    if (state.isRunning) {
+      mainWindow?.webContents.send('scrcpy-mirror-started', state);
+    } else if (state.error) {
+      mainWindow?.webContents.send('scrcpy-mirror-error', state.error);
+    } else {
+      mainWindow?.webContents.send('scrcpy-mirror-stopped');
+    }
+  });
+
+  ipcMain.handle('scrcpy:check', async () => {
+    return scrcpyService.isScrcpyAvailable();
+  });
+
+  ipcMain.handle('scrcpy:get-info', async () => {
+    return scrcpyService.getScrcpyInfo();
+  });
+
+  ipcMain.handle('scrcpy:needs-download', async () => {
+    return scrcpyService.needsScrcpyDownload();
+  });
+
+  ipcMain.handle('scrcpy:download', async () => {
+    return scrcpyService.downloadScrcpy((percent, message) => {
+      mainWindow?.webContents.send('scrcpy-download-progress', { percent, message });
+    });
+  });
+
+  ipcMain.handle('scrcpy:start', async (_, deviceId: string, config: ScrcpyConfig) => {
+    return scrcpyService.startMirror(deviceId, config);
+  });
+
+  ipcMain.handle('scrcpy:stop', async () => {
+    scrcpyService.stopMirror();
+    return { success: true };
+  });
+
+  ipcMain.handle('scrcpy:get-state', async () => {
+    return scrcpyService.getState();
+  });
+
+  ipcMain.handle('scrcpy:is-mirroring', async (_, deviceId?: string) => {
+    return scrcpyService.isMirroring(deviceId);
   });
 }
 

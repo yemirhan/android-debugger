@@ -257,4 +257,20 @@ export const tabGuides: Record<string, TabGuide> = {
       'General app settings',
     ],
   },
+
+  'screen-mirror': {
+    title: 'Screen Mirror',
+    description: 'Mirror your Android device screen to your computer using scrcpy.',
+    features: [
+      'Real-time screen mirroring with low latency',
+      'Full keyboard and mouse control',
+      'Copy/paste between computer and device',
+      'Drag and drop file transfer',
+    ],
+    tips: [
+      'scrcpy opens in a separate window',
+      'Right-click acts as back button',
+      'Middle-click acts as home button',
+    ],
+  },
 };
