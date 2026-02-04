@@ -67,6 +67,20 @@ function AppContent() {
     }
   }, [devices, selectedDevice]);
 
+  useEffect(() => {
+    window.electronAPI.setSelectedDevice(selectedDevice?.id ?? null);
+  }, [selectedDevice?.id]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onAppNavigate((tabId) => {
+      setActiveTab(tabId as TabId);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   const handleDeviceSelect = useCallback((device: Device) => {
     setSelectedDevice(device);
   }, []);

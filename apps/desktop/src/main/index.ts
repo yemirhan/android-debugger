@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { join } from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { execSync } from 'child_process';
+import { deflateSync } from 'zlib';
 import type { UpdateSettings, UpdateInfo, UpdateProgress } from '@android-debugger/shared';
 
 interface AdbInfo {
@@ -124,6 +125,7 @@ function getJavaInfo(): JavaInfo | null {
 import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
 import type {
+  Device,
   LogEntry,
   MemoryInfo,
   CpuInfo,
@@ -145,7 +147,14 @@ import type {
   ScrcpyConfig,
   ScrcpyState,
 } from '@android-debugger/shared';
-import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL, BATTERY_POLL_INTERVAL, NETWORK_STATS_POLL_INTERVAL } from '@android-debugger/shared';
+import {
+  DEVICE_POLL_INTERVAL,
+  MEMORY_POLL_INTERVAL,
+  CPU_POLL_INTERVAL,
+  FPS_POLL_INTERVAL,
+  BATTERY_POLL_INTERVAL,
+  NETWORK_STATS_POLL_INTERVAL,
+} from '@android-debugger/shared';
 
 // Set bundletool directory for on-demand download (not bundled due to notarization issues)
 adbService.setBundletoolDir(app.getPath('userData'));
@@ -223,6 +232,326 @@ function saveIntentHistory(history: IntentHistoryEntry[]): void {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let trayDevices: Device[] = [];
+let selectedDeviceId: string | null = null;
+let trayUpdateInterval: NodeJS.Timeout | null = null;
+let isRecording = false;
+let recordingDeviceId: string | null = null;
+
+const trayIconPixels = [
+  '....##....##....',
+  '...####..####...',
+  '....##....##....',
+  '.....######.....',
+  '....########....',
+  '...##########...',
+  '..############..',
+  '..###..##..###..',
+  '..###..##..###..',
+  '...##..##..##...',
+  '....##.##.##....',
+  '.....######.....',
+  '......####......',
+  '.......##.......',
+  '................',
+  '................',
+];
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let k = 0; k < 8; k += 1) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buffer: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crcBuffer = Buffer.alloc(4);
+  crcBuffer.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, crcBuffer]);
+}
+
+function createBugPng(pixelRows: string[]): Buffer {
+  const height = pixelRows.length;
+  const width = pixelRows[0]?.length ?? 0;
+  const rowBytes = width * 4 + 1;
+  const raw = Buffer.alloc(rowBytes * height);
+
+  pixelRows.forEach((row, y) => {
+    const rowOffset = y * rowBytes;
+    raw[rowOffset] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const offset = rowOffset + 1 + x * 4;
+      if (row[x] === '#') {
+        raw[offset] = 0;
+        raw[offset + 1] = 0;
+        raw[offset + 2] = 0;
+        raw[offset + 3] = 255;
+      } else {
+        raw[offset] = 0;
+        raw[offset + 1] = 0;
+        raw[offset + 2] = 0;
+        raw[offset + 3] = 0;
+      }
+    }
+  });
+
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  const idat = deflateSync(raw);
+
+  return Buffer.concat([
+    signature,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', idat),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function showMainWindow(): BrowserWindow | null {
+  if (!mainWindow) {
+    createWindow();
+    return mainWindow;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+  return mainWindow;
+}
+
+function getWifiLabel(device: Device | null): string {
+  const wifiName = device?.wifiName?.trim();
+  return wifiName && wifiName.length > 0 ? wifiName : 'Not connected';
+}
+
+function getTrayDevice(): Device | null {
+  if (selectedDeviceId) {
+    const selected = trayDevices.find((device) => device.id === selectedDeviceId);
+    if (selected) {
+      return selected;
+    }
+  }
+
+  const connected = trayDevices.find((device) => device.status === 'device');
+  return connected || trayDevices[0] || null;
+}
+
+function navigateToTab(tabId: string): void {
+  const window = showMainWindow();
+  if (!window) {
+    return;
+  }
+
+  if (window.webContents.isLoading()) {
+    window.webContents.once('did-finish-load', () => {
+      window.webContents.send('app:navigate', tabId);
+    });
+  } else {
+    window.webContents.send('app:navigate', tabId);
+  }
+}
+
+function updateTrayMenu(): void {
+  if (!tray) {
+    return;
+  }
+
+  tray.setContextMenu(buildTrayMenu());
+}
+
+async function refreshTrayDevices(force = false): Promise<void> {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  if (!force && BrowserWindow.getAllWindows().length > 0) {
+    return;
+  }
+
+  try {
+    const devices = await adbService.getDevices();
+    trayDevices = devices;
+    updateTrayMenu();
+  } catch (error) {
+    console.error('Error refreshing tray devices:', error);
+  }
+}
+
+function handleRecordingState(isActive: boolean, deviceId: string | null, outputPath?: string): void {
+  isRecording = isActive;
+  recordingDeviceId = isActive ? deviceId : null;
+  updateTrayMenu();
+
+  mainWindow?.webContents.send('recording-update', { isRecording: isActive, outputPath });
+}
+
+async function handleTakeScreenshot(deviceId: string) {
+  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+    title: 'Save Screenshot',
+    defaultPath: `screenshot_${Date.now()}.png`,
+    filters: [{ name: 'PNG Images', extensions: ['png'] }],
+  });
+
+  if (result.canceled || !result.filePath) {
+    return null;
+  }
+
+  return adbService.takeScreenshot(deviceId, result.filePath);
+}
+
+async function handleStartRecording(deviceId: string): Promise<{ success: boolean; path?: string }> {
+  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+    title: 'Save Recording',
+    defaultPath: `recording_${Date.now()}.mp4`,
+    filters: [{ name: 'MP4 Videos', extensions: ['mp4'] }],
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { success: false };
+  }
+
+  const response = await adbService.startScreenRecording(deviceId, result.filePath, (active) => {
+    handleRecordingState(active, active ? deviceId : null, result.filePath);
+  });
+
+  if (!response.success) {
+    updateTrayMenu();
+  }
+
+  return response;
+}
+
+async function handleStopRecording(deviceId: string): Promise<{ success: boolean; path?: string }> {
+  const result = await adbService.stopScreenRecording(deviceId);
+  handleRecordingState(false, null, result.path);
+  return result;
+}
+
+function buildTrayMenu(): Menu {
+  const device = getTrayDevice();
+  const isDeviceReady = !!device && device.status === 'device';
+  const wifiLabel = getWifiLabel(device);
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { label: 'Android Debugger', enabled: false },
+    { type: 'separator' },
+  ];
+
+  if (device) {
+    template.push(
+      { label: `Device: ${device.model}`, enabled: false },
+      { label: `Android: ${device.androidVersion}`, enabled: false },
+      { label: `Wi-Fi: ${wifiLabel}`, enabled: false },
+      { label: `Status: ${device.status}`, enabled: false },
+      { label: `ID: ${device.id}`, enabled: false }
+    );
+  } else {
+    template.push({ label: 'No device connected', enabled: false });
+  }
+
+  template.push(
+    { type: 'separator' },
+    {
+      label: 'Quick Actions',
+      submenu: [
+        { label: 'Open Dashboard', click: () => navigateToTab('dashboard') },
+        { label: 'Open Network Stats', click: () => navigateToTab('network-stats') },
+        { label: 'Open CPU/FPS', click: () => navigateToTab('cpu-fps') },
+        { label: 'Open Memory', click: () => navigateToTab('memory') },
+        { type: 'separator' },
+        {
+          label: 'Take Screenshot...',
+          enabled: isDeviceReady,
+          click: async () => {
+            if (device) {
+              await handleTakeScreenshot(device.id);
+            }
+          },
+        },
+        {
+          label: 'Start Screen Recording...',
+          enabled: isDeviceReady && !isRecording,
+          click: async () => {
+            if (device) {
+              await handleStartRecording(device.id);
+            }
+          },
+        },
+        {
+          label: 'Stop Screen Recording',
+          enabled: isDeviceReady && isRecording && (!recordingDeviceId || recordingDeviceId === device?.id),
+          click: async () => {
+            if (device) {
+              await handleStopRecording(device.id);
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Refresh Devices',
+          click: async () => {
+            await refreshTrayDevices(true);
+          },
+        },
+      ],
+    },
+    { type: 'separator' },
+    { label: 'Show Android Debugger', click: () => showMainWindow() },
+    { label: 'Quit', click: () => app.quit() }
+  );
+
+  return Menu.buildFromTemplate(template);
+}
+
+function createTray(): void {
+  if (process.platform !== 'darwin' || tray) {
+    return;
+  }
+
+  const image = nativeImage.createFromBuffer(createBugPng(trayIconPixels));
+  image.setTemplateImage(true);
+
+  tray = new Tray(image);
+  tray.setToolTip('Android Debugger');
+  tray.on('click', () => {
+    tray?.popUpContextMenu();
+  });
+
+  updateTrayMenu();
+  refreshTrayDevices(true);
+
+  trayUpdateInterval = setInterval(() => {
+    refreshTrayDevices();
+  }, DEVICE_POLL_INTERVAL);
+}
 
 function createWindow(): void {
   const isDev = !app.isPackaged;
@@ -263,11 +592,19 @@ function createWindow(): void {
 function setupIpcHandlers(): void {
   // Device handlers
   ipcMain.handle('adb:get-devices', async () => {
-    return adbService.getDevices();
+    const devices = await adbService.getDevices();
+    trayDevices = devices;
+    updateTrayMenu();
+    return devices;
   });
 
   ipcMain.handle('adb:get-device-info', async (_, deviceId: string) => {
     return adbService.getDeviceInfo(deviceId);
+  });
+
+  ipcMain.on('app:set-selected-device', (_, deviceId: string | null) => {
+    selectedDeviceId = deviceId;
+    updateTrayMenu();
   });
 
   // Memory handlers
@@ -395,42 +732,15 @@ function setupIpcHandlers(): void {
 
   // Screen Capture handlers
   ipcMain.handle('screen:take-screenshot', async (_, deviceId: string) => {
-    // Show save dialog
-    const result = await dialog.showSaveDialog(mainWindow!, {
-      title: 'Save Screenshot',
-      defaultPath: `screenshot_${Date.now()}.png`,
-      filters: [{ name: 'PNG Images', extensions: ['png'] }],
-    });
-
-    if (result.canceled || !result.filePath) {
-      return null;
-    }
-
-    return adbService.takeScreenshot(deviceId, result.filePath);
+    return handleTakeScreenshot(deviceId);
   });
 
   ipcMain.handle('screen:start-recording', async (_, deviceId: string) => {
-    // Show save dialog first
-    const result = await dialog.showSaveDialog(mainWindow!, {
-      title: 'Save Recording',
-      defaultPath: `recording_${Date.now()}.mp4`,
-      filters: [{ name: 'MP4 Videos', extensions: ['mp4'] }],
-    });
-
-    if (result.canceled || !result.filePath) {
-      return { success: false };
-    }
-
-    return adbService.startScreenRecording(deviceId, result.filePath, (isRecording) => {
-      mainWindow?.webContents.send('recording-update', {
-        isRecording,
-        outputPath: result.filePath,
-      });
-    });
+    return handleStartRecording(deviceId);
   });
 
   ipcMain.handle('screen:stop-recording', async (_, deviceId: string) => {
-    return adbService.stopScreenRecording(deviceId);
+    return handleStopRecording(deviceId);
   });
 
   // Developer Options handlers
@@ -927,6 +1237,7 @@ app.whenReady().then(() => {
   setupIpcHandlers();
   setupAutoUpdaterEvents();
   createWindow();
+  createTray();
 
   // Auto-check for updates on startup (only in packaged app)
   if (app.isPackaged) {
@@ -959,4 +1270,14 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   adbService.stopAll();
+
+  if (trayUpdateInterval) {
+    clearInterval(trayUpdateInterval);
+    trayUpdateInterval = null;
+  }
+
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
 });

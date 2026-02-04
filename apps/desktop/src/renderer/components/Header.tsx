@@ -49,6 +49,9 @@ export function Header({
   sidebarExpanded,
   onToggleSidebar,
 }: HeaderProps) {
+  const wifiName = selectedDevice?.wifiName?.trim();
+  const wifiLabel = wifiName && wifiName.length > 0 ? wifiName : 'Not connected';
+
   return (
     <header className="h-12 bg-surface border-b border-border flex items-center justify-between px-4 drag-region">
       {/* Left section - macOS traffic lights spacing */}
@@ -114,10 +117,21 @@ export function Header({
       <div className="flex items-center gap-3 no-drag">
         {/* Device connected indicator */}
         {selectedDevice && (
-          <div className="flex items-center gap-1.5 px-2 py-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-            <span className="text-xs text-text-muted">Connected</span>
-          </div>
+          <>
+            <div className="flex items-center gap-1.5 px-2 py-1">
+              <span className="text-xs text-text-muted">Wi-Fi:</span>
+              <span
+                className="text-xs text-text-primary max-w-[160px] truncate inline-block"
+                title={wifiLabel}
+              >
+                {wifiLabel}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2 py-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
+              <span className="text-xs text-text-muted">Connected</span>
+            </div>
+          </>
         )}
       </div>
     </header>

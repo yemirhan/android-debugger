@@ -126,9 +126,10 @@ export class AdbService extends EventEmitter {
 
   async getDeviceInfo(deviceId: string): Promise<Device | null> {
     try {
-      const [modelResult, versionResult] = await Promise.all([
+      const [modelResult, versionResult, wifiName] = await Promise.all([
         execAsync(`adb -s ${deviceId} shell getprop ro.product.model`),
         execAsync(`adb -s ${deviceId} shell getprop ro.build.version.release`),
+        this.getWifiName(deviceId),
       ]);
 
       return {
@@ -136,11 +137,52 @@ export class AdbService extends EventEmitter {
         model: modelResult.stdout.trim() || 'Unknown',
         androidVersion: versionResult.stdout.trim() || 'Unknown',
         status: 'device',
+        wifiName,
       };
     } catch (error) {
       console.error('Error getting device info:', error);
       return null;
     }
+  }
+
+  private parseWifiSsid(output: string): string | null {
+    const match = output.match(/SSID:\s*"?([^"\n,]+)"?/);
+    if (!match) {
+      return null;
+    }
+
+    const ssid = match[1].trim();
+    if (!ssid) {
+      return null;
+    }
+
+    const lowered = ssid.toLowerCase();
+    if (lowered.includes('unknown ssid') || lowered === 'null') {
+      return null;
+    }
+
+    return ssid;
+  }
+
+  private async getWifiName(deviceId: string): Promise<string | null> {
+    const commands = [
+      `adb -s ${deviceId} shell cmd wifi status`,
+      `adb -s ${deviceId} shell dumpsys wifi`,
+    ];
+
+    for (const command of commands) {
+      try {
+        const { stdout } = await execAsync(command);
+        const ssid = this.parseWifiSsid(stdout);
+        if (ssid) {
+          return ssid;
+        }
+      } catch {
+        // Ignore and try fallback command.
+      }
+    }
+
+    return null;
   }
 
   async getMemInfo(deviceId: string, packageName: string): Promise<MemoryInfo | null> {

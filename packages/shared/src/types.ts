@@ -4,6 +4,7 @@ export interface Device {
   model: string;
   androidVersion: string;
   status: 'device' | 'offline' | 'unauthorized';
+  wifiName?: string | null;
 }
 
 // Memory types

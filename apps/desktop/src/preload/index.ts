@@ -49,6 +49,8 @@ export interface ElectronAPI {
   // Device
   getDevices: () => Promise<Device[]>;
   getDeviceInfo: (deviceId: string) => Promise<Device | null>;
+  setSelectedDevice: (deviceId: string | null) => void;
+  onAppNavigate: (callback: (tabId: string) => void) => UnsubscribeFn;
 
   // Memory
   getMemInfo: (deviceId: string, packageName: string) => Promise<MemoryInfo | null>;
@@ -221,6 +223,12 @@ const electronAPI: ElectronAPI = {
   // Device
   getDevices: () => ipcRenderer.invoke('adb:get-devices'),
   getDeviceInfo: (deviceId) => ipcRenderer.invoke('adb:get-device-info', deviceId),
+  setSelectedDevice: (deviceId) => ipcRenderer.send('app:set-selected-device', deviceId),
+  onAppNavigate: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, tabId: string) => callback(tabId);
+    ipcRenderer.on('app:navigate', listener);
+    return () => ipcRenderer.removeListener('app:navigate', listener);
+  },
 
   // Memory
   getMemInfo: (deviceId, packageName) => ipcRenderer.invoke('adb:get-meminfo', deviceId, packageName),

@@ -1,6 +1,6 @@
 {
   "name": "@android-debugger/desktop",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Android Debugger Desktop Application",
   "author": "Android Debugger Team",
   "private": true,
@@ -50,7 +50,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-"notarize": true
+      "notarize": true
     },
     "dmg": {
       "sign": false
