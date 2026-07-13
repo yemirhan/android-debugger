@@ -205,6 +205,22 @@ export const tabGuides: Record<string, TabGuide> = {
     ],
   },
 
+  'bundle-analyzer': {
+    title: 'Bundle Analyzer',
+    description: 'Inspect what is inside an APK or AAB file, like Android Studio\'s APK Analyzer.',
+    features: [
+      'File tree with raw and download sizes for every entry',
+      'Native libraries grouped by ABI (arm64-v8a, x86_64, ...)',
+      'DEX class, method and field counts with 64K limit warnings',
+      'Size breakdown by category: code, native libs, resources, assets',
+    ],
+    tips: [
+      'Works without a connected device - just drop in a file',
+      'Download size is an estimate based on zip compression',
+      'Multiple classes.dex files usually mean multidex is enabled',
+    ],
+  },
+
   'intent-tester': {
     title: 'Intent Tester',
     description: 'Send commands to your app to trigger specific actions.',

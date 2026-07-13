@@ -686,3 +686,84 @@ export interface ScrcpyState {
   pid: number | null;
   error: string | null;
 }
+
+// Bundle Analyzer types
+export type BundleFileType = 'apk' | 'aab';
+
+export interface BundleEntryNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  size: number;
+  compressedSize: number;
+  children?: BundleEntryNode[];
+}
+
+export interface DexFileInfo {
+  path: string;
+  size: number;
+  compressedSize: number;
+  classCount: number;
+  methodRefCount: number;
+  fieldRefCount: number;
+  stringCount: number;
+  typeCount: number;
+  protoCount: number;
+}
+
+export interface NativeLibFile {
+  name: string;
+  path: string;
+  size: number;
+  compressedSize: number;
+  bitness?: 32 | 64;
+}
+
+export interface NativeLibAbi {
+  abi: string;
+  totalSize: number;
+  totalCompressedSize: number;
+  libs: NativeLibFile[];
+}
+
+export type BundleCategoryKey = 'dex' | 'native-libs' | 'resources' | 'assets' | 'other';
+
+export interface BundleCategory {
+  key: BundleCategoryKey;
+  label: string;
+  size: number;
+  compressedSize: number;
+  entryCount: number;
+}
+
+export interface BundleManifestInfo {
+  packageName?: string;
+  versionCode?: number;
+  versionName?: string;
+  minSdkVersion?: number;
+  targetSdkVersion?: number;
+}
+
+export interface BundleAnalysis {
+  filePath: string;
+  fileName: string;
+  fileType: BundleFileType;
+  fileSize: number;
+  rawSize: number;
+  downloadSize: number;
+  entryCount: number;
+  root: BundleEntryNode;
+  categories: BundleCategory[];
+  dexFiles: DexFileInfo[];
+  totalClassCount: number;
+  totalMethodRefCount: number;
+  nativeLibs: NativeLibAbi[];
+  manifest?: BundleManifestInfo;
+  modules?: string[];
+}
+
+export interface BundleAnalysisResult {
+  success: boolean;
+  analysis?: BundleAnalysis;
+  error?: string;
+}

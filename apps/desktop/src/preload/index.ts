@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, shell } from 'electron';
+import { contextBridge, ipcRenderer, shell, webUtils } from 'electron';
 import type {
   Device,
   MemoryInfo,
@@ -41,6 +41,7 @@ import type {
   MethodTraceAnalysis,
   ScrcpyConfig,
   ScrcpyState,
+  BundleAnalysisResult,
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
@@ -177,6 +178,11 @@ export interface ElectronAPI {
   downloadBundletool: () => Promise<{ success: boolean; error?: string }>;
   onBundletoolDownloadProgress: (callback: (progress: { percent: number; message: string }) => void) => UnsubscribeFn;
   onInstallProgress: (callback: (progress: InstallProgress) => void) => UnsubscribeFn;
+
+  // Bundle Analyzer
+  analyzeBundle: (filePath: string) => Promise<BundleAnalysisResult>;
+  extractBundleEntry: (bundlePath: string, entryPath: string) => Promise<{ success: boolean; savedPath?: string; canceled?: boolean; error?: string }>;
+  getPathForFile: (file: File) => string;
 
   // Shell
   openExternal: (url: string) => Promise<void>;
@@ -448,6 +454,11 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('install-progress', listener);
     return () => ipcRenderer.removeListener('install-progress', listener);
   },
+
+  // Bundle Analyzer
+  analyzeBundle: (filePath) => ipcRenderer.invoke('bundle:analyze', filePath),
+  extractBundleEntry: (bundlePath, entryPath) => ipcRenderer.invoke('bundle:extract-entry', bundlePath, entryPath),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
 
   // Shell
   openExternal: (url) => shell.openExternal(url),

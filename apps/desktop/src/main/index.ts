@@ -5,7 +5,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { execSync } from 'child_process';
 import { deflateSync } from 'zlib';
-import type { UpdateSettings, UpdateInfo, UpdateProgress } from '@android-debugger/shared';
+import type { UpdateSettings, UpdateInfo, UpdateProgress, BundleAnalysisResult } from '@android-debugger/shared';
+import { analyzeBundle, extractBundleEntry } from './bundle-analyzer';
 
 interface AdbInfo {
   path: string;
@@ -1025,6 +1026,39 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('app:needs-bundletool-download', async () => {
     return adbService.needsBundletoolDownload();
+  });
+
+  // Bundle Analyzer handlers
+  ipcMain.handle('bundle:analyze', async (_, filePath: string): Promise<BundleAnalysisResult> => {
+    try {
+      const analysis = await analyzeBundle(filePath);
+      return { success: true, analysis };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to analyze bundle',
+      };
+    }
+  });
+
+  ipcMain.handle('bundle:extract-entry', async (_, bundlePath: string, entryPath: string) => {
+    const fileName = entryPath.split('/').pop() || 'extracted-file';
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Extract File',
+      defaultPath: fileName,
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+    try {
+      await extractBundleEntry(bundlePath, entryPath, result.filePath);
+      return { success: true, savedPath: result.filePath };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to extract file',
+      };
+    }
   });
 
   // Auto-updater handlers

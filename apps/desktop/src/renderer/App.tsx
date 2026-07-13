@@ -23,6 +23,7 @@ import { JobSchedulerPanel } from './components/JobSchedulerPanel';
 import { AlarmMonitorPanel } from './components/AlarmMonitorPanel';
 import { WebSocketPanel } from './components/WebSocketPanel';
 import { AppInstallerPanel } from './components/AppInstallerPanel';
+import { BundleAnalyzerPanel } from './components/BundleAnalyzerPanel';
 import { ThreadMonitorPanel } from './components/ThreadMonitorPanel';
 import { GcMonitorPanel } from './components/GcMonitorPanel';
 import { HeapDumpPanel } from './components/HeapDumpPanel';
@@ -34,7 +35,7 @@ import { useNavigationState } from './hooks/useNavigationState';
 import { SdkProvider, LogsProvider, UpdateProvider, useUpdateContext } from './contexts';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
 
-export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace' | 'screen-mirror';
+export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'bundle-analyzer' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace' | 'screen-mirror';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -105,6 +106,11 @@ function AppContent() {
     // Settings doesn't require a device
     if (activeTab === 'settings') {
       return <SettingsPanel />;
+    }
+
+    // Bundle Analyzer works on local APK/AAB files, no device needed
+    if (activeTab === 'bundle-analyzer') {
+      return <BundleAnalyzerPanel />;
     }
 
     if (!selectedDevice) {
