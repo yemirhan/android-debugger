@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, shell, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   Device,
   MemoryInfo,
@@ -45,6 +45,7 @@ import type {
 } from '@android-debugger/shared';
 
 export type UnsubscribeFn = () => void;
+export type SocketTransportType = 'socket' | 'logcat' | 'none';
 
 export interface ElectronAPI {
   // Device
@@ -62,6 +63,8 @@ export interface ElectronAPI {
   // Logs
   startLogcat: (deviceId: string, filters?: string[], packageName?: string) => void;
   stopLogcat: () => void;
+  startSdkLogcat: (deviceId: string, packageName?: string) => void;
+  stopSdkLogcat: () => void;
   clearLogcat: (deviceId: string) => Promise<void>;
   onLogEntry: (callback: (entry: LogEntry) => void) => UnsubscribeFn;
 
@@ -85,6 +88,9 @@ export interface ElectronAPI {
 
   // SDK Messages (received via logcat when logcat is running)
   onSdkMessage: (callback: (data: { message: SdkMessage }) => void) => UnsubscribeFn;
+  socketConnect: (deviceId: string, packageName: string) => void;
+  socketDisconnect: () => void;
+  onSocketStatusChanged: (callback: (status: { type: SocketTransportType }) => void) => UnsubscribeFn;
 
   // App Metadata
   getAppMetadata: (deviceId: string, packageName: string) => Promise<AppMetadata | null>;
@@ -93,6 +99,7 @@ export interface ElectronAPI {
   takeScreenshot: (deviceId: string) => Promise<ScreenshotResult | null>;
   startScreenRecording: (deviceId: string) => Promise<{ success: boolean; path?: string }>;
   stopScreenRecording: (deviceId: string) => Promise<{ success: boolean; path?: string }>;
+  getRecordingState: () => Promise<RecordingState>;
   onRecordingUpdate: (callback: (state: RecordingState) => void) => UnsubscribeFn;
 
   // Developer Options
@@ -207,6 +214,7 @@ export interface ElectronAPI {
   // Method Trace
   startMethodTrace: (deviceId: string, packageName: string) => Promise<{ success: boolean; error?: string }>;
   stopMethodTrace: (deviceId: string, packageName: string) => Promise<MethodTraceInfo>;
+  cancelMethodTrace: () => Promise<void>;
   analyzeMethodTrace: (filePath: string) => Promise<MethodTraceAnalysis | null>;
   onMethodTraceProgress: (callback: (progress: { id: string; status: string; duration?: number; error?: string }) => void) => UnsubscribeFn;
 
@@ -224,6 +232,8 @@ export interface ElectronAPI {
   onMirrorStopped: (callback: () => void) => UnsubscribeFn;
   onMirrorError: (callback: (error: string) => void) => UnsubscribeFn;
 }
+
+const socketStatusListeners = new Set<(status: { type: SocketTransportType }) => void>();
 
 const electronAPI: ElectronAPI = {
   // Device
@@ -250,6 +260,8 @@ const electronAPI: ElectronAPI = {
   // Logs
   startLogcat: (deviceId, filters, packageName) => ipcRenderer.send('adb:start-logcat', deviceId, filters, packageName),
   stopLogcat: () => ipcRenderer.send('adb:stop-logcat'),
+  startSdkLogcat: (deviceId, packageName) => ipcRenderer.send('adb:start-sdk-logcat', deviceId, packageName),
+  stopSdkLogcat: () => ipcRenderer.send('adb:stop-sdk-logcat'),
   clearLogcat: (deviceId) => ipcRenderer.invoke('adb:clear-logcat', deviceId),
   onLogEntry: (callback) => {
     const listener = (_: Electron.IpcRendererEvent, entry: LogEntry) => callback(entry);
@@ -294,6 +306,20 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('sdk-message', listener);
     return () => ipcRenderer.removeListener('sdk-message', listener);
   },
+  // Native socket transport is not available in this build. Keep the optional
+  // renderer hook honest by immediately selecting the supported logcat transport.
+  socketConnect: () => {
+    queueMicrotask(() => {
+      for (const listener of socketStatusListeners) listener({ type: 'logcat' });
+    });
+  },
+  socketDisconnect: () => {
+    for (const listener of socketStatusListeners) listener({ type: 'none' });
+  },
+  onSocketStatusChanged: (callback) => {
+    socketStatusListeners.add(callback);
+    return () => socketStatusListeners.delete(callback);
+  },
 
   // App Metadata
   getAppMetadata: (deviceId, packageName) =>
@@ -303,6 +329,7 @@ const electronAPI: ElectronAPI = {
   takeScreenshot: (deviceId) => ipcRenderer.invoke('screen:take-screenshot', deviceId),
   startScreenRecording: (deviceId) => ipcRenderer.invoke('screen:start-recording', deviceId),
   stopScreenRecording: (deviceId) => ipcRenderer.invoke('screen:stop-recording', deviceId),
+  getRecordingState: () => ipcRenderer.invoke('screen:get-recording-state'),
   onRecordingUpdate: (callback) => {
     const listener = (_: Electron.IpcRendererEvent, state: RecordingState) => callback(state);
     ipcRenderer.on('recording-update', listener);
@@ -461,7 +488,7 @@ const electronAPI: ElectronAPI = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
 
   // Shell
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
 
   // Thread Monitor
   getThreads: (deviceId, packageName) =>
@@ -503,6 +530,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('profiler:start-method-trace', deviceId, packageName),
   stopMethodTrace: (deviceId, packageName) =>
     ipcRenderer.invoke('profiler:stop-method-trace', deviceId, packageName),
+  cancelMethodTrace: () => ipcRenderer.invoke('profiler:cancel-method-trace'),
   analyzeMethodTrace: (filePath) =>
     ipcRenderer.invoke('profiler:analyze-method-trace', filePath),
   onMethodTraceProgress: (callback) => {

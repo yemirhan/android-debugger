@@ -210,10 +210,18 @@ export function interceptNetwork(send: SendFn): () => void {
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const id = generateRequestId();
     const startTime = Date.now();
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method || 'GET';
+    const inputRequest = typeof Request !== 'undefined' && input instanceof Request ? input : null;
+    const url = typeof input === 'string'
+      ? input
+      : inputRequest
+        ? inputRequest.url
+        : input.toString();
+    const method = init?.method ?? inputRequest?.method ?? 'GET';
     const headers: Record<string, string> = {};
 
+    inputRequest?.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
     if (init?.headers) {
       if (init.headers instanceof Headers) {
         init.headers.forEach((value, key) => {

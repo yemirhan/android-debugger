@@ -76,22 +76,20 @@ export function useMemory(device: Device | null, packageName: string) {
     };
   }, []);
 
-  // Stop monitoring when device or package changes
+  // Own exactly one monitor for the current target.
   useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, packageName, isMonitoring, stopMonitoring]);
-
-  // Auto-start monitoring when package is set
-  useEffect(() => {
-    if (device && packageName && !isMonitoring) {
-      clearData();
-      startMonitoring();
+    clearData();
+    if (!device || !packageName) {
+      setIsMonitoring(false);
+      return;
     }
-  }, [device, packageName]);
+
+    window.electronAPI.startMemoryMonitor(device.id, packageName);
+    setIsMonitoring(true);
+    return () => {
+      window.electronAPI.stopMemoryMonitor();
+    };
+  }, [device?.id, packageName, clearData]);
 
   return {
     data,

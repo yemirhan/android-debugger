@@ -1,4 +1,4 @@
-import { spawn, exec, ChildProcess } from 'child_process';
+import { spawn, execFile, ChildProcess, type ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -19,6 +19,7 @@ import type {
   DatabaseQueryResult,
   IntentConfig,
   ScreenshotResult,
+  RecordingState,
   SdkMessage,
   BatteryInfo,
   CrashEntry,
@@ -42,18 +43,88 @@ import type {
   GcEvent,
   GcReason,
   HeapDumpInfo,
-  HeapClass,
   HeapInstance,
   HeapAnalysis,
   MethodTraceInfo,
-  MethodStats,
-  FlameChartEntry,
   MethodTraceAnalysis,
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
+import { parseHprof, parseMethodTrace } from './profiler-parsers';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+interface CommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+async function runCommand(
+  executable: string,
+  args: readonly string[] = [],
+  options: ExecFileOptions = {}
+): Promise<CommandResult> {
+  const result = await execFileAsync(executable, [...args], {
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    ...options,
+  });
+
+  return {
+    stdout: String(result.stdout ?? ''),
+    stderr: String(result.stderr ?? ''),
+  };
+}
+
+async function runCommandBuffer(
+  executable: string,
+  args: readonly string[] = [],
+  options: ExecFileOptions = {}
+): Promise<{ stdout: Buffer; stderr: Buffer }> {
+  const result = await execFileAsync(executable, [...args], {
+    encoding: 'buffer',
+    maxBuffer: 256 * 1024 * 1024,
+    ...options,
+  });
+  return {
+    stdout: Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? ''),
+    stderr: Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? ''),
+  };
+}
+
+function assertDeviceId(deviceId: string): void {
+  if (!deviceId || !/^[A-Za-z0-9._:-]+$/.test(deviceId)) {
+    throw new Error('Invalid Android device ID');
+  }
+}
+
+function assertPackageName(packageName: string): void {
+  if (!packageName || !/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(packageName)) {
+    throw new Error('Invalid Android package name');
+  }
+}
+
+async function runAdb(
+  deviceId: string | null,
+  args: readonly string[],
+  options: ExecFileOptions = {}
+): Promise<CommandResult> {
+  const adbArgs = [...args];
+  if (deviceId !== null) {
+    assertDeviceId(deviceId);
+    adbArgs.unshift('-s', deviceId);
+  }
+  return runCommand('adb', adbArgs, options);
+}
+
+async function runAdbBuffer(
+  deviceId: string,
+  args: readonly string[],
+  options: ExecFileOptions = {}
+): Promise<{ stdout: Buffer; stderr: Buffer }> {
+  assertDeviceId(deviceId);
+  return runCommandBuffer('adb', ['-s', deviceId, ...args], options);
+}
 
 type LogCallback = (entry: LogEntry) => void;
 type SdkMessageCallback = (message: SdkMessage) => void;
@@ -63,20 +134,33 @@ type GcEventCallback = (event: GcEvent) => void;
 
 export class AdbService extends EventEmitter {
   private logcatProcess: ChildProcess | null = null;
+  private sdkLogcatProcess: ChildProcess | null = null;
   private crashLogcatProcess: ChildProcess | null = null;
   private memoryInterval: NodeJS.Timeout | null = null;
   private cpuInterval: NodeJS.Timeout | null = null;
   private fpsInterval: NodeJS.Timeout | null = null;
   private batteryInterval: NodeJS.Timeout | null = null;
   private networkStatsInterval: NodeJS.Timeout | null = null;
+  private memoryMonitorGeneration = 0;
+  private cpuMonitorGeneration = 0;
+  private fpsMonitorGeneration = 0;
+  private batteryMonitorGeneration = 0;
+  private networkMonitorGeneration = 0;
   private logcatParser: LogcatMessageParser = new LogcatMessageParser();
   private sdkMessageCallback: SdkMessageCallback | null = null;
 
   // Profiler properties
   private threadMonitorInterval: NodeJS.Timeout | null = null;
+  private threadMonitorGeneration = 0;
   private gcMonitorProcess: ChildProcess | null = null;
+  private gcMonitorGeneration = 0;
   private methodTraceActive: boolean = false;
+  private methodTraceStarting: boolean = false;
+  private methodTraceGeneration = 0;
   private methodTraceStartTime: number = 0;
+  private methodTraceDeviceId: string | null = null;
+  private methodTracePackageName: string | null = null;
+  private methodTraceRemotePath: string | null = null;
 
   constructor() {
     super();
@@ -91,7 +175,7 @@ export class AdbService extends EventEmitter {
 
   async getDevices(): Promise<Device[]> {
     try {
-      const { stdout } = await execAsync('adb devices -l');
+      const { stdout } = await runAdb(null, ['devices', '-l']);
       const lines = stdout.trim().split('\n').slice(1);
       const devices: Device[] = [];
 
@@ -126,9 +210,10 @@ export class AdbService extends EventEmitter {
 
   async getDeviceInfo(deviceId: string): Promise<Device | null> {
     try {
+      assertDeviceId(deviceId);
       const [modelResult, versionResult, wifiName] = await Promise.all([
-        execAsync(`adb -s ${deviceId} shell getprop ro.product.model`),
-        execAsync(`adb -s ${deviceId} shell getprop ro.build.version.release`),
+        runAdb(deviceId, ['shell', 'getprop', 'ro.product.model']),
+        runAdb(deviceId, ['shell', 'getprop', 'ro.build.version.release']),
         this.getWifiName(deviceId),
       ]);
 
@@ -165,14 +250,14 @@ export class AdbService extends EventEmitter {
   }
 
   private async getWifiName(deviceId: string): Promise<string | null> {
-    const commands = [
-      `adb -s ${deviceId} shell cmd wifi status`,
-      `adb -s ${deviceId} shell dumpsys wifi`,
+    const commands: string[][] = [
+      ['shell', 'cmd', 'wifi', 'status'],
+      ['shell', 'dumpsys', 'wifi'],
     ];
 
     for (const command of commands) {
       try {
-        const { stdout } = await execAsync(command);
+        const { stdout } = await runAdb(deviceId, command);
         const ssid = this.parseWifiSsid(stdout);
         if (ssid) {
           return ssid;
@@ -190,9 +275,8 @@ export class AdbService extends EventEmitter {
       return null;
     }
     try {
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell dumpsys meminfo ${packageName}`
-      );
+      assertPackageName(packageName);
+      const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'meminfo', packageName]);
 
       return this.parseMemInfo(stdout);
     } catch (error) {
@@ -314,15 +398,20 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    this.memoryInterval = setInterval(async () => {
+    const generation = ++this.memoryMonitorGeneration;
+    const poll = async () => {
       const info = await this.getMemInfo(deviceId, packageName);
+      if (generation !== this.memoryMonitorGeneration) return;
       if (info) {
         callback(info);
       }
-    }, interval);
+      this.memoryInterval = setTimeout(poll, Math.max(250, interval));
+    };
+    void poll();
   }
 
   stopMemoryMonitor(): void {
+    this.memoryMonitorGeneration++;
     if (this.memoryInterval) {
       clearInterval(this.memoryInterval);
       this.memoryInterval = null;
@@ -334,9 +423,8 @@ export class AdbService extends EventEmitter {
    */
   async getPid(deviceId: string, packageName: string): Promise<number | null> {
     try {
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell pidof -s ${packageName}`
-      );
+      assertPackageName(packageName);
+      const { stdout } = await runAdb(deviceId, ['shell', 'pidof', '-s', packageName]);
       const pid = parseInt(stdout.trim(), 10);
       return isNaN(pid) ? null : pid;
     } catch (error) {
@@ -356,9 +444,7 @@ export class AdbService extends EventEmitter {
     if (!deviceId) {
       return;
     }
-
-    // Reset the parser when starting fresh
-    this.logcatParser.reset();
+    assertDeviceId(deviceId);
 
     const defaultFilters = ['*:S', 'ReactNative:V', 'ReactNativeJS:V'];
     const logFilters = filters || defaultFilters;
@@ -370,45 +456,36 @@ export class AdbService extends EventEmitter {
     } else {
       args.push(...logFilters);
     }
-    this.logcatProcess = spawn('adb', args);
+    const process = spawn('adb', args);
+    this.logcatProcess = process;
 
     let buffer = '';
 
-    this.logcatProcess.stdout?.on('data', (data: Buffer) => {
+    process.stdout?.on('data', (data: Buffer) => {
+      if (this.logcatProcess !== process) return;
       buffer += data.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        // Try to parse as SDK message first
-        const sdkMessage = this.logcatParser.parseLogLine(line);
-        if (sdkMessage) {
-          // Emit SDK message event
-          console.log('[AdbService] Emitting SDK message:', sdkMessage.type);
-          this.emit('sdk-message', sdkMessage);
-          if (this.sdkMessageCallback) {
-            this.sdkMessageCallback(sdkMessage);
-          }
-          // Don't skip - also parse as regular log entry so it shows in Logs panel
-        }
-
         // Regular log entry
         const entry = this.parseLogLine(line);
         if (entry) {
           callback(entry);
-        } else if (line.trim()) {
-          // Debug: log lines that don't match the expected format
-          console.log('[AdbService] Line did not match log format:', line.substring(0, 80));
         }
       }
     });
 
-    this.logcatProcess.stderr?.on('data', (data: Buffer) => {
+    process.stderr?.on('data', (data: Buffer) => {
       console.error('Logcat error:', data.toString());
     });
 
-    this.logcatProcess.on('error', (error) => {
+    process.on('error', (error) => {
+      if (this.logcatProcess !== process) return;
       console.error('Logcat process error:', error);
+    });
+    process.on('close', () => {
+      if (this.logcatProcess === process) this.logcatProcess = null;
     });
   }
 
@@ -454,9 +531,60 @@ export class AdbService extends EventEmitter {
     }
   }
 
+  startSdkLogcat(deviceId: string, pid?: number): void {
+    this.stopSdkLogcat();
+    assertDeviceId(deviceId);
+    this.logcatParser.reset();
+
+    const args = ['-s', deviceId, 'logcat', '-v', 'time'];
+    if (pid) {
+      args.push('--pid', String(pid));
+    } else {
+      args.push('*:S', 'ReactNative:V', 'ReactNativeJS:V');
+    }
+
+    const process = spawn('adb', args);
+    this.sdkLogcatProcess = process;
+    let buffer = '';
+
+    process.stdout?.on('data', (data: Buffer) => {
+      if (this.sdkLogcatProcess !== process) return;
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const sdkMessage = this.logcatParser.parseLogLine(line);
+        if (sdkMessage) {
+          this.emit('sdk-message', sdkMessage);
+          this.sdkMessageCallback?.(sdkMessage);
+        }
+      }
+    });
+
+    process.stderr?.on('data', (data: Buffer) => {
+      console.error('SDK logcat error:', data.toString());
+    });
+    process.on('error', (error) => {
+      console.error('SDK logcat process error:', error);
+    });
+    process.on('close', () => {
+      if (this.sdkLogcatProcess === process) {
+        this.sdkLogcatProcess = null;
+      }
+    });
+  }
+
+  stopSdkLogcat(): void {
+    if (this.sdkLogcatProcess) {
+      this.sdkLogcatProcess.kill();
+      this.sdkLogcatProcess = null;
+    }
+    this.logcatParser.reset();
+  }
+
   async clearLogcat(deviceId: string): Promise<void> {
     try {
-      await execAsync(`adb -s ${deviceId} logcat -c`);
+      await runAdb(deviceId, ['logcat', '-c']);
     } catch (error) {
       console.error('Error clearing logcat:', error);
     }
@@ -467,11 +595,10 @@ export class AdbService extends EventEmitter {
       return null;
     }
     try {
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell top -n 1 -b | grep ${packageName}`
-      );
+      assertPackageName(packageName);
+      const { stdout } = await runAdb(deviceId, ['shell', 'top', '-n', '1', '-b']);
 
-      const lines = stdout.trim().split('\n');
+      const lines = stdout.trim().split('\n').filter((line) => line.includes(packageName));
       if (lines.length === 0) return null;
 
       // Parse CPU usage - format varies by Android version
@@ -511,15 +638,20 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    this.cpuInterval = setInterval(async () => {
+    const generation = ++this.cpuMonitorGeneration;
+    const poll = async () => {
       const info = await this.getCpuInfo(deviceId, packageName);
+      if (generation !== this.cpuMonitorGeneration) return;
       if (info) {
         callback(info);
       }
-    }, interval);
+      this.cpuInterval = setTimeout(poll, Math.max(250, interval));
+    };
+    void poll();
   }
 
   stopCpuMonitor(): void {
+    this.cpuMonitorGeneration++;
     if (this.cpuInterval) {
       clearInterval(this.cpuInterval);
       this.cpuInterval = null;
@@ -531,15 +663,14 @@ export class AdbService extends EventEmitter {
       return null;
     }
     try {
+      assertPackageName(packageName);
       // Reset gfxinfo stats
-      await execAsync(`adb -s ${deviceId} shell dumpsys gfxinfo ${packageName} reset`);
+      await runAdb(deviceId, ['shell', 'dumpsys', 'gfxinfo', packageName, 'reset']);
 
       // Wait a moment for frame data to accumulate
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell dumpsys gfxinfo ${packageName} framestats`
-      );
+      const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'gfxinfo', packageName, 'framestats']);
 
       return this.parseFpsInfo(stdout);
     } catch (error) {
@@ -554,6 +685,8 @@ export class AdbService extends EventEmitter {
       let totalFrames = 0;
       let jankyFrames = 0;
       const frameTimes: number[] = [];
+      const intendedVsyncTimes: number[] = [];
+      let frameColumns: string[] | null = null;
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -570,13 +703,31 @@ export class AdbService extends EventEmitter {
           jankyFrames = parseInt(jankyMatch[1], 10);
         }
 
-        // Parse frame times from framestats section
+        if (trimmed.startsWith('Flags,IntendedVsync,')) {
+          frameColumns = trimmed.split(',');
+          continue;
+        }
+
+        // Parse frame times from the PROFILEDATA CSV. Column positions vary
+        // between Android releases, so resolve them by header name.
         if (trimmed.match(/^\d+,\d+,/)) {
           const parts = trimmed.split(',');
-          if (parts.length >= 2) {
-            const frameTime = (parseInt(parts[1], 10) - parseInt(parts[0], 10)) / 1000000; // Convert to ms
+          const columnIndex = (name: string, fallback: number): number => {
+            const index = frameColumns?.indexOf(name) ?? -1;
+            return index >= 0 ? index : fallback;
+          };
+          const flags = Number(parts[columnIndex('Flags', 0)]);
+          const intendedIndex = columnIndex('IntendedVsync', 1);
+          const completedIndex = columnIndex('FrameCompleted', 13);
+          const intendedVsync = Number(parts[intendedIndex]);
+          const frameCompleted = Number(parts[completedIndex]);
+
+          // Non-zero flags indicate an invalid/incomplete frame sample.
+          if (flags === 0 && Number.isFinite(intendedVsync) && Number.isFinite(frameCompleted)) {
+            const frameTime = (frameCompleted - intendedVsync) / 1_000_000;
             if (!isNaN(frameTime) && frameTime > 0 && frameTime < 1000) {
               frameTimes.push(frameTime);
+              intendedVsyncTimes.push(intendedVsync);
             }
           }
         }
@@ -590,12 +741,16 @@ export class AdbService extends EventEmitter {
         return arr[Math.max(0, index)] || 0;
       };
 
-      // Estimate FPS based on frame count and time window
-      const fps = frameTimes.length > 0 ? Math.min(60, 1000 / (frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length)) : 60;
+      const fps = intendedVsyncTimes.length > 1
+        ? ((intendedVsyncTimes.length - 1) * 1_000_000_000) /
+          (intendedVsyncTimes[intendedVsyncTimes.length - 1] - intendedVsyncTimes[0])
+        : frameTimes.length === 1
+          ? 1000 / frameTimes[0]
+          : 0;
 
       return {
         timestamp: Date.now(),
-        fps: Math.round(fps),
+        fps: Number.isFinite(fps) ? Math.max(0, Math.round(fps)) : 0,
         jankyFrames,
         totalFrames,
         percentile90: getPercentile(frameTimes, 90),
@@ -620,15 +775,20 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    this.fpsInterval = setInterval(async () => {
+    const generation = ++this.fpsMonitorGeneration;
+    const poll = async () => {
       const info = await this.getFpsInfo(deviceId, packageName);
+      if (generation !== this.fpsMonitorGeneration) return;
       if (info) {
         callback(info);
       }
-    }, interval);
+      this.fpsInterval = setTimeout(poll, Math.max(500, interval));
+    };
+    void poll();
   }
 
   stopFpsMonitor(): void {
+    this.fpsMonitorGeneration++;
     if (this.fpsInterval) {
       clearInterval(this.fpsInterval);
       this.fpsInterval = null;
@@ -637,16 +797,28 @@ export class AdbService extends EventEmitter {
 
   async getPackages(deviceId: string, debuggableOnly: boolean = false): Promise<string[]> {
     try {
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell pm list packages${debuggableOnly ? ' -3' : ''}`
-      );
-
-      return stdout
+      const { stdout } = await runAdb(deviceId, ['shell', 'pm', 'list', 'packages']);
+      const packages = stdout
         .trim()
         .split('\n')
         .map((line) => line.replace('package:', '').trim())
         .filter(Boolean)
         .sort();
+
+      if (!debuggableOnly) {
+        return packages;
+      }
+
+      const { stdout: packageDump } = await runAdb(deviceId, ['shell', 'dumpsys', 'package', 'packages']);
+      const debuggable = new Set<string>();
+      const starts = Array.from(packageDump.matchAll(/^\s*Package \[([^\]]+)]/gm));
+      for (let index = 0; index < starts.length; index++) {
+        const match = starts[index];
+        const blockEnd = starts[index + 1]?.index ?? packageDump.length;
+        const block = packageDump.slice(match.index, blockEnd);
+        if (/\bDEBUGGABLE\b/.test(block)) debuggable.add(match[1]);
+      }
+      return packages.filter((packageName) => debuggable.has(packageName));
     } catch (error) {
       console.error('Error getting packages:', error);
       return [];
@@ -655,9 +827,10 @@ export class AdbService extends EventEmitter {
 
   async launchApp(deviceId: string, packageName: string): Promise<void> {
     try {
-      await execAsync(
-        `adb -s ${deviceId} shell monkey -p ${packageName} -c android.intent.category.LAUNCHER 1`
-      );
+      assertPackageName(packageName);
+      await runAdb(deviceId, [
+        'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1',
+      ]);
     } catch (error) {
       console.error('Error launching app:', error);
       throw error;
@@ -666,7 +839,8 @@ export class AdbService extends EventEmitter {
 
   async killApp(deviceId: string, packageName: string): Promise<void> {
     try {
-      await execAsync(`adb -s ${deviceId} shell am force-stop ${packageName}`);
+      assertPackageName(packageName);
+      await runAdb(deviceId, ['shell', 'am', 'force-stop', packageName]);
     } catch (error) {
       console.error('Error killing app:', error);
       throw error;
@@ -675,7 +849,8 @@ export class AdbService extends EventEmitter {
 
   async clearAppData(deviceId: string, packageName: string): Promise<void> {
     try {
-      await execAsync(`adb -s ${deviceId} shell pm clear ${packageName}`);
+      assertPackageName(packageName);
+      await runAdb(deviceId, ['shell', 'pm', 'clear', packageName]);
     } catch (error) {
       console.error('Error clearing app data:', error);
       throw error;
@@ -686,11 +861,23 @@ export class AdbService extends EventEmitter {
 
   async getAppMetadata(deviceId: string, packageName: string): Promise<AppMetadata | null> {
     try {
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell dumpsys package ${packageName}`
-      );
+      assertPackageName(packageName);
+      const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'package', packageName]);
+      const metadata = this.parseAppMetadata(packageName, stdout);
+      if (!metadata) return null;
 
-      return this.parseAppMetadata(packageName, stdout);
+      const codePath = stdout.match(/^\s*codePath=(.+)$/m)?.[1]?.trim();
+      const parseDu = (value: string) => (parseInt(value.trim().split(/\s+/)[0], 10) || 0) * 1024;
+      const [apk, data, cache] = await Promise.all([
+        codePath
+          ? runAdb(deviceId, ['shell', 'du', '-sk', codePath]).then((result) => parseDu(result.stdout)).catch(() => 0)
+          : Promise.resolve(0),
+        runAdb(deviceId, ['shell', 'run-as', packageName, 'du', '-sk', `/data/data/${packageName}`])
+          .then((result) => parseDu(result.stdout)).catch(() => 0),
+        runAdb(deviceId, ['shell', 'run-as', packageName, 'du', '-sk', `/data/data/${packageName}/cache`])
+          .then((result) => parseDu(result.stdout)).catch(() => 0),
+      ]);
+      return { ...metadata, apkSize: apk, dataSize: data, cacheSize: cache };
     } catch (error) {
       console.error('Error getting app metadata:', error);
       return null;
@@ -734,12 +921,12 @@ export class AdbService extends EventEmitter {
         }
 
         // Install times
-        const firstInstallMatch = trimmed.match(/firstInstallTime=([^\s]+)/);
+        const firstInstallMatch = trimmed.match(/firstInstallTime=(.+)$/);
         if (firstInstallMatch) {
           metadata.firstInstallTime = firstInstallMatch[1];
         }
 
-        const lastUpdateMatch = trimmed.match(/lastUpdateTime=([^\s]+)/);
+        const lastUpdateMatch = trimmed.match(/lastUpdateTime=(.+)$/);
         if (lastUpdateMatch) {
           metadata.lastUpdateTime = lastUpdateMatch[1];
         }
@@ -797,6 +984,12 @@ export class AdbService extends EventEmitter {
 
   private recordingProcess: ChildProcess | null = null;
   private recordingPath: string | null = null;
+  private recordingDeviceId: string | null = null;
+  private recordingStartedAt: number | null = null;
+  private recordingCompletion: Promise<{ success: boolean; path?: string }> | null = null;
+  private resolveRecordingCompletion: ((result: { success: boolean; path?: string }) => void) | null = null;
+  private recordingStateCallback: ((state: RecordingState) => void) | null = null;
+  private recordingFinalizing = false;
 
   async takeScreenshot(deviceId: string, outputPath?: string): Promise<ScreenshotResult | null> {
     try {
@@ -805,13 +998,13 @@ export class AdbService extends EventEmitter {
       const localPath = outputPath || path.join(os.tmpdir(), `screenshot_${timestamp}.png`);
 
       // Take screenshot on device
-      await execAsync(`adb -s ${deviceId} shell screencap -p ${remotePath}`);
+      await runAdb(deviceId, ['shell', 'screencap', '-p', remotePath]);
 
       // Pull to local machine
-      await execAsync(`adb -s ${deviceId} pull ${remotePath} "${localPath}"`);
+      await runAdb(deviceId, ['pull', remotePath, localPath]);
 
       // Clean up remote file
-      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`);
+      await runAdb(deviceId, ['shell', 'rm', remotePath]);
 
       return {
         path: localPath,
@@ -828,9 +1021,10 @@ export class AdbService extends EventEmitter {
   async startScreenRecording(
     deviceId: string,
     outputPath?: string,
-    onStateChange?: (isRecording: boolean) => void
+    onStateChange?: (state: RecordingState) => void
   ): Promise<{ success: boolean; path?: string }> {
     try {
+      assertDeviceId(deviceId);
       if (this.recordingProcess) {
         return { success: false };
       }
@@ -838,59 +1032,115 @@ export class AdbService extends EventEmitter {
       const timestamp = Date.now();
       const remotePath = '/sdcard/screenrecord.mp4';
       this.recordingPath = outputPath || path.join(os.tmpdir(), `recording_${timestamp}.mp4`);
+      this.recordingDeviceId = deviceId;
+      this.recordingStartedAt = timestamp;
+      this.recordingStateCallback = onStateChange || null;
+      this.recordingFinalizing = false;
+      this.recordingCompletion = new Promise((resolve) => {
+        this.resolveRecordingCompletion = resolve;
+      });
 
       // Start recording (max 3 minutes by default)
-      this.recordingProcess = spawn('adb', [
+      const process = spawn('adb', [
         '-s', deviceId,
         'shell', 'screenrecord',
         '--time-limit', '180',
         remotePath,
       ]);
+      this.recordingProcess = process;
 
-      this.recordingProcess.on('close', () => {
-        this.recordingProcess = null;
-        onStateChange?.(false);
+      process.on('error', (error) => {
+        console.error('Screen recording process error:', error);
+        if (this.recordingProcess === process) void this.finalizeScreenRecording(remotePath);
       });
 
-      onStateChange?.(true);
+      process.on('close', () => {
+        if (this.recordingProcess !== process) return;
+        void this.finalizeScreenRecording(remotePath);
+      });
+
+      onStateChange?.({
+        isRecording: true,
+        deviceId,
+        startTime: timestamp,
+        outputPath: this.recordingPath,
+      });
       return { success: true, path: this.recordingPath };
     } catch (error) {
       console.error('Error starting screen recording:', error);
+      const callback = this.recordingStateCallback;
+      const resolve = this.resolveRecordingCompletion;
+      this.resetRecordingState();
+      callback?.({ isRecording: false });
+      resolve?.({ success: false });
       return { success: false };
     }
   }
 
   async stopScreenRecording(deviceId: string): Promise<{ success: boolean; path?: string }> {
     try {
-      if (!this.recordingProcess) {
+      if (!this.recordingProcess || !this.recordingCompletion) {
+        return { success: false };
+      }
+      if (this.recordingDeviceId !== deviceId) {
         return { success: false };
       }
 
       // Send interrupt to stop recording
-      this.recordingProcess.kill('SIGINT');
-
-      // Wait a moment for the file to be finalized
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      const remotePath = '/sdcard/screenrecord.mp4';
-      const localPath = this.recordingPath || path.join(os.tmpdir(), 'recording.mp4');
-
-      // Pull to local machine
-      await execAsync(`adb -s ${deviceId} pull ${remotePath} "${localPath}"`);
-
-      // Clean up remote file
-      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`);
-
-      this.recordingProcess = null;
-      this.recordingPath = null;
-
-      return { success: true, path: localPath };
+      const process = this.recordingProcess;
+      process.kill('SIGINT');
+      setTimeout(() => {
+        if (this.recordingProcess === process && !this.recordingFinalizing) process.kill('SIGKILL');
+      }, 10_000).unref();
+      return await this.recordingCompletion;
     } catch (error) {
       console.error('Error stopping screen recording:', error);
-      this.recordingProcess = null;
-      this.recordingPath = null;
       return { success: false };
     }
+  }
+
+  getRecordingState(): RecordingState {
+    return {
+      isRecording: this.recordingProcess !== null,
+      deviceId: this.recordingDeviceId || undefined,
+      startTime: this.recordingStartedAt || undefined,
+      outputPath: this.recordingPath || undefined,
+    };
+  }
+
+  private async finalizeScreenRecording(remotePath: string): Promise<void> {
+    if (this.recordingFinalizing) return;
+    this.recordingFinalizing = true;
+    const deviceId = this.recordingDeviceId;
+    const localPath = this.recordingPath;
+    let result: { success: boolean; path?: string } = { success: false };
+
+    try {
+      if (deviceId && localPath) {
+        await runAdb(deviceId, ['pull', remotePath, localPath], { timeout: 120000 });
+        await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
+        result = { success: true, path: localPath };
+      }
+    } catch (error) {
+      console.error('Error finalizing screen recording:', error);
+    }
+
+    const callback = this.recordingStateCallback;
+    const resolve = this.resolveRecordingCompletion;
+    this.resetRecordingState();
+    callback?.({ isRecording: false, outputPath: result.path });
+    resolve?.(result);
+  }
+
+  private resetRecordingState(): void {
+    this.recordingProcess = null;
+    this.recordingPath = null;
+    this.recordingDeviceId = null;
+    this.recordingStartedAt = null;
+    this.recordingCompletion = null;
+    this.resolveRecordingCompletion = null;
+    this.recordingStateCallback = null;
+    this.recordingFinalizing = false;
   }
 
   // ==================== Developer Options ====================
@@ -899,13 +1149,13 @@ export class AdbService extends EventEmitter {
     try {
       const [layoutBounds, gpuOverdraw, windowAnim, transitionAnim, animatorAnim, showTouches, pointerLocation] =
         await Promise.all([
-          execAsync(`adb -s ${deviceId} shell getprop debug.layout`).catch(() => ({ stdout: '' })),
-          execAsync(`adb -s ${deviceId} shell getprop debug.hwui.overdraw`).catch(() => ({ stdout: '' })),
-          execAsync(`adb -s ${deviceId} shell settings get global window_animation_scale`).catch(() => ({ stdout: '1.0' })),
-          execAsync(`adb -s ${deviceId} shell settings get global transition_animation_scale`).catch(() => ({ stdout: '1.0' })),
-          execAsync(`adb -s ${deviceId} shell settings get global animator_duration_scale`).catch(() => ({ stdout: '1.0' })),
-          execAsync(`adb -s ${deviceId} shell settings get system show_touches`).catch(() => ({ stdout: '0' })),
-          execAsync(`adb -s ${deviceId} shell settings get system pointer_location`).catch(() => ({ stdout: '0' })),
+          runAdb(deviceId, ['shell', 'getprop', 'debug.layout']).catch(() => ({ stdout: '' } as CommandResult)),
+          runAdb(deviceId, ['shell', 'getprop', 'debug.hwui.overdraw']).catch(() => ({ stdout: '' } as CommandResult)),
+          runAdb(deviceId, ['shell', 'settings', 'get', 'global', 'window_animation_scale']).catch(() => ({ stdout: '1.0' } as CommandResult)),
+          runAdb(deviceId, ['shell', 'settings', 'get', 'global', 'transition_animation_scale']).catch(() => ({ stdout: '1.0' } as CommandResult)),
+          runAdb(deviceId, ['shell', 'settings', 'get', 'global', 'animator_duration_scale']).catch(() => ({ stdout: '1.0' } as CommandResult)),
+          runAdb(deviceId, ['shell', 'settings', 'get', 'system', 'show_touches']).catch(() => ({ stdout: '0' } as CommandResult)),
+          runAdb(deviceId, ['shell', 'settings', 'get', 'system', 'pointer_location']).catch(() => ({ stdout: '0' } as CommandResult)),
         ]);
 
       return {
@@ -925,9 +1175,9 @@ export class AdbService extends EventEmitter {
 
   async setLayoutBounds(deviceId: string, enabled: boolean): Promise<boolean> {
     try {
-      await execAsync(`adb -s ${deviceId} shell setprop debug.layout ${enabled}`);
+      await runAdb(deviceId, ['shell', 'setprop', 'debug.layout', String(enabled)]);
       // Need to restart UI to take effect
-      await execAsync(`adb -s ${deviceId} shell service call activity 1599295570`);
+      await runAdb(deviceId, ['shell', 'service', 'call', 'activity', '1599295570']);
       return true;
     } catch (error) {
       console.error('Error setting layout bounds:', error);
@@ -938,9 +1188,9 @@ export class AdbService extends EventEmitter {
   async setGpuOverdraw(deviceId: string, mode: DeveloperOptions['gpuOverdraw']): Promise<boolean> {
     try {
       const value = mode === 'off' ? 'false' : mode;
-      await execAsync(`adb -s ${deviceId} shell setprop debug.hwui.overdraw ${value}`);
+      await runAdb(deviceId, ['shell', 'setprop', 'debug.hwui.overdraw', value]);
       // Need to restart UI to take effect
-      await execAsync(`adb -s ${deviceId} shell service call activity 1599295570`);
+      await runAdb(deviceId, ['shell', 'service', 'call', 'activity', '1599295570']);
       return true;
     } catch (error) {
       console.error('Error setting GPU overdraw:', error);
@@ -960,7 +1210,7 @@ export class AdbService extends EventEmitter {
         animator: 'animator_duration_scale',
       }[type];
 
-      await execAsync(`adb -s ${deviceId} shell settings put global ${settingName} ${scale}`);
+      await runAdb(deviceId, ['shell', 'settings', 'put', 'global', settingName, String(scale)]);
       return true;
     } catch (error) {
       console.error('Error setting animation scale:', error);
@@ -970,7 +1220,7 @@ export class AdbService extends EventEmitter {
 
   async setShowTouches(deviceId: string, enabled: boolean): Promise<boolean> {
     try {
-      await execAsync(`adb -s ${deviceId} shell settings put system show_touches ${enabled ? 1 : 0}`);
+      await runAdb(deviceId, ['shell', 'settings', 'put', 'system', 'show_touches', enabled ? '1' : '0']);
       return true;
     } catch (error) {
       console.error('Error setting show touches:', error);
@@ -980,7 +1230,7 @@ export class AdbService extends EventEmitter {
 
   async setPointerLocation(deviceId: string, enabled: boolean): Promise<boolean> {
     try {
-      await execAsync(`adb -s ${deviceId} shell settings put system pointer_location ${enabled ? 1 : 0}`);
+      await runAdb(deviceId, ['shell', 'settings', 'put', 'system', 'pointer_location', enabled ? '1' : '0']);
       return true;
     } catch (error) {
       console.error('Error setting pointer location:', error);
@@ -992,12 +1242,16 @@ export class AdbService extends EventEmitter {
 
   async listAppFiles(deviceId: string, packageName: string, relativePath: string = ''): Promise<FileEntry[]> {
     try {
+      assertPackageName(packageName);
+      if (path.posix.isAbsolute(relativePath) || relativePath.split('/').includes('..')) {
+        throw new Error('Invalid app-relative path');
+      }
       const basePath = `/data/data/${packageName}`;
       const fullPath = relativePath ? `${basePath}/${relativePath}` : basePath;
 
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell run-as ${packageName} ls -la "${fullPath}"`
-      );
+      const { stdout } = await runAdb(deviceId, [
+        'shell', 'run-as', packageName, 'ls', '-la', fullPath,
+      ]);
 
       const entries: FileEntry[] = [];
       const lines = stdout.trim().split('\n');
@@ -1034,12 +1288,16 @@ export class AdbService extends EventEmitter {
 
   async readAppFile(deviceId: string, packageName: string, relativePath: string): Promise<string | null> {
     try {
+      assertPackageName(packageName);
+      if (!relativePath || path.posix.isAbsolute(relativePath) || relativePath.split('/').includes('..')) {
+        throw new Error('Invalid app-relative path');
+      }
       const basePath = `/data/data/${packageName}`;
       const fullPath = `${basePath}/${relativePath}`;
 
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell run-as ${packageName} cat "${fullPath}"`
-      );
+      const { stdout } = await runAdb(deviceId, [
+        'shell', 'run-as', packageName, 'cat', fullPath,
+      ]);
 
       return stdout;
     } catch (error) {
@@ -1137,12 +1395,15 @@ export class AdbService extends EventEmitter {
 
   private async getDatabaseTables(deviceId: string, packageName: string, dbName: string): Promise<string[]> {
     try {
-      const dbPath = `/data/data/${packageName}/databases/${dbName}`;
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell run-as ${packageName} sqlite3 "${dbPath}" ".tables"`
-      );
-
-      return stdout.trim().split(/\s+/).filter(Boolean);
+      const result = await this.withLocalDatabase(deviceId, packageName, dbName, async (localPath) => {
+        const { stdout } = await runCommand('/usr/bin/sqlite3', [
+          '-readonly', '-json', localPath,
+          "SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        ]);
+        const rows = JSON.parse(stdout || '[]') as Array<{ name: string }>;
+        return rows.map((row) => row.name);
+      });
+      return result;
     } catch (error) {
       console.error('Error getting database tables:', error);
       return [];
@@ -1156,34 +1417,65 @@ export class AdbService extends EventEmitter {
     query: string
   ): Promise<DatabaseQueryResult | null> {
     try {
-      const dbPath = `/data/data/${packageName}/databases/${dbName}`;
-      // Use -header -separator for CSV-like output
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell run-as ${packageName} sqlite3 -header -separator '|' "${dbPath}" "${query.replace(/"/g, '\\"')}"`
-      );
-
-      const lines = stdout.trim().split('\n').filter(Boolean);
-      if (lines.length === 0) {
+      if (!query.trim()) {
         return { columns: [], rows: [], rowCount: 0 };
       }
 
-      const columns = lines[0].split('|');
-      const rows = lines.slice(1).map((line) =>
-        line.split('|').map((val) => {
-          // Try to parse as number
-          const num = Number(val);
-          return isNaN(num) ? val : num;
-        })
-      );
-
-      return {
-        columns,
-        rows,
-        rowCount: rows.length,
-      };
+      return await this.withLocalDatabase(deviceId, packageName, dbName, async (localPath) => {
+        const { stdout } = await runCommand('/usr/bin/sqlite3', [
+          '-readonly', '-json', localPath, query,
+        ]);
+        const records = JSON.parse(stdout || '[]') as Array<Record<string, unknown>>;
+        const columns = records.length > 0 ? Object.keys(records[0]) : [];
+        return {
+          columns,
+          rows: records.map((record) => columns.map((column) => record[column])),
+          rowCount: records.length,
+        };
+      });
     } catch (error) {
       console.error('Error querying database:', error);
       return null;
+    }
+  }
+
+  private async withLocalDatabase<T>(
+    deviceId: string,
+    packageName: string,
+    dbName: string,
+    operation: (localPath: string) => Promise<T>
+  ): Promise<T> {
+    assertPackageName(packageName);
+    if (!dbName || path.basename(dbName) !== dbName || dbName.includes('..')) {
+      throw new Error('Invalid database name');
+    }
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'android-debugger-db-'));
+    const localPath = path.join(tempDir, dbName);
+    const remotePath = `/data/data/${packageName}/databases/${dbName}`;
+
+    try {
+      const database = await runAdbBuffer(deviceId, [
+        'exec-out', 'run-as', packageName, 'cat', remotePath,
+      ]);
+      fs.writeFileSync(localPath, database.stdout);
+
+      for (const suffix of ['-wal', '-shm']) {
+        try {
+          const sidecar = await runAdbBuffer(deviceId, [
+            'exec-out', 'run-as', packageName, 'cat', `${remotePath}${suffix}`,
+          ]);
+          if (sidecar.stdout.length > 0) {
+            fs.writeFileSync(`${localPath}${suffix}`, sidecar.stdout);
+          }
+        } catch {
+          // Sidecar files are optional.
+        }
+      }
+
+      return await operation(localPath);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   }
 
@@ -1191,57 +1483,57 @@ export class AdbService extends EventEmitter {
 
   async fireIntent(deviceId: string, intent: IntentConfig): Promise<{ success: boolean; error?: string }> {
     try {
-      let cmd = `adb -s ${deviceId} shell am start`;
+      const args = ['shell', 'am', 'start'];
 
       // Action
       if (intent.action) {
-        cmd += ` -a ${intent.action}`;
+        args.push('-a', intent.action);
       }
 
       // Data URI
       if (intent.data) {
-        cmd += ` -d "${intent.data}"`;
+        args.push('-d', intent.data);
       }
 
       // MIME type
       if (intent.type) {
-        cmd += ` -t ${intent.type}`;
+        args.push('-t', intent.type);
       }
 
       // Category
       if (intent.category) {
-        cmd += ` -c ${intent.category}`;
+        args.push('-c', intent.category);
       }
 
       // Component
       if (intent.component) {
-        cmd += ` -n ${intent.component}`;
+        args.push('-n', intent.component);
       }
 
       // Flags
       for (const flag of intent.flags) {
-        cmd += ` -f ${flag}`;
+        args.push('-f', flag);
       }
 
       // Extras
       for (const extra of intent.extras) {
-        const typeFlag = {
+        const typeFlag: string = {
           string: '--es',
           int: '--ei',
           long: '--el',
           float: '--ef',
-          double: '--ed',
           boolean: '--ez',
           uri: '--eu',
         }[extra.type];
 
-        cmd += ` ${typeFlag} "${extra.key}" "${extra.value}"`;
+        args.push(typeFlag, extra.key, extra.value);
       }
 
-      const { stdout, stderr } = await execAsync(cmd);
+      const { stdout, stderr } = await runAdb(deviceId, args);
+      const output = `${stdout}\n${stderr}`;
 
-      if (stderr && stderr.includes('Error')) {
-        return { success: false, error: stderr };
+      if (/\b(?:Error|Exception|unable to resolve)\b/i.test(output)) {
+        return { success: false, error: output.trim() };
       }
 
       return { success: true };
@@ -1253,12 +1545,13 @@ export class AdbService extends EventEmitter {
 
   async fireDeepLink(deviceId: string, uri: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const { stdout, stderr } = await execAsync(
-        `adb -s ${deviceId} shell am start -a android.intent.action.VIEW -d "${uri}"`
-      );
+      const { stdout, stderr } = await runAdb(deviceId, [
+        'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', uri,
+      ]);
+      const output = `${stdout}\n${stderr}`;
 
-      if (stderr && stderr.includes('Error')) {
-        return { success: false, error: stderr };
+      if (/\b(?:Error|Exception|unable to resolve)\b/i.test(output)) {
+        return { success: false, error: output.trim() };
       }
 
       return { success: true };
@@ -1275,7 +1568,7 @@ export class AdbService extends EventEmitter {
       return null;
     }
     try {
-      const { stdout } = await execAsync(`adb -s ${deviceId} shell dumpsys battery`);
+      const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'battery']);
       return this.parseBatteryInfo(stdout);
     } catch (error) {
       console.error('Error getting battery info:', error);
@@ -1386,15 +1679,20 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    this.batteryInterval = setInterval(async () => {
+    const generation = ++this.batteryMonitorGeneration;
+    const poll = async () => {
       const info = await this.getBatteryInfo(deviceId);
+      if (generation !== this.batteryMonitorGeneration) return;
       if (info) {
         callback(info);
       }
-    }, interval);
+      this.batteryInterval = setTimeout(poll, Math.max(500, interval));
+    };
+    void poll();
   }
 
   stopBatteryMonitor(): void {
+    this.batteryMonitorGeneration++;
     if (this.batteryInterval) {
       clearInterval(this.batteryInterval);
       this.batteryInterval = null;
@@ -1409,14 +1707,17 @@ export class AdbService extends EventEmitter {
     if (!deviceId) {
       return;
     }
+    assertDeviceId(deviceId);
 
     const args = ['-s', deviceId, 'logcat', '-b', 'crash', '-v', 'time'];
-    this.crashLogcatProcess = spawn('adb', args);
+    const process = spawn('adb', args);
+    this.crashLogcatProcess = process;
 
     let buffer = '';
     let currentCrash: Partial<CrashEntry> | null = null;
 
-    this.crashLogcatProcess.stdout?.on('data', (data: Buffer) => {
+    process.stdout?.on('data', (data: Buffer) => {
+      if (this.crashLogcatProcess !== process) return;
       buffer += data.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
@@ -1473,7 +1774,8 @@ export class AdbService extends EventEmitter {
       }
     });
 
-    this.crashLogcatProcess.on('close', () => {
+    process.on('close', () => {
+      if (this.crashLogcatProcess !== process) return;
       // Emit any remaining crash
       if (currentCrash && currentCrash.message) {
         callback(this.finalizeCrashEntry(currentCrash));
@@ -1481,7 +1783,8 @@ export class AdbService extends EventEmitter {
       this.crashLogcatProcess = null;
     });
 
-    this.crashLogcatProcess.stderr?.on('data', (data: Buffer) => {
+    process.stderr?.on('data', (data: Buffer) => {
+      if (this.crashLogcatProcess !== process) return;
       console.error('Crash logcat error:', data.toString());
     });
   }
@@ -1508,7 +1811,7 @@ export class AdbService extends EventEmitter {
 
   async clearCrashLogcat(deviceId: string): Promise<void> {
     try {
-      await execAsync(`adb -s ${deviceId} logcat -b crash -c`);
+      await runAdb(deviceId, ['logcat', '-b', 'crash', '-c']);
     } catch (error) {
       console.error('Error clearing crash logcat:', error);
     }
@@ -1518,11 +1821,10 @@ export class AdbService extends EventEmitter {
 
   async getRunningServices(deviceId: string, packageName?: string): Promise<ServiceInfo[]> {
     try {
-      const cmd = packageName
-        ? `adb -s ${deviceId} shell dumpsys activity services ${packageName}`
-        : `adb -s ${deviceId} shell dumpsys activity services`;
-
-      const { stdout } = await execAsync(cmd);
+      if (packageName) assertPackageName(packageName);
+      const args = ['shell', 'dumpsys', 'activity', 'services'];
+      if (packageName) args.push(packageName);
+      const { stdout } = await runAdb(deviceId, args);
       return this.parseServicesInfo(stdout, packageName);
     } catch (error) {
       console.error('Error getting running services:', error);
@@ -1615,16 +1917,17 @@ export class AdbService extends EventEmitter {
       // First get the UID for the package
       let uid: number | null = null;
       if (packageName) {
-        const { stdout: uidOutput } = await execAsync(
-          `adb -s ${deviceId} shell dumpsys package ${packageName} | grep userId=`
-        );
+        assertPackageName(packageName);
+        const { stdout: uidOutput } = await runAdb(deviceId, [
+          'shell', 'dumpsys', 'package', packageName,
+        ]);
         const uidMatch = uidOutput.match(/userId=(\d+)/);
         if (uidMatch) {
           uid = parseInt(uidMatch[1], 10);
         }
       }
 
-      const { stdout } = await execAsync(`adb -s ${deviceId} shell dumpsys netstats detail`);
+      const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'netstats', 'detail']);
       return this.parseNetworkStats(stdout, packageName, uid);
     } catch (error) {
       console.error('Error getting network stats:', error);
@@ -1719,15 +2022,20 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    this.networkStatsInterval = setInterval(async () => {
+    const generation = ++this.networkMonitorGeneration;
+    const poll = async () => {
       const stats = await this.getNetworkStats(deviceId, packageName);
+      if (generation !== this.networkMonitorGeneration) return;
       if (stats) {
         callback(stats);
       }
-    }, interval);
+      this.networkStatsInterval = setTimeout(poll, Math.max(500, interval));
+    };
+    void poll();
   }
 
   stopNetworkStatsMonitor(): void {
+    this.networkMonitorGeneration++;
     if (this.networkStatsInterval) {
       clearInterval(this.networkStatsInterval);
       this.networkStatsInterval = null;
@@ -1738,9 +2046,10 @@ export class AdbService extends EventEmitter {
 
   async getActivityStack(deviceId: string, packageName: string): Promise<ActivityStackInfo | null> {
     try {
-      const { stdout } = await execAsync(
-        `adb -s ${deviceId} shell dumpsys activity activities ${packageName}`
-      );
+      assertPackageName(packageName);
+      const { stdout } = await runAdb(deviceId, [
+        'shell', 'dumpsys', 'activity', 'activities', packageName,
+      ]);
       return this.parseActivityStack(packageName, stdout);
     } catch (error) {
       console.error('Error getting activity stack:', error);
@@ -1849,11 +2158,10 @@ export class AdbService extends EventEmitter {
 
   async getScheduledJobs(deviceId: string, packageName?: string): Promise<JobSchedulerInfo | null> {
     try {
-      const cmd = packageName
-        ? `adb -s ${deviceId} shell dumpsys jobscheduler ${packageName}`
-        : `adb -s ${deviceId} shell dumpsys jobscheduler`;
-
-      const { stdout } = await execAsync(cmd);
+      if (packageName) assertPackageName(packageName);
+      const args = ['shell', 'dumpsys', 'jobscheduler'];
+      if (packageName) args.push(packageName);
+      const { stdout } = await runAdb(deviceId, args);
       return this.parseScheduledJobs(stdout, packageName);
     } catch (error) {
       console.error('Error getting scheduled jobs:', error);
@@ -2005,11 +2313,10 @@ export class AdbService extends EventEmitter {
 
   async getScheduledAlarms(deviceId: string, packageName?: string): Promise<AlarmMonitorInfo | null> {
     try {
-      const cmd = packageName
-        ? `adb -s ${deviceId} shell dumpsys alarm ${packageName}`
-        : `adb -s ${deviceId} shell dumpsys alarm`;
-
-      const { stdout } = await execAsync(cmd);
+      if (packageName) assertPackageName(packageName);
+      const args = ['shell', 'dumpsys', 'alarm'];
+      if (packageName) args.push(packageName);
+      const { stdout } = await runAdb(deviceId, args);
       return this.parseScheduledAlarms(stdout, packageName);
     } catch (error) {
       console.error('Error getting scheduled alarms:', error);
@@ -2178,12 +2485,9 @@ export class AdbService extends EventEmitter {
       if (options.allowDowngrade) flags.push('-d');
       if (options.grantPermissions) flags.push('-g');
 
-      const flagStr = flags.length > 0 ? flags.join(' ') + ' ' : '';
-      const cmd = `adb -s ${deviceId} install ${flagStr}"${apkPath}"`;
-
       onProgress?.({ stage: 'installing', percent: 50, message: 'Installing APK...' });
 
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 120000 });
+      const { stdout, stderr } = await runAdb(deviceId, ['install', ...flags, apkPath], { timeout: 120000 });
       const output = stdout + stderr;
 
       // Parse result
@@ -2191,8 +2495,8 @@ export class AdbService extends EventEmitter {
         // Try to extract package name from APK
         let packageName: string | undefined;
         try {
-          const { stdout: aapt } = await execAsync(`adb -s ${deviceId} shell pm path $(aapt2 dump badging "${apkPath}" 2>/dev/null | grep "package: name=" | sed "s/.*name='\\([^']*\\)'.*/\\1/")`, { timeout: 10000 });
-          packageName = aapt.trim().split('\n')[0]?.replace('package:', '');
+          const { stdout: aapt } = await runCommand('aapt2', ['dump', 'badging', apkPath], { timeout: 10000 });
+          packageName = aapt.match(/^package:\s+name='([^']+)'/m)?.[1];
         } catch {
           // Ignore aapt errors
         }
@@ -2239,13 +2543,13 @@ export class AdbService extends EventEmitter {
       if (options.allowDowngrade) flags.push('-d');
       if (options.grantPermissions) flags.push('-g');
 
-      const flagStr = flags.length > 0 ? flags.join(' ') + ' ' : '';
-      const apkPathsStr = apkPaths.map(p => `"${p}"`).join(' ');
-      const cmd = `adb -s ${deviceId} install-multiple ${flagStr}${apkPathsStr}`;
-
       onProgress?.({ stage: 'installing', percent: 50, message: 'Installing APKs...' });
 
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 180000 });
+      const { stdout, stderr } = await runAdb(
+        deviceId,
+        ['install-multiple', ...flags, ...apkPaths],
+        { timeout: 180000 }
+      );
       const output = stdout + stderr;
 
       if (output.includes('Success')) {
@@ -2270,7 +2574,7 @@ export class AdbService extends EventEmitter {
    */
   async getDeviceAbis(deviceId: string): Promise<string[]> {
     try {
-      const { stdout } = await execAsync(`adb -s ${deviceId} shell getprop ro.product.cpu.abilist`);
+      const { stdout } = await runAdb(deviceId, ['shell', 'getprop', 'ro.product.cpu.abilist']);
       return stdout.trim().split(',').filter(Boolean);
     } catch (error) {
       console.error('Error getting device ABIs:', error);
@@ -2283,7 +2587,7 @@ export class AdbService extends EventEmitter {
    */
   async getDeviceScreenDensity(deviceId: string): Promise<number> {
     try {
-      const { stdout } = await execAsync(`adb -s ${deviceId} shell getprop ro.sf.lcd_density`);
+      const { stdout } = await runAdb(deviceId, ['shell', 'getprop', 'ro.sf.lcd_density']);
       const density = parseInt(stdout.trim(), 10);
       return isNaN(density) ? 0 : density;
     } catch (error) {
@@ -2297,7 +2601,7 @@ export class AdbService extends EventEmitter {
    */
   async getDeviceSdkVersion(deviceId: string): Promise<number> {
     try {
-      const { stdout } = await execAsync(`adb -s ${deviceId} shell getprop ro.build.version.sdk`);
+      const { stdout } = await runAdb(deviceId, ['shell', 'getprop', 'ro.build.version.sdk']);
       const sdk = parseInt(stdout.trim(), 10);
       return isNaN(sdk) ? 0 : sdk;
     } catch (error) {
@@ -2324,7 +2628,7 @@ export class AdbService extends EventEmitter {
    */
   async checkJavaAvailable(): Promise<boolean> {
     try {
-      await execAsync('java -version');
+      await runCommand('java', ['-version']);
       return true;
     } catch {
       return false;
@@ -2406,7 +2710,7 @@ export class AdbService extends EventEmitter {
       onProgress?.(10, 'Starting download...');
 
       // Download using curl (available on macOS)
-      await execAsync(`curl -L -o "${bundletoolPath}" "${BUNDLETOOL_URL}"`, { timeout: 300000 });
+      await runCommand('curl', ['--fail', '--location', '--output', bundletoolPath, BUNDLETOOL_URL], { timeout: 300000 });
 
       onProgress?.(90, 'Verifying download...');
 
@@ -2419,6 +2723,13 @@ export class AdbService extends EventEmitter {
       if (stats.size < 1000000) { // Should be at least 1MB
         fs.unlinkSync(bundletoolPath);
         return { success: false, error: 'Download failed - file too small' };
+      }
+
+      const { createHash } = await import('crypto');
+      const digest = createHash('sha256').update(fs.readFileSync(bundletoolPath)).digest('hex');
+      if (digest !== '2d4ad908faea64047c1cc9cb747e6aa667c6ab192e09607bd16b67246a8cd6ae') {
+        fs.unlinkSync(bundletoolPath);
+        return { success: false, error: 'Bundletool download failed integrity verification' };
       }
 
       onProgress?.(100, 'Download complete');
@@ -2501,8 +2812,9 @@ export class AdbService extends EventEmitter {
         if (!fs.existsSync(debugKeystorePath)) {
           onProgress?.({ stage: 'extracting', percent: 20, message: 'Creating debug keystore...' });
           try {
-            await execAsync(
-              `keytool -genkey -v -keystore "${debugKeystorePath}" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"`,
+            await runCommand(
+              'keytool',
+              ['-genkey', '-v', '-keystore', debugKeystorePath, '-storepass', 'android', '-alias', 'androiddebugkey', '-keypass', 'android', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Android Debug,O=Android,C=US'],
               { timeout: 30000 }
             );
           } catch (e) {
@@ -2511,14 +2823,26 @@ export class AdbService extends EventEmitter {
           }
         }
 
-        let buildCmd = `java -jar "${bundletoolPath}" build-apks --bundle="${aabPath}" --output="${apksPath}" --connected-device --device-id=${deviceId} --local-testing`;
+        const buildArgs = [
+          '-jar', bundletoolPath, 'build-apks',
+          `--bundle=${aabPath}`,
+          `--output=${apksPath}`,
+          '--connected-device',
+          `--device-id=${deviceId}`,
+          '--local-testing',
+        ];
 
         // Use debug keystore for signing (required for installation)
         if (fs.existsSync(debugKeystorePath)) {
-          buildCmd += ` --ks="${debugKeystorePath}" --ks-pass=pass:android --ks-key-alias=androiddebugkey --key-pass=pass:android`;
+          buildArgs.push(
+            `--ks=${debugKeystorePath}`,
+            '--ks-pass=pass:android',
+            '--ks-key-alias=androiddebugkey',
+            '--key-pass=pass:android'
+          );
         }
 
-        await execAsync(buildCmd, { timeout: 300000 }); // 5 min timeout for build
+        await runCommand('java', buildArgs, { timeout: 300000 });
 
         // Extract the APKs from the .apks archive and install via ADB directly
         // This is more reliable than bundletool install-apks for debug builds
@@ -2528,7 +2852,7 @@ export class AdbService extends EventEmitter {
         fs.mkdirSync(extractDir, { recursive: true });
 
         // Unzip the .apks file (it's a ZIP archive)
-        await execAsync(`unzip -o "${apksPath}" -d "${extractDir}"`, { timeout: 60000 });
+        await runCommand('unzip', ['-o', apksPath, '-d', extractDir], { timeout: 60000 });
 
         // Find all APK files
         const apkFiles: string[] = [];
@@ -2650,19 +2974,18 @@ export class AdbService extends EventEmitter {
       }
 
       // Get thread list from /proc/<pid>/task
-      const { stdout: taskList } = await execAsync(
-        `adb -s ${deviceId} shell ls /proc/${pid}/task`
-      );
+      const { stdout: taskList } = await runAdb(deviceId, [
+        'shell', 'ls', `/proc/${pid}/task`,
+      ]);
 
       const threadIds = taskList.trim().split('\n').filter(Boolean).map(t => parseInt(t.trim(), 10));
-      const threads: ThreadInfo[] = [];
-
-      // Get info for each thread
-      for (const tid of threadIds) {
+      // Get thread files concurrently. Each failure is isolated because threads
+      // can disappear between listing and reading /proc.
+      const threadResults = await Promise.all(threadIds.map(async (tid): Promise<ThreadInfo | null> => {
         try {
           const [statResult, commResult] = await Promise.all([
-            execAsync(`adb -s ${deviceId} shell cat /proc/${pid}/task/${tid}/stat`).catch(() => ({ stdout: '' })),
-            execAsync(`adb -s ${deviceId} shell cat /proc/${pid}/task/${tid}/comm`).catch(() => ({ stdout: '' })),
+            runAdb(deviceId, ['shell', 'cat', `/proc/${pid}/task/${tid}/stat`]).catch(() => ({ stdout: '' } as CommandResult)),
+            runAdb(deviceId, ['shell', 'cat', `/proc/${pid}/task/${tid}/comm`]).catch(() => ({ stdout: '' } as CommandResult)),
           ]);
 
           const stat = statResult.stdout.trim();
@@ -2670,14 +2993,14 @@ export class AdbService extends EventEmitter {
 
           if (stat) {
             const threadInfo = this.parseThreadStat(tid, stat, comm);
-            if (threadInfo) {
-              threads.push(threadInfo);
-            }
+            return threadInfo;
           }
         } catch {
           // Skip threads that can't be read
         }
-      }
+        return null;
+      }));
+      const threads = threadResults.filter((thread): thread is ThreadInfo => thread !== null);
 
       return {
         timestamp: Date.now(),
@@ -2693,7 +3016,7 @@ export class AdbService extends EventEmitter {
     try {
       // /proc/[pid]/task/[tid]/stat format:
       // pid (comm) state ppid pgrp session tty_nr tpgid flags minflt cminflt majflt cmajflt utime stime...
-      const match = stat.match(/^\d+\s+\(([^)]+)\)\s+(\S)\s+.+/);
+      const match = stat.match(/^\d+\s+\((.*)\)\s+(\S)\s+.+/);
       if (!match) return null;
 
       const name = comm || match[1];
@@ -2717,12 +3040,13 @@ export class AdbService extends EventEmitter {
       const state = stateMap[stateChar] || 'unknown';
 
       // Parse CPU time from stat fields (utime + stime are fields 14 and 15, 1-indexed)
-      const fields = stat.split(/\s+/);
-      const utime = parseInt(fields[13], 10) || 0;  // User mode jiffies
-      const stime = parseInt(fields[14], 10) || 0;  // Kernel mode jiffies
+      const closingParen = stat.lastIndexOf(')');
+      const fields = stat.slice(closingParen + 2).split(/\s+/);
+      const utime = parseInt(fields[11], 10) || 0;  // User mode jiffies
+      const stime = parseInt(fields[12], 10) || 0;  // Kernel mode jiffies
       const cpuTime = (utime + stime) / 100;  // Convert jiffies to seconds (approximate)
 
-      const priority = parseInt(fields[17], 10) || 0;
+      const priority = parseInt(fields[15], 10) || 0;
 
       return {
         id: tid,
@@ -2748,15 +3072,20 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    this.threadMonitorInterval = setInterval(async () => {
+    const generation = ++this.threadMonitorGeneration;
+    const poll = async () => {
       const snapshot = await this.getThreads(deviceId, packageName);
+      if (generation !== this.threadMonitorGeneration) return;
       if (snapshot) {
         callback(snapshot);
       }
-    }, interval);
+      this.threadMonitorInterval = setTimeout(poll, Math.max(500, interval));
+    };
+    void poll();
   }
 
   stopThreadMonitor(): void {
+    this.threadMonitorGeneration++;
     if (this.threadMonitorInterval) {
       clearInterval(this.threadMonitorInterval);
       this.threadMonitorInterval = null;
@@ -2772,61 +3101,84 @@ export class AdbService extends EventEmitter {
   ): void {
     this.stopGcMonitor();
 
-    if (!deviceId) {
+    if (!deviceId || !packageName) {
+      return;
+    }
+
+    const generation = ++this.gcMonitorGeneration;
+    void this.startGcMonitorProcess(deviceId, packageName, callback, generation);
+  }
+
+  private async startGcMonitorProcess(
+    deviceId: string,
+    packageName: string,
+    callback: GcEventCallback,
+    generation: number
+  ): Promise<void> {
+    const pid = await this.getPid(deviceId, packageName);
+    if (!pid || generation !== this.gcMonitorGeneration) {
       return;
     }
 
     // Monitor GC events via logcat filtering for ART/Dalvik GC messages
-    this.gcMonitorProcess = spawn('adb', [
+    const process = spawn('adb', [
       '-s', deviceId,
       'logcat',
+      '--pid', String(pid),
+      '-v', 'time',
       '-s',
       'art:D',
       'dalvikvm:D',
       'dalvikvm-heap:D',
     ]);
+    this.gcMonitorProcess = process;
 
     let buffer = '';
 
-    this.gcMonitorProcess.stdout?.on('data', (data: Buffer) => {
+    process.stdout?.on('data', (data: Buffer) => {
+      if (generation !== this.gcMonitorGeneration || this.gcMonitorProcess !== process) return;
       buffer += data.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const gcEvent = this.parseGcLogLine(line, packageName);
+        const gcEvent = this.parseGcLogLine(line);
         if (gcEvent) {
           callback(gcEvent);
         }
       }
     });
 
-    this.gcMonitorProcess.on('error', (error) => {
+    process.on('error', (error) => {
+      if (this.gcMonitorProcess !== process) return;
       console.error('GC monitor process error:', error);
+    });
+    process.on('close', () => {
+      if (this.gcMonitorProcess === process) this.gcMonitorProcess = null;
     });
   }
 
-  private parseGcLogLine(line: string, packageName: string): GcEvent | null {
+  private parseGcLogLine(line: string): GcEvent | null {
     try {
-      // Check if line is from our app (optional - might want all GC events)
-      // ART GC format examples:
-      // Background concurrent copying GC freed 12K(1%), AllocSpace 4MB/6MB, LOS 2MB, Paused 3ms
-      // Explicit concurrent copying GC freed 2048K, 42% free 3584K/6144K, paused 2ms+1ms
+      // Modern ART example:
+      // Background concurrent copying GC freed 180675(9MB) AllocSpace objects,
+      // 49% free, 8863KB/17MB, paused 231us,91us total 113.277ms
+      const artReason = line.match(/([A-Za-z][A-Za-z ]*?)\s+GC\s+freed\s+/i)?.[1];
+      const heapMatch = line.match(/([\d.]+)(B|KB|MB|GB)\/([\d.]+)(B|KB|MB|GB)/i);
+      const freedMatch = line.match(/freed\s+[\d,]+(?:\(([\d.]+)(B|KB|MB|GB)\)|\s*(B|KB|MB|GB))/i);
 
-      // Pattern for ART GC logs
-      const artMatch = line.match(
-        /(\w+)\s+(?:concurrent\s+)?(?:copying\s+)?GC\s+freed\s+([\d.]+)([KMG]?)(?:\([\d.]+%\))?,?\s*(?:AllocSpace\s+)?([\d.]+)([KMG]?)\/([\d.]+)([KMG]?).*?(?:[Pp]aused?\s+([\d.]+)\s*ms)?/i
-      );
-
-      if (artMatch) {
-        const [, reason, freedStr, freedUnit, usedStr, usedUnit, totalStr, totalUnit, pauseStr] = artMatch;
-
-        const freed = this.parseSize(freedStr, freedUnit);
+      if (artReason && heapMatch) {
+        const [, usedStr, usedUnit, totalStr, totalUnit] = heapMatch;
+        const freed = freedMatch
+          ? this.parseSize(freedMatch[1] || line.match(/freed\s+([\d.]+)/i)?.[1] || '0', freedMatch[2] || freedMatch[3] || 'B')
+          : 0;
         const heapUsed = this.parseSize(usedStr, usedUnit);
         const heapTotal = this.parseSize(totalStr, totalUnit);
-        const pauseTime = parseFloat(pauseStr) || 0;
+        const pauseSection = line.match(/paused\s+(.+?)(?:\s+total|$)/i)?.[1] || '';
+        const pauseTime = Array.from(pauseSection.matchAll(/([\d.]+)\s*(us|ms)/gi))
+          .reduce((total, match) => total + parseFloat(match[1]) * (match[2].toLowerCase() === 'us' ? 0.001 : 1), 0);
 
-        const gcReason = this.parseGcReason(reason);
+        const gcReason = this.parseGcReason(artReason);
 
         return {
           id: `gc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -2873,7 +3225,7 @@ export class AdbService extends EventEmitter {
 
   private parseSize(value: string, unit: string): number {
     const num = parseFloat(value) || 0;
-    switch (unit.toUpperCase()) {
+    switch (unit.toUpperCase().replace(/B$/, '')) {
       case 'K': return num * 1024;
       case 'M': return num * 1024 * 1024;
       case 'G': return num * 1024 * 1024 * 1024;
@@ -2891,6 +3243,7 @@ export class AdbService extends EventEmitter {
   }
 
   stopGcMonitor(): void {
+    this.gcMonitorGeneration++;
     if (this.gcMonitorProcess) {
       this.gcMonitorProcess.kill();
       this.gcMonitorProcess = null;
@@ -2925,8 +3278,9 @@ export class AdbService extends EventEmitter {
 
       // Capture heap dump
       onProgress?.('capturing', 30);
-      await execAsync(
-        `adb -s ${deviceId} shell am dumpheap ${pid} ${remotePath}`,
+      await runAdb(
+        deviceId,
+        ['shell', 'am', 'dumpheap', String(pid), remotePath],
         { timeout: 120000 }
       );
 
@@ -2936,15 +3290,16 @@ export class AdbService extends EventEmitter {
       onProgress?.('capturing', 60);
 
       // Pull the file
-      await execAsync(
-        `adb -s ${deviceId} pull ${remotePath} "${localPath}"`,
+      await runAdb(
+        deviceId,
+        ['pull', remotePath, localPath],
         { timeout: 300000 }
       );
 
       onProgress?.('capturing', 90);
 
       // Clean up remote file
-      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`).catch(() => {});
+      await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
 
       // Get file size
       const stats = fs.statSync(localPath);
@@ -2972,151 +3327,25 @@ export class AdbService extends EventEmitter {
   }
 
   async analyzeHeapDump(filePath: string): Promise<HeapAnalysis | null> {
-    // HPROF parsing is complex - this is a simplified implementation
-    // For production use, consider using a proper HPROF parser library
     try {
       if (!fs.existsSync(filePath)) {
         return null;
       }
-
-      const buffer = fs.readFileSync(filePath);
-      return this.parseHprof(buffer);
+      return parseHprof(fs.readFileSync(filePath)).analysis;
     } catch (error) {
       console.error('Error analyzing heap dump:', error);
       return null;
     }
   }
 
-  private parseHprof(buffer: Buffer): HeapAnalysis | null {
-    try {
-      // HPROF format: header + records
-      // Header: "JAVA PROFILE 1.0.3\0" or similar + identifier size (4 bytes) + timestamp (8 bytes)
-
-      // Check magic
-      const header = buffer.slice(0, 18).toString('utf8');
-      if (!header.startsWith('JAVA PROFILE')) {
-        console.error('Invalid HPROF file');
-        return null;
-      }
-
-      // Find null terminator
-      let headerEnd = 0;
-      while (headerEnd < 30 && buffer[headerEnd] !== 0) {
-        headerEnd++;
-      }
-
-      const idSize = buffer.readUInt32BE(headerEnd + 1);
-      // const timestamp = buffer.readBigUInt64BE(headerEnd + 5);
-
-      let offset = headerEnd + 1 + 4 + 8; // After header + id size + timestamp
-
-      const classes = new Map<number, { name: string; instanceCount: number; shallowSize: number }>();
-      const strings = new Map<number, string>();
-      let totalObjects = 0;
-      let totalSize = 0;
-
-      // Parse records
-      while (offset < buffer.length - 9) {
-        const tag = buffer[offset];
-        // const time = buffer.readUInt32BE(offset + 1);
-        const length = buffer.readUInt32BE(offset + 5);
-        offset += 9;
-
-        if (offset + length > buffer.length) break;
-
-        const recordData = buffer.slice(offset, offset + length);
-
-        switch (tag) {
-          case 0x01: // STRING
-            {
-              const stringId = idSize === 4
-                ? recordData.readUInt32BE(0)
-                : Number(recordData.readBigUInt64BE(0));
-              const str = recordData.slice(idSize).toString('utf8');
-              strings.set(stringId, str);
-            }
-            break;
-
-          case 0x02: // LOAD_CLASS
-            {
-              // Class serial, class object ID, stack trace serial, class name string ID
-              const classObjId = idSize === 4
-                ? recordData.readUInt32BE(4)
-                : Number(recordData.readBigUInt64BE(4));
-              const classNameId = idSize === 4
-                ? recordData.readUInt32BE(4 + idSize + 4)
-                : Number(recordData.readBigUInt64BE(4 + idSize + 4));
-
-              const className = strings.get(classNameId) || `Class@${classObjId}`;
-              classes.set(classObjId, { name: className, instanceCount: 0, shallowSize: 0 });
-            }
-            break;
-
-          case 0x0C: // HEAP_DUMP
-          case 0x1C: // HEAP_DUMP_SEGMENT
-            {
-              // Parse heap dump records
-              let heapOffset = 0;
-              while (heapOffset < length - 1) {
-                const heapTag = recordData[heapOffset];
-                heapOffset++;
-
-                if (heapTag === 0x21) { // INSTANCE_DUMP
-                  // object ID, stack trace serial, class object ID, data length, data
-                  const classId = idSize === 4
-                    ? recordData.readUInt32BE(heapOffset + idSize + 4)
-                    : Number(recordData.readBigUInt64BE(heapOffset + idSize + 4));
-                  const dataLen = recordData.readUInt32BE(heapOffset + idSize + 4 + idSize);
-
-                  totalObjects++;
-                  totalSize += dataLen;
-
-                  const classInfo = classes.get(classId);
-                  if (classInfo) {
-                    classInfo.instanceCount++;
-                    classInfo.shallowSize += dataLen;
-                  }
-
-                  heapOffset += idSize + 4 + idSize + 4 + dataLen;
-                } else {
-                  // Skip other heap record types - this is simplified
-                  break;
-                }
-              }
-            }
-            break;
-        }
-
-        offset += length;
-      }
-
-      // Convert to HeapClass array
-      const classArray: HeapClass[] = Array.from(classes.entries())
-        .map(([id, info]) => ({
-          id,
-          name: info.name.replace(/\//g, '.'),
-          instanceCount: info.instanceCount,
-          shallowSize: info.shallowSize,
-          retainedSize: info.shallowSize, // Simplified - retained size calculation is complex
-        }))
-        .filter(c => c.instanceCount > 0)
-        .sort((a, b) => b.shallowSize - a.shallowSize);
-
-      return {
-        totalObjects,
-        totalSize,
-        classes: classArray.slice(0, 500), // Limit to top 500 classes
-      };
-    } catch (error) {
-      console.error('Error parsing HPROF:', error);
-      return null;
-    }
-  }
-
   async getHeapInstances(filePath: string, classId: number): Promise<HeapInstance[]> {
-    // Simplified - in a full implementation, this would parse the HPROF file
-    // and return instances of the specified class
-    return [];
+    try {
+      if (!fs.existsSync(filePath)) return [];
+      return parseHprof(fs.readFileSync(filePath)).instances.get(classId) ?? [];
+    } catch (error) {
+      console.error('Error parsing HPROF instances:', error);
+      return [];
+    }
   }
 
   // ==================== Method Trace ====================
@@ -3125,26 +3354,47 @@ export class AdbService extends EventEmitter {
     deviceId: string,
     packageName: string
   ): Promise<{ success: boolean; error?: string }> {
+    if (this.methodTraceActive || this.methodTraceStarting) {
+      return { success: false, error: 'A method trace is already active or starting' };
+    }
+    this.methodTraceStarting = true;
+    const generation = ++this.methodTraceGeneration;
     try {
       // Check if app is debuggable
       const metadata = await this.getAppMetadata(deviceId, packageName);
+      if (generation !== this.methodTraceGeneration) {
+        return { success: false, error: 'Method trace start was cancelled' };
+      }
       if (!metadata?.isDebuggable) {
         return { success: false, error: 'App must be debuggable to capture method trace' };
       }
 
       // Start profiling
-      await execAsync(
-        `adb -s ${deviceId} shell am profile start ${packageName} /data/local/tmp/trace.trace`,
+      assertPackageName(packageName);
+      const remotePath = `/data/local/tmp/android-debugger-${Date.now()}.trace`;
+      await runAdb(
+        deviceId,
+        ['shell', 'am', 'profile', 'start', packageName, remotePath],
         { timeout: 10000 }
       );
+      if (generation !== this.methodTraceGeneration) {
+        await runAdb(deviceId, ['shell', 'am', 'profile', 'stop', packageName], { timeout: 10000 }).catch(() => undefined);
+        await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
+        return { success: false, error: 'Method trace start was cancelled' };
+      }
 
       this.methodTraceActive = true;
       this.methodTraceStartTime = Date.now();
+      this.methodTraceDeviceId = deviceId;
+      this.methodTracePackageName = packageName;
+      this.methodTraceRemotePath = remotePath;
 
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       return { success: false, error: message };
+    } finally {
+      this.methodTraceStarting = false;
     }
   }
 
@@ -3153,11 +3403,11 @@ export class AdbService extends EventEmitter {
     packageName: string
   ): Promise<MethodTraceInfo> {
     const id = `trace-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const remotePath = '/data/local/tmp/trace.trace';
+    const remotePath = this.methodTraceRemotePath;
     const localPath = path.join(os.tmpdir(), `${id}.trace`);
 
     try {
-      if (!this.methodTraceActive) {
+      if (!this.methodTraceActive || !remotePath) {
         return {
           id,
           timestamp: Date.now(),
@@ -3166,13 +3416,22 @@ export class AdbService extends EventEmitter {
           error: 'No trace is active',
         };
       }
+      if (deviceId !== this.methodTraceDeviceId || packageName !== this.methodTracePackageName) {
+        return {
+          id,
+          timestamp: Date.now(),
+          duration: 0,
+          status: 'error',
+          error: 'The active trace belongs to a different device or package',
+        };
+      }
 
       const duration = Date.now() - this.methodTraceStartTime;
-      this.methodTraceActive = false;
-
       // Stop profiling
-      await execAsync(
-        `adb -s ${deviceId} shell am profile stop ${packageName}`,
+      assertPackageName(packageName);
+      await runAdb(
+        deviceId,
+        ['shell', 'am', 'profile', 'stop', packageName],
         { timeout: 10000 }
       );
 
@@ -3180,13 +3439,15 @@ export class AdbService extends EventEmitter {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Pull the trace file
-      await execAsync(
-        `adb -s ${deviceId} pull ${remotePath} "${localPath}"`,
+      await runAdb(
+        deviceId,
+        ['pull', remotePath, localPath],
         { timeout: 60000 }
       );
 
       // Clean up remote file
-      await execAsync(`adb -s ${deviceId} shell rm ${remotePath}`).catch(() => {});
+      await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
+      this.clearMethodTraceState();
 
       return {
         id,
@@ -3197,7 +3458,7 @@ export class AdbService extends EventEmitter {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      this.methodTraceActive = false;
+      this.clearMethodTraceState();
       return {
         id,
         timestamp: Date.now(),
@@ -3214,112 +3475,48 @@ export class AdbService extends EventEmitter {
         return null;
       }
 
-      const buffer = fs.readFileSync(filePath);
-      return this.parseTrace(buffer);
+      return parseMethodTrace(fs.readFileSync(filePath));
     } catch (error) {
       console.error('Error analyzing method trace:', error);
       return null;
     }
   }
 
-  private parseTrace(buffer: Buffer): MethodTraceAnalysis | null {
-    try {
-      // Android trace format:
-      // Header section with method names
-      // Binary section with trace data
-
-      // Find the header end (marked by *end)
-      const content = buffer.toString('utf8', 0, Math.min(buffer.length, 1024 * 1024));
-      const headerEnd = content.indexOf('*end');
-      if (headerEnd === -1) {
-        return null;
-      }
-
-      const header = content.slice(0, headerEnd);
-      const lines = header.split('\n');
-
-      const methods = new Map<number, { className: string; methodName: string }>();
-      const methodStats = new Map<number, { inclusive: number; exclusive: number; count: number }>();
-
-      // Parse method definitions from header
-      let inMethods = false;
-      for (const line of lines) {
-        if (line.startsWith('*methods')) {
-          inMethods = true;
-          continue;
-        }
-        if (line.startsWith('*')) {
-          inMethods = false;
-          continue;
-        }
-
-        if (inMethods && line.trim()) {
-          // Format: methodId className methodName signature
-          const parts = line.split('\t');
-          if (parts.length >= 3) {
-            const methodId = parseInt(parts[0], 16);
-            const className = parts[1];
-            const methodName = parts[2];
-            methods.set(methodId, { className, methodName });
-            methodStats.set(methodId, { inclusive: 0, exclusive: 0, count: 0 });
-          }
-        }
-      }
-
-      // Parse binary trace data (simplified)
-      // Full implementation would parse the binary section to calculate actual timings
-      // For now, return placeholder data based on method definitions
-
-      const result: MethodStats[] = [];
-      for (const [methodId, info] of methods) {
-        const stats = methodStats.get(methodId);
-        result.push({
-          className: info.className,
-          methodName: info.methodName,
-          inclusiveTime: stats?.inclusive || 0,
-          exclusiveTime: stats?.exclusive || 0,
-          callCount: stats?.count || 1,
-        });
-      }
-
-      // Sort by inclusive time
-      result.sort((a, b) => b.inclusiveTime - a.inclusiveTime);
-
-      // Build a simple flame chart
-      const flameChart: FlameChartEntry = {
-        name: 'root',
-        value: result.reduce((sum, m) => sum + m.exclusiveTime, 0),
-        children: result.slice(0, 100).map(m => ({
-          name: `${m.className}.${m.methodName}`,
-          value: m.exclusiveTime,
-        })),
-      };
-
-      return {
-        totalTime: flameChart.value,
-        methods: result.slice(0, 500),
-        flameChart,
-      };
-    } catch (error) {
-      console.error('Error parsing trace:', error);
-      return null;
+  async cancelMethodTrace(): Promise<void> {
+    this.methodTraceGeneration++;
+    const deviceId = this.methodTraceDeviceId;
+    const packageName = this.methodTracePackageName;
+    const remotePath = this.methodTraceRemotePath;
+    if (!this.methodTraceActive || !deviceId || !packageName) return;
+    this.clearMethodTraceState();
+    await runAdb(deviceId, ['shell', 'am', 'profile', 'stop', packageName], { timeout: 10000 }).catch(() => undefined);
+    if (remotePath) {
+      await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
     }
   }
 
-  stopAll(): void {
+  private clearMethodTraceState(): void {
+    this.methodTraceActive = false;
+    this.methodTraceStartTime = 0;
+    this.methodTraceDeviceId = null;
+    this.methodTracePackageName = null;
+    this.methodTraceRemotePath = null;
+  }
+
+  async stopAll(finalizeRecording = true): Promise<void> {
     this.stopMemoryMonitor();
     this.stopCpuMonitor();
     this.stopFpsMonitor();
     this.stopLogcat();
+    this.stopSdkLogcat();
     this.stopBatteryMonitor();
     this.stopCrashLogcat();
     this.stopNetworkStatsMonitor();
     this.stopThreadMonitor();
     this.stopGcMonitor();
-    if (this.recordingProcess) {
-      this.recordingProcess.kill('SIGINT');
-      this.recordingProcess = null;
-      this.recordingPath = null;
+    await this.cancelMethodTrace();
+    if (finalizeRecording && this.recordingProcess && this.recordingDeviceId) {
+      await this.stopScreenRecording(this.recordingDeviceId);
     }
   }
 }

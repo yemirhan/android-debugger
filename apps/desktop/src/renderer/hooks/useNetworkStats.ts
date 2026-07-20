@@ -74,29 +74,17 @@ export function useNetworkStats(device: Device | null, packageName: string) {
     };
   }, []);
 
-  // Stop monitoring when device or package changes
   useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, packageName, isMonitoring, stopMonitoring]);
-
-  // Auto-start monitoring when package is set
-  useEffect(() => {
-    if (device && packageName && !isMonitoring) {
-      clearData();
-      startMonitoring();
+    clearData();
+    if (!device || !packageName) {
+      setIsMonitoring(false);
+      return;
     }
-  }, [device, packageName]);
 
-  // Initial fetch
-  useEffect(() => {
-    if (device) {
-      fetchStats();
-    }
-  }, [device, packageName]);
+    window.electronAPI.startNetworkStatsMonitor(device.id, packageName);
+    setIsMonitoring(true);
+    return () => window.electronAPI.stopNetworkStatsMonitor();
+  }, [device?.id, packageName, clearData]);
 
   return {
     history,

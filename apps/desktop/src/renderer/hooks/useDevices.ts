@@ -2,12 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Device } from '@android-debugger/shared';
 import { DEVICE_POLL_INTERVAL } from '@android-debugger/shared';
 
-declare global {
-  interface Window {
-    electronAPI: typeof import('../../preload/index').default;
-  }
-}
-
 export function useDevices() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);

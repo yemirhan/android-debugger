@@ -45,22 +45,17 @@ export function useBattery(device: Device | null) {
     };
   }, []);
 
-  // Stop monitoring when device changes
   useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, isMonitoring, stopMonitoring]);
-
-  // Auto-start monitoring when device is set
-  useEffect(() => {
-    if (device && !isMonitoring) {
-      clearData();
-      startMonitoring();
+    clearData();
+    if (!device) {
+      setIsMonitoring(false);
+      return;
     }
-  }, [device]);
+
+    window.electronAPI.startBatteryMonitor(device.id);
+    setIsMonitoring(true);
+    return () => window.electronAPI.stopBatteryMonitor();
+  }, [device?.id, clearData]);
 
   return {
     data,

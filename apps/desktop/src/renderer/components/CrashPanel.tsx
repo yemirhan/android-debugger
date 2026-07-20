@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import type { CrashEntry, Device } from '@android-debugger/shared';
-import { MAX_CRASH_ENTRIES } from '@android-debugger/shared';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
 import { tabGuides } from '../data/tabGuides';
+import { useCrashLogcat } from '../hooks/useCrashLogcat';
 
 interface CrashPanelProps {
   device: Device;
@@ -11,61 +11,9 @@ interface CrashPanelProps {
 
 export function CrashPanel({ device }: CrashPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const [crashes, setCrashes] = useState<CrashEntry[]>([]);
-  const [isMonitoring, setIsMonitoring] = useState(false);
   const [expandedCrash, setExpandedCrash] = useState<string | null>(null);
+  const { crashes, isMonitoring, startMonitoring, stopMonitoring, clearCrashes } = useCrashLogcat(device);
   const guide = tabGuides['crashes'];
-
-  const startMonitoring = useCallback(() => {
-    if (!device) return;
-    window.electronAPI.startCrashLogcat(device.id);
-    setIsMonitoring(true);
-  }, [device]);
-
-  const stopMonitoring = useCallback(() => {
-    window.electronAPI.stopCrashLogcat();
-    setIsMonitoring(false);
-  }, []);
-
-  const clearCrashes = useCallback(() => {
-    setCrashes([]);
-    if (device) {
-      window.electronAPI.clearCrashLogcat(device.id);
-    }
-  }, [device]);
-
-  // Listen for crash entries
-  useEffect(() => {
-    const unsubscribe = window.electronAPI.onCrashEntry((entry: CrashEntry) => {
-      setCrashes((prev) => {
-        const newCrashes = [...prev, entry];
-        if (newCrashes.length > MAX_CRASH_ENTRIES) {
-          return newCrashes.slice(-MAX_CRASH_ENTRIES);
-        }
-        return newCrashes;
-      });
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  // Stop monitoring when device changes
-  useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, isMonitoring, stopMonitoring]);
-
-  // Auto-start monitoring when device is set
-  useEffect(() => {
-    if (device && !isMonitoring) {
-      startMonitoring();
-    }
-  }, [device]);
 
   const toggleExpand = (id: string) => {
     setExpandedCrash(expandedCrash === id ? null : id);

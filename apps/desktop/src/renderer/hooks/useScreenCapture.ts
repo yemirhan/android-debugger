@@ -10,12 +10,21 @@ export function useScreenCapture(device: Device | null) {
 
   // Listen for recording state updates
   useEffect(() => {
+    let active = true;
+    window.electronAPI.getRecordingState().then((state) => {
+      if (!active) return;
+      setIsRecording(state.isRecording);
+      setRecordingPath(state.outputPath || null);
+    }).catch((error) => {
+      console.error('Failed to restore recording state:', error);
+    });
     const unsubscribe = window.electronAPI.onRecordingUpdate((state: RecordingState) => {
       setIsRecording(state.isRecording);
       setRecordingPath(state.outputPath || null);
     });
 
     return () => {
+      active = false;
       unsubscribe();
     };
   }, []);

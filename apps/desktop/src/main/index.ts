@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { join } from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { deflateSync } from 'zlib';
 import type { UpdateSettings, UpdateInfo, UpdateProgress, BundleAnalysisResult } from '@android-debugger/shared';
 import { analyzeBundle, extractBundleEntry } from './bundle-analyzer';
@@ -17,6 +17,17 @@ interface AdbInfo {
 interface JavaInfo {
   path: string;
   version: string;
+}
+
+const ALLOWED_EXTERNAL_HOSTS = new Set(['chatgpt.com', 'claude.ai', 'www.google.com', 'github.com']);
+
+function parseAllowedExternalUrl(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && ALLOWED_EXTERNAL_HOSTS.has(url.hostname) ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 // Fix PATH for packaged app - add common ADB locations
@@ -86,7 +97,7 @@ function getAdbInfo(): AdbInfo | null {
 
       // Get version
       try {
-        const version = execSync(`"${adbPath}" version`, { encoding: 'utf-8' })
+        const version = execFileSync(adbPath, ['version'], { encoding: 'utf-8' })
           .split('\n')[0]
           .replace('Android Debug Bridge version ', '');
         return { path: adbPath, version, source };
@@ -102,17 +113,18 @@ function getJavaInfo(): JavaInfo | null {
   try {
     // Try to get java path using 'which' on Unix or 'where' on Windows
     const isWindows = process.platform === 'win32';
-    const whichCommand = isWindows ? 'where java' : 'which java';
+    const whichCommand = isWindows ? 'where.exe' : 'which';
 
     let javaPath: string;
     try {
-      javaPath = execSync(whichCommand, { encoding: 'utf-8' }).trim().split('\n')[0];
+      javaPath = execFileSync(whichCommand, ['java'], { encoding: 'utf-8' }).trim().split('\n')[0];
     } catch {
       return null;
     }
 
     // Get version
-    const versionOutput = execSync('java -version 2>&1', { encoding: 'utf-8' });
+    const versionResult = spawnSync(javaPath, ['-version'], { encoding: 'utf-8' });
+    const versionOutput = `${versionResult.stdout ?? ''}\n${versionResult.stderr ?? ''}`;
     // Java version output is on stderr and looks like: java version "17.0.1" or openjdk version "11.0.12"
     const versionMatch = versionOutput.match(/(?:java|openjdk) version "([^"]+)"/i);
     const version = versionMatch ? versionMatch[1] : 'unknown';
@@ -147,6 +159,7 @@ import type {
   GcEvent,
   ScrcpyConfig,
   ScrcpyState,
+  RecordingState,
 } from '@android-debugger/shared';
 import {
   DEVICE_POLL_INTERVAL,
@@ -239,6 +252,8 @@ let selectedDeviceId: string | null = null;
 let trayUpdateInterval: NodeJS.Timeout | null = null;
 let isRecording = false;
 let recordingDeviceId: string | null = null;
+let sdkLogcatRequestId = 0;
+let displayLogcatRequestId = 0;
 
 const trayIconPixels = [
   '....##....##....',
@@ -406,20 +421,23 @@ async function refreshTrayDevices(force = false): Promise<void> {
   }
 }
 
-function handleRecordingState(isActive: boolean, deviceId: string | null, outputPath?: string): void {
-  isRecording = isActive;
-  recordingDeviceId = isActive ? deviceId : null;
+function handleRecordingState(state: RecordingState): void {
+  isRecording = state.isRecording;
+  recordingDeviceId = state.isRecording ? state.deviceId || null : null;
   updateTrayMenu();
 
-  mainWindow?.webContents.send('recording-update', { isRecording: isActive, outputPath });
+  mainWindow?.webContents.send('recording-update', state);
 }
 
 async function handleTakeScreenshot(deviceId: string) {
-  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+  const options: Electron.SaveDialogOptions = {
     title: 'Save Screenshot',
     defaultPath: `screenshot_${Date.now()}.png`,
     filters: [{ name: 'PNG Images', extensions: ['png'] }],
-  });
+  };
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, options)
+    : await dialog.showSaveDialog(options);
 
   if (result.canceled || !result.filePath) {
     return null;
@@ -429,19 +447,20 @@ async function handleTakeScreenshot(deviceId: string) {
 }
 
 async function handleStartRecording(deviceId: string): Promise<{ success: boolean; path?: string }> {
-  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+  const options: Electron.SaveDialogOptions = {
     title: 'Save Recording',
     defaultPath: `recording_${Date.now()}.mp4`,
     filters: [{ name: 'MP4 Videos', extensions: ['mp4'] }],
-  });
+  };
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, options)
+    : await dialog.showSaveDialog(options);
 
   if (result.canceled || !result.filePath) {
     return { success: false };
   }
 
-  const response = await adbService.startScreenRecording(deviceId, result.filePath, (active) => {
-    handleRecordingState(active, active ? deviceId : null, result.filePath);
-  });
+  const response = await adbService.startScreenRecording(deviceId, result.filePath, handleRecordingState);
 
   if (!response.success) {
     updateTrayMenu();
@@ -452,7 +471,6 @@ async function handleStartRecording(deviceId: string): Promise<{ success: boolea
 
 async function handleStopRecording(deviceId: string): Promise<{ success: boolean; path?: string }> {
   const result = await adbService.stopScreenRecording(deviceId);
-  handleRecordingState(false, null, result.path);
   return result;
 }
 
@@ -508,10 +526,10 @@ function buildTrayMenu(): Menu {
         },
         {
           label: 'Stop Screen Recording',
-          enabled: isDeviceReady && isRecording && (!recordingDeviceId || recordingDeviceId === device?.id),
+          enabled: isRecording && Boolean(recordingDeviceId),
           click: async () => {
-            if (device) {
-              await handleStopRecording(device.id);
+            if (recordingDeviceId) {
+              await handleStopRecording(recordingDeviceId);
             }
           },
         },
@@ -569,7 +587,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -579,6 +597,17 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const parsed = parseAllowedExternalUrl(url);
+    if (parsed) void shell.openExternal(parsed.toString());
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = mainWindow?.webContents.getURL();
+    if (currentUrl && url !== currentUrl) event.preventDefault();
+  });
 
   // Open DevTools in development
   if (process.env.NODE_ENV === 'development') {
@@ -630,23 +659,21 @@ function setupIpcHandlers(): void {
 
   // Log handlers
   ipcMain.on('adb:start-logcat', async (_, deviceId: string, filters?: string[], packageName?: string) => {
-    console.log('[Main] Starting logcat for device:', deviceId, 'packageName:', packageName);
+    const requestId = ++displayLogcatRequestId;
 
     let pid: number | undefined;
     if (packageName) {
       const fetchedPid = await adbService.getPid(deviceId, packageName);
       if (fetchedPid) {
         pid = fetchedPid;
-        console.log('[Main] Using PID filtering:', pid);
-      } else {
-        console.log('[Main] Could not get PID, falling back to filter-based logcat');
       }
     }
+
+    if (requestId !== displayLogcatRequestId) return;
 
     adbService.startLogcat(
       deviceId,
       (entry: LogEntry) => {
-        console.log('[Main] Sending log entry:', entry.tag, entry.message.substring(0, 50));
         mainWindow?.webContents.send('log-entry', entry);
       },
       filters,
@@ -655,7 +682,20 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.on('adb:stop-logcat', () => {
+    displayLogcatRequestId++;
     adbService.stopLogcat();
+  });
+
+  ipcMain.on('adb:start-sdk-logcat', async (_, deviceId: string, packageName?: string) => {
+    const requestId = ++sdkLogcatRequestId;
+    const pid = packageName ? await adbService.getPid(deviceId, packageName) : undefined;
+    if (requestId !== sdkLogcatRequestId) return;
+    adbService.startSdkLogcat(deviceId, pid || undefined);
+  });
+
+  ipcMain.on('adb:stop-sdk-logcat', () => {
+    sdkLogcatRequestId++;
+    adbService.stopSdkLogcat();
   });
 
   ipcMain.handle('adb:clear-logcat', async (_, deviceId: string) => {
@@ -742,6 +782,10 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('screen:stop-recording', async (_, deviceId: string) => {
     return handleStopRecording(deviceId);
+  });
+
+  ipcMain.handle('screen:get-recording-state', async () => {
+    return adbService.getRecordingState();
   });
 
   // Developer Options handlers
@@ -1061,25 +1105,36 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // Auto-updater handlers
-  ipcMain.handle('updater:check', async () => {
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      if (result?.updateInfo) {
-        return {
-          updateAvailable: true,
-          version: result.updateInfo.version,
-        };
-      }
-      return { updateAvailable: false };
-    } catch (error) {
-      console.error('Error checking for updates:', error);
-      return {
-        updateAvailable: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
+  ipcMain.handle('shell:open-external', async (_, url: string) => {
+    const parsed = parseAllowedExternalUrl(url);
+    if (!parsed) throw new Error('This external host is not allowed');
+    await shell.openExternal(parsed.toString());
   });
+
+  // Auto-updater handlers
+  ipcMain.handle('updater:check', () => new Promise((resolve) => {
+    const cleanup = () => {
+      autoUpdater.off('update-available', onAvailable);
+      autoUpdater.off('update-not-available', onNotAvailable);
+      autoUpdater.off('error', onError);
+    };
+    const onAvailable = (info: { version: string }) => {
+      cleanup();
+      resolve({ updateAvailable: true, version: info.version });
+    };
+    const onNotAvailable = () => {
+      cleanup();
+      resolve({ updateAvailable: false });
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      resolve({ updateAvailable: false, error: error.message });
+    };
+    autoUpdater.once('update-available', onAvailable);
+    autoUpdater.once('update-not-available', onNotAvailable);
+    autoUpdater.once('error', onError);
+    autoUpdater.checkForUpdates().catch(onError);
+  }));
 
   ipcMain.handle('updater:download', async () => {
     try {
@@ -1172,6 +1227,8 @@ function setupIpcHandlers(): void {
     return adbService.stopMethodTrace(deviceId, packageName);
   });
 
+  ipcMain.handle('profiler:cancel-method-trace', () => adbService.cancelMethodTrace());
+
   ipcMain.handle('profiler:analyze-method-trace', async (_, filePath: string) => {
     return adbService.analyzeMethodTrace(filePath);
   });
@@ -1212,7 +1269,7 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('scrcpy:stop', async () => {
-    scrcpyService.stopMirror();
+    await scrcpyService.stopMirror();
     return { success: true };
   });
 
@@ -1295,15 +1352,19 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  adbService.stopAll();
+  void adbService.stopAll(false);
+  void scrcpyService.stopMirror();
 
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
-app.on('before-quit', () => {
-  adbService.stopAll();
+let quitCleanupStarted = false;
+app.on('before-quit', (event) => {
+  if (quitCleanupStarted) return;
+  event.preventDefault();
+  quitCleanupStarted = true;
 
   if (trayUpdateInterval) {
     clearInterval(trayUpdateInterval);
@@ -1314,4 +1375,9 @@ app.on('before-quit', () => {
     tray.destroy();
     tray = null;
   }
+
+  void Promise.all([
+    adbService.stopAll(true),
+    scrcpyService.stopMirror(),
+  ]).finally(() => app.quit());
 });

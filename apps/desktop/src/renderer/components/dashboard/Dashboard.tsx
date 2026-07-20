@@ -30,7 +30,7 @@ export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }:
 
   // Get memory data (only if package is selected)
   const { data: memoryData, current: memoryStats } = useMemory(
-    device || ({ id: '', name: '' } as Device),
+    device,
     packageName
   );
 
@@ -47,7 +47,7 @@ export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }:
   );
 
   // Get battery data
-  const { current: batteryStats } = useBattery(device || ({ id: '', name: '' } as Device));
+  const { current: batteryStats } = useBattery(device);
 
   // Get crash data
   const { crashes } = useCrashLogcat(device);
@@ -228,7 +228,7 @@ export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }:
                   <div className="absolute right-[-2px] top-1/2 -translate-y-1/2 w-1 h-3 bg-border-muted rounded-r" />
                 </div>
                 <span className="text-xs text-text-muted">
-                  {batteryStats.status === 'Charging' ? 'Charging' : batteryStats.plugged !== 'None' ? 'Plugged' : ''}
+                  {batteryStats.status === 'charging' ? 'Charging' : batteryStats.plugged !== 'none' ? 'Plugged' : ''}
                 </span>
               </div>
             ) : (
@@ -242,7 +242,7 @@ export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }:
       <div className="flex items-center justify-between text-xs text-text-muted border-t border-border-muted pt-3">
         <div className="flex items-center gap-4">
           <span>
-            <span className="text-text-secondary">Device:</span> {device.name}
+            <span className="text-text-secondary">Device:</span> {device.model || device.id}
           </span>
           {device.model && (
             <span>

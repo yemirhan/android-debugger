@@ -26,16 +26,27 @@ export function UpdateAvailableModal() {
     await downloadUpdate();
   };
 
+  const releaseNotesText = updateInfo.releaseNotes
+    ? new DOMParser().parseFromString(updateInfo.releaseNotes, 'text/html').body.textContent || ''
+    : '';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div
+      <button
+        type="button"
+        aria-label="Close update dialog"
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={dismissModal}
       />
 
       {/* Modal */}
-      <div className="relative bg-surface border border-border-muted rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="update-dialog-title"
+        className="relative bg-surface border border-border-muted rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+      >
         {/* Header */}
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-start gap-4">
@@ -55,7 +66,7 @@ export function UpdateAvailableModal() {
               </svg>
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-semibold text-text-primary">
+              <h2 id="update-dialog-title" className="text-lg font-semibold text-text-primary">
                 Update Available
               </h2>
               <p className="text-sm text-text-secondary mt-1">
@@ -63,6 +74,8 @@ export function UpdateAvailableModal() {
               </p>
             </div>
             <button
+              type="button"
+              aria-label="Close update dialog"
               onClick={dismissModal}
               className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
             >
@@ -74,16 +87,17 @@ export function UpdateAvailableModal() {
         </div>
 
         {/* Release Notes */}
-        {updateInfo.releaseNotes && (
+        {releaseNotesText && (
           <div className="px-6 pb-4">
             <div className="bg-background rounded-lg p-4 max-h-40 overflow-y-auto">
               <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
                 What's New
               </h3>
               <div
-                className="text-sm text-text-secondary [&_p]:mb-2 [&_p:last-child]:mb-0 [&_br]:hidden"
-                dangerouslySetInnerHTML={{ __html: updateInfo.releaseNotes }}
-              />
+                className="text-sm text-text-secondary whitespace-pre-wrap"
+              >
+                {releaseNotesText}
+              </div>
             </div>
           </div>
         )}
@@ -91,18 +105,21 @@ export function UpdateAvailableModal() {
         {/* Actions */}
         <div className="px-6 pb-6 flex gap-3">
           <button
+            type="button"
             onClick={dismissModal}
             className="flex-1 px-4 py-2.5 text-sm font-medium text-text-secondary bg-surface-hover hover:bg-border-muted rounded-lg transition-colors"
           >
             Remind Me Later
           </button>
           <button
+            type="button"
             onClick={handleViewInSettings}
             className="flex-1 px-4 py-2.5 text-sm font-medium text-text-primary bg-surface-hover hover:bg-border-muted border border-border-muted rounded-lg transition-colors"
           >
             View in Settings
           </button>
           <button
+            type="button"
             onClick={handleDownload}
             className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors"
           >

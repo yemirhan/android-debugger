@@ -42,19 +42,16 @@ export function useFps(device: Device | null, packageName: string) {
   }, []);
 
   useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, packageName, isMonitoring, stopMonitoring]);
-
-  useEffect(() => {
-    if (device && packageName && !isMonitoring) {
-      clearData();
-      startMonitoring();
+    clearData();
+    if (!device || !packageName) {
+      setIsMonitoring(false);
+      return;
     }
-  }, [device, packageName]);
+
+    window.electronAPI.startFpsMonitor(device.id, packageName);
+    setIsMonitoring(true);
+    return () => window.electronAPI.stopFpsMonitor();
+  }, [device?.id, packageName, clearData]);
 
   return {
     data,

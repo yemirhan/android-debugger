@@ -104,7 +104,7 @@ export function Header({
         </div>
 
         {/* Package selector */}
-        {selectedDevice && (
+        {selectedDevice?.status === 'device' && (
           <PackageSelector
             device={selectedDevice}
             value={packageName}
@@ -116,7 +116,7 @@ export function Header({
       {/* Right section */}
       <div className="flex items-center gap-3 no-drag">
         {/* Device connected indicator */}
-        {selectedDevice && (
+        {selectedDevice?.status === 'device' && (
           <>
             <div className="flex items-center gap-1.5 px-2 py-1">
               <span className="text-xs text-text-muted">Wi-Fi:</span>
@@ -132,6 +132,12 @@ export function Header({
               <span className="text-xs text-text-muted">Connected</span>
             </div>
           </>
+        )}
+        {selectedDevice && selectedDevice.status !== 'device' && (
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <span className="text-xs text-amber-400 capitalize">{selectedDevice.status}</span>
+          </div>
         )}
       </div>
     </header>

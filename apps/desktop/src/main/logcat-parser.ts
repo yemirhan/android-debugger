@@ -12,7 +12,7 @@ interface PendingMessage {
  * Parses SDK messages from logcat output.
  *
  * SDK messages are formatted as:
- * SDKMSG:000001:NETWORK:Z:1/3 {...data...}
+ * SDKMSG:abcd1234:000001:NETWORK:Z:1/3 {...data...}
  *
  * Where:
  * - 000001 = sequence number
@@ -24,11 +24,14 @@ interface PendingMessage {
 export class LogcatMessageParser {
   private pendingMessages: Map<string, PendingMessage> = new Map();
   private readonly SDK_PREFIX = 'SDKMSG:';
-  // Pattern: SDKMSG:000001:NETWORK:Z:1/3 {...data...}
-  private readonly MESSAGE_PATTERN = /SDKMSG:(\d{6}):(\w+):([Z-]):(\d+)\/(\d+)\s+(.+)$/;
+  // Source ID is optional for compatibility with SDK versions before 1.2.
+  private readonly MESSAGE_PATTERN = /SDKMSG:(?:([a-z0-9]{8}):)?(\d{6}):(\w+):([Z-]):(\d+)\/(\d+)\s+(.+)$/i;
 
   // Cleanup old pending messages after 30 seconds
   private readonly MESSAGE_TIMEOUT = 30000;
+  private readonly MAX_PENDING_MESSAGES = 100;
+  private readonly MAX_CHUNKS = 256;
+  private readonly MAX_CHUNK_LENGTH = 4000;
 
   parseLogLine(line: string): SdkMessage | null {
     // Quick check for SDK prefix
@@ -36,23 +39,21 @@ export class LogcatMessageParser {
       return null;
     }
 
-    // Debug: log that we found an SDK message
-    console.log('[LogcatParser] Found SDK prefix in line:', line.substring(0, 100));
-
     const match = line.match(this.MESSAGE_PATTERN);
     if (!match) {
-      console.log('[LogcatParser] Regex did not match. Line:', line);
       return null;
     }
 
-    console.log('[LogcatParser] Regex matched, parsing message');
-
-    const [, seq, typeStr, compressedFlag, indexStr, totalStr, payload] = match;
-    const sequenceId = seq;
+    const [, source = 'legacy', seq, typeStr, compressedFlag, indexStr, totalStr, payload] = match;
+    const sequenceId = `${source}-${seq}`;
     const type = typeStr.toLowerCase() as SdkMessageType;
     const compressed = compressedFlag === 'Z';
     const index = parseInt(indexStr, 10);
     const total = parseInt(totalStr, 10);
+
+    if (total < 1 || total > this.MAX_CHUNKS || index < 1 || index > total || payload.length > this.MAX_CHUNK_LENGTH) {
+      return null;
+    }
 
     // Single chunk message - return immediately
     if (total === 1) {
@@ -73,11 +74,16 @@ export class LogcatMessageParser {
   ): SdkMessage | null {
     // Create a unique key for this message based on sequence
     // We use sequence ID to group chunks together
-    const messageKey = `${sequenceId}-${total}`;
+    const messageKey = `${sequenceId}-${type}-${total}`;
 
     let pending = this.pendingMessages.get(messageKey);
 
     if (!pending) {
+      this.cleanupOldMessages();
+      if (this.pendingMessages.size >= this.MAX_PENDING_MESSAGES) {
+        const oldestKey = this.pendingMessages.keys().next().value as string | undefined;
+        if (oldestKey) this.pendingMessages.delete(oldestKey);
+      }
       pending = {
         type,
         chunks: new Map(),

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import type { SdkMessage, ConsoleMessage, CustomEvent, StateSnapshot, NetworkRequest, ZustandStoreSnapshot, WebSocketConnection, WebSocketMessage, WebSocketEvent } from '@android-debugger/shared';
 
 interface ConsoleLine {
@@ -53,9 +53,16 @@ export function useSdkContext() {
 
 interface SdkProviderProps {
   children: ReactNode;
+  sessionKey: string;
 }
 
-export function SdkProvider({ children }: SdkProviderProps) {
+const MAX_NETWORK_REQUESTS = 2000;
+const MAX_STATE_SNAPSHOTS = 500;
+const MAX_ZUSTAND_STORES = 200;
+const MAX_WEBSOCKET_CONNECTIONS = 200;
+const MAX_WEBSOCKET_EVENTS = 500;
+
+export function SdkProvider({ children, sessionKey }: SdkProviderProps) {
   // SDK data
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLine[]>([]);
   const [events, setEvents] = useState<CustomEvent[]>([]);
@@ -63,7 +70,14 @@ export function SdkProvider({ children }: SdkProviderProps) {
 
   // Network data
   const [requests, setRequests] = useState<NetworkRequest[]>([]);
-  const [selectedRequest, setSelectedRequest] = useState<NetworkRequest | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const selectedRequest = useMemo(
+    () => requests.find((request) => request.id === selectedRequestId) ?? null,
+    [requests, selectedRequestId]
+  );
+  const setSelectedRequest = useCallback((request: NetworkRequest | null) => {
+    setSelectedRequestId(request?.id ?? null);
+  }, []);
 
   // Zustand data
   const [zustandStores, setZustandStores] = useState<Map<string, ZustandStoreSnapshot>>(new Map());
@@ -79,7 +93,7 @@ export function SdkProvider({ children }: SdkProviderProps) {
   const clearStates = useCallback(() => setStates([]), []);
   const clearRequests = useCallback(() => {
     setRequests([]);
-    setSelectedRequest(null);
+    setSelectedRequestId(null);
   }, []);
   const clearZustandStores = useCallback(() => setZustandStores(new Map()), []);
   const clearWebSocket = useCallback(() => {
@@ -87,6 +101,18 @@ export function SdkProvider({ children }: SdkProviderProps) {
     setWsEvents([]);
     setSelectedWsConnection(null);
   }, []);
+
+  useEffect(() => {
+    setConsoleLogs([]);
+    setEvents([]);
+    setStates([]);
+    setRequests([]);
+    setSelectedRequestId(null);
+    setZustandStores(new Map());
+    setWsConnections(new Map());
+    setWsEvents([]);
+    setSelectedWsConnection(null);
+  }, [sessionKey]);
 
   // Listen for SDK messages from logcat
   // SDK messages are automatically parsed from logcat when logcat is running
@@ -122,7 +148,7 @@ export function SdkProvider({ children }: SdkProviderProps) {
               updated[existing] = state;
               return updated;
             }
-            return [...prev, state];
+            return [...prev.slice(-(MAX_STATE_SNAPSHOTS - 1)), state];
           });
           break;
         }
@@ -135,7 +161,7 @@ export function SdkProvider({ children }: SdkProviderProps) {
               updated[existingIndex] = request;
               return updated;
             }
-            return [...prev, request];
+            return [...prev.slice(-(MAX_NETWORK_REQUESTS - 1)), request];
           });
           break;
         }
@@ -144,6 +170,11 @@ export function SdkProvider({ children }: SdkProviderProps) {
           setZustandStores((prev) => {
             const newMap = new Map(prev);
             newMap.set(snapshot.name, snapshot);
+            while (newMap.size > MAX_ZUSTAND_STORES) {
+              const oldestKey = newMap.keys().next().value;
+              if (oldestKey === undefined) break;
+              newMap.delete(oldestKey);
+            }
             return newMap;
           });
           // Also add to states for backward compatibility
@@ -159,7 +190,7 @@ export function SdkProvider({ children }: SdkProviderProps) {
               updated[existing] = stateSnapshot;
               return updated;
             }
-            return [...prev, stateSnapshot];
+            return [...prev.slice(-(MAX_STATE_SNAPSHOTS - 1)), stateSnapshot];
           });
           break;
         }
@@ -180,6 +211,11 @@ export function SdkProvider({ children }: SdkProviderProps) {
                 ...payload.connection!,
                 messages: [],
               });
+              while (newMap.size > MAX_WEBSOCKET_CONNECTIONS) {
+                const oldestKey = newMap.keys().next().value;
+                if (oldestKey === undefined) break;
+                newMap.delete(oldestKey);
+              }
               return newMap;
             });
           } else if (payload.type === 'message' && payload.message) {
@@ -196,7 +232,7 @@ export function SdkProvider({ children }: SdkProviderProps) {
               return newMap;
             });
           } else if (payload.type === 'event' && payload.event) {
-            setWsEvents((prev) => [...prev.slice(-99), payload.event!]);
+            setWsEvents((prev) => [...prev.slice(-(MAX_WEBSOCKET_EVENTS - 1)), payload.event!]);
             // Update connection state if provided
             if (payload.connection) {
               setWsConnections((prev) => {

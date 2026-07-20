@@ -44,22 +44,17 @@ export function useThreadMonitor(device: Device | null, packageName: string) {
     };
   }, []);
 
-  // Stop monitoring when device or package changes
   useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, packageName, isMonitoring, stopMonitoring]);
-
-  // Auto-start monitoring when device and package are set
-  useEffect(() => {
-    if (device && packageName && !isMonitoring) {
-      clearData();
-      startMonitoring();
+    clearData();
+    if (!device || !packageName) {
+      setIsMonitoring(false);
+      return;
     }
-  }, [device, packageName]);
+
+    window.electronAPI.startThreadMonitor(device.id, packageName, THREAD_MONITOR_INTERVAL);
+    setIsMonitoring(true);
+    return () => window.electronAPI.stopThreadMonitor();
+  }, [device?.id, packageName, clearData]);
 
   return {
     snapshots,

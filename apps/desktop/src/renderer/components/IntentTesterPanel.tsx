@@ -45,7 +45,7 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
     'android.intent.action.PICK',
   ];
 
-  const extraTypes: IntentExtra['type'][] = ['string', 'int', 'long', 'float', 'double', 'boolean', 'uri'];
+  const extraTypes: IntentExtra['type'][] = ['string', 'int', 'long', 'float', 'boolean', 'uri'];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">

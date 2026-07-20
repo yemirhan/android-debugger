@@ -44,11 +44,7 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
   const logs = logMode === 'rn' ? rnLogs : allLogs;
 
   // Clear logs for current mode
-  const clearLogs = useCallback(async (deviceId?: string) => {
-    const id = deviceId || selectedDevice?.id;
-    if (id) {
-      await window.electronAPI.clearLogcat(id);
-    }
+  const clearLogs = useCallback(async (_deviceId?: string) => {
     if (logMode === 'rn') {
       setRnLogs([]);
       pausedRnLogsRef.current = [];
@@ -56,7 +52,7 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
       setAllLogs([]);
       pausedAllLogsRef.current = [];
     }
-  }, [selectedDevice?.id, logMode]);
+  }, [logMode]);
 
   // Pause/resume
   const togglePause = useCallback(() => {
@@ -82,37 +78,22 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
   const logModeRef = useRef(logMode);
   const isPausedRef = useRef(isPaused);
 
+  const streamPackageName = logMode === 'all' ? packageName : '';
   useEffect(() => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
 
+  useEffect(() => {
+    logModeRef.current = logMode;
+  }, [logMode]);
+
   // Switch log mode (React Native vs All App)
   const setLogMode = useCallback((mode: LogMode) => {
     if (!selectedDevice || mode === logMode) return;
-
-    // Stop current logcat
-    window.electronAPI.stopLogcat();
-
-    // Record when we switched modes - ignore logs for a brief window
     modeSwitchTimeRef.current = Date.now();
-
-    // Update mode ref synchronously BEFORE starting new logcat
     logModeRef.current = mode;
-
-    // Set new mode state (for UI)
     setLogModeState(mode);
-
-    // Start with new filters after a small delay to let buffered logs drain
-    setTimeout(() => {
-      if (mode === 'rn') {
-        window.electronAPI.startLogcat(selectedDevice.id, ['*:S', 'ReactNative:V', 'ReactNativeJS:V']);
-      } else if (packageName) {
-        // 'all' mode - only start if package name is set
-        window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], packageName);
-      }
-      // If 'all' mode without package, don't start logcat
-    }, 50);
-  }, [selectedDevice, logMode, packageName]);
+  }, [selectedDevice, logMode]);
 
   // Listen for log entries - new logs added to beginning (newest first)
   useEffect(() => {
@@ -149,45 +130,30 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
     };
   }, []);
 
-  // Track streaming status based on device
+  // Own the visible log stream. SDK transport uses a separate logcat process,
+  // so changing display filters cannot interrupt SDK capture.
   useEffect(() => {
-    if (selectedDevice) {
-      setIsStreaming(true);
-    } else {
+    window.electronAPI.stopLogcat();
+    if (!selectedDevice || (logMode === 'all' && !streamPackageName)) {
       setIsStreaming(false);
-    }
-  }, [selectedDevice?.id]);
-
-  // Restart logcat when package changes while in 'all' mode (to get new PID)
-  const prevPackageRef = useRef(packageName);
-  useEffect(() => {
-    // Only restart if package actually changed (not on initial mount or mode switch)
-    if (!selectedDevice || logMode !== 'all' || prevPackageRef.current === packageName) {
-      prevPackageRef.current = packageName;
       return;
     }
-
-    prevPackageRef.current = packageName;
-
-    // Stop current logcat
-    window.electronAPI.stopLogcat();
-
-    // Record switch time to ignore stale logs
     modeSwitchTimeRef.current = Date.now();
-
-    // Clear only the 'all' logs buffer since the app changed
-    setAllLogs([]);
-    pausedAllLogsRef.current = [];
-
-    // Only start logcat if package is set
-    if (packageName) {
-      // Start with new package PID after a small delay
-      setTimeout(() => {
-        window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], packageName);
-      }, 50);
+    if (logMode === 'rn') {
+      window.electronAPI.startLogcat(selectedDevice.id, ['*:S', 'ReactNative:V', 'ReactNativeJS:V']);
+    } else {
+      window.electronAPI.startLogcat(selectedDevice.id, ['*:V'], streamPackageName);
     }
-    // If package is empty, don't start logcat (stay stopped)
-  }, [packageName, selectedDevice?.id, logMode]);
+    setIsStreaming(true);
+    return () => window.electronAPI.stopLogcat();
+  }, [selectedDevice?.id, logMode, streamPackageName]);
+
+  useEffect(() => {
+    setRnLogs([]);
+    setAllLogs([]);
+    pausedRnLogsRef.current = [];
+    pausedAllLogsRef.current = [];
+  }, [selectedDevice?.id]);
 
   const value: LogsContextValue = {
     logs,

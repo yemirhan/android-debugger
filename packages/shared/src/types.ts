@@ -192,7 +192,7 @@ export interface IntentConfig {
 
 export interface IntentExtra {
   key: string;
-  type: 'string' | 'int' | 'long' | 'float' | 'double' | 'boolean' | 'uri';
+  type: 'string' | 'int' | 'long' | 'float' | 'boolean' | 'uri';
   value: string;
 }
 
@@ -214,6 +214,7 @@ export interface ScreenshotResult {
 
 export interface RecordingState {
   isRecording: boolean;
+  deviceId?: string;
   startTime?: number;
   outputPath?: string;
 }
@@ -591,7 +592,8 @@ export interface HeapClass {
   name: string;
   instanceCount: number;
   shallowSize: number;
-  retainedSize: number;
+  /** Retained size is omitted unless a dominator-tree analysis was performed. */
+  retainedSize?: number;
 }
 
 export interface HeapInstance {

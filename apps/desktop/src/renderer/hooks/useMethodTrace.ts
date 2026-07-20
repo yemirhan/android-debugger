@@ -25,14 +25,15 @@ export function useMethodTrace(device: Device | null, packageName: string) {
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingStartRef = useRef<number>(0);
 
-  // Clean up timer on unmount
+  // Stop an active device-side profiler when the panel or target goes away.
   useEffect(() => {
     return () => {
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
       }
+      void window.electronAPI.cancelMethodTrace();
     };
-  }, []);
+  }, [device?.id, packageName]);
 
   const startRecording = useCallback(async () => {
     if (!device || !packageName) {
@@ -78,6 +79,30 @@ export function useMethodTrace(device: Device | null, packageName: string) {
     }
   }, [device, packageName]);
 
+  const analyzeTrace = useCallback(async (trace: MethodTraceInfo) => {
+    if (!trace.filePath || trace.status !== 'ready') {
+      return;
+    }
+
+    setState(prev => ({ ...prev, isAnalyzing: true, selectedTrace: trace, analysis: null }));
+
+    try {
+      const analysis = await window.electronAPI.analyzeMethodTrace(trace.filePath);
+      setState(prev => ({
+        ...prev,
+        analysis,
+        isAnalyzing: false,
+        error: analysis ? null : 'Failed to analyze method trace',
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isAnalyzing: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
+    }
+  }, []);
+
   const stopRecording = useCallback(async () => {
     if (!device || !packageName) return;
 
@@ -114,31 +139,7 @@ export function useMethodTrace(device: Device | null, packageName: string) {
         error: error instanceof Error ? error.message : 'Unknown error',
       }));
     }
-  }, [device, packageName]);
-
-  const analyzeTrace = useCallback(async (trace: MethodTraceInfo) => {
-    if (!trace.filePath || trace.status !== 'ready') {
-      return;
-    }
-
-    setState(prev => ({ ...prev, isAnalyzing: true, selectedTrace: trace, analysis: null }));
-
-    try {
-      const analysis = await window.electronAPI.analyzeMethodTrace(trace.filePath);
-      setState(prev => ({
-        ...prev,
-        analysis,
-        isAnalyzing: false,
-        error: analysis ? null : 'Failed to analyze method trace',
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        isAnalyzing: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }));
-    }
-  }, []);
+  }, [device, packageName, analyzeTrace]);
 
   const selectTrace = useCallback((trace: MethodTraceInfo) => {
     setState(prev => ({ ...prev, selectedTrace: trace }));

@@ -247,7 +247,7 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-sm font-mono text-violet-400">
-                          {formatBytes(heapClass.retainedSize)}
+                          {heapClass.retainedSize === undefined ? '—' : formatBytes(heapClass.retainedSize)}
                         </span>
                       </td>
                     </tr>

@@ -22,6 +22,30 @@ export function useHeapDump(device: Device | null, packageName: string) {
     error: null,
   });
 
+  const analyzeDump = useCallback(async (dump: HeapDumpInfo) => {
+    if (!dump.filePath || dump.status !== 'ready') {
+      return;
+    }
+
+    setState(prev => ({ ...prev, isAnalyzing: true, selectedDump: dump, analysis: null }));
+
+    try {
+      const analysis = await window.electronAPI.analyzeHeapDump(dump.filePath);
+      setState(prev => ({
+        ...prev,
+        analysis,
+        isAnalyzing: false,
+        error: analysis ? null : 'Failed to analyze heap dump',
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isAnalyzing: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
+    }
+  }, []);
+
   const captureDump = useCallback(async () => {
     if (!device || !packageName) {
       setState(prev => ({ ...prev, error: 'No device or package selected' }));
@@ -58,31 +82,7 @@ export function useHeapDump(device: Device | null, packageName: string) {
         error: error instanceof Error ? error.message : 'Unknown error',
       }));
     }
-  }, [device, packageName]);
-
-  const analyzeDump = useCallback(async (dump: HeapDumpInfo) => {
-    if (!dump.filePath || dump.status !== 'ready') {
-      return;
-    }
-
-    setState(prev => ({ ...prev, isAnalyzing: true, selectedDump: dump, analysis: null }));
-
-    try {
-      const analysis = await window.electronAPI.analyzeHeapDump(dump.filePath);
-      setState(prev => ({
-        ...prev,
-        analysis,
-        isAnalyzing: false,
-        error: analysis ? null : 'Failed to analyze heap dump',
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        isAnalyzing: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }));
-    }
-  }, []);
+  }, [device, packageName, analyzeDump]);
 
   const selectDump = useCallback((dump: HeapDumpInfo) => {
     setState(prev => ({ ...prev, selectedDump: dump, selectedClass: null }));

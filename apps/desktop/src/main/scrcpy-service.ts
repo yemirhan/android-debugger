@@ -1,14 +1,18 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execFile, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { createHash } from 'crypto';
 import { promisify } from 'util';
-import { exec } from 'child_process';
 import type { ScrcpyConfig, ScrcpyState } from '@android-debugger/shared';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const SCRCPY_VERSION = '3.1';
+const SCRCPY_SHA256: Record<'arm64' | 'x64', string> = {
+  arm64: '478618d940421e5f57942f5479d493ecbb38210682937a200f712aee5f235daf',
+  x64: 'acde98e29c273710ffa469371dbca4a728a44c41c380381f8a54e5b5301b9e87',
+};
 
 class ScrcpyService {
   private scrcpyDir: string = '';
@@ -80,7 +84,7 @@ class ScrcpyService {
     }
 
     try {
-      const { stdout } = await execAsync(`"${scrcpyPath}" --version`);
+      const { stdout } = await execFileAsync(scrcpyPath, ['--version'], { encoding: 'utf8' });
       // Extract version from output (e.g., "scrcpy 3.1")
       const versionMatch = stdout.match(/scrcpy\s+([\d.]+)/);
       const version = versionMatch ? versionMatch[1] : 'unknown';
@@ -100,6 +104,9 @@ class ScrcpyService {
 
     if (platform !== 'darwin') {
       return { success: false, error: 'Only macOS is currently supported for automatic scrcpy download' };
+    }
+    if (arch !== 'arm64' && arch !== 'x64') {
+      return { success: false, error: `Unsupported macOS architecture: ${arch}` };
     }
 
     // Determine the correct archive URL based on architecture
@@ -123,7 +130,7 @@ class ScrcpyService {
       onProgress?.(5, 'Starting download...');
 
       // Download using curl (available on macOS)
-      await execAsync(`curl -L -o "${archivePath}" "${SCRCPY_URL}"`, { timeout: 300000 });
+      await execFileAsync('curl', ['--fail', '--location', '--output', archivePath, SCRCPY_URL], { timeout: 300000 });
 
       onProgress?.(60, 'Extracting...');
 
@@ -137,10 +144,24 @@ class ScrcpyService {
         fs.unlinkSync(archivePath);
         return { success: false, error: 'Download failed - file too small' };
       }
+      const digest = createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+      if (digest !== SCRCPY_SHA256[arch]) {
+        throw new Error('Downloaded scrcpy archive failed SHA-256 verification');
+      }
 
       // Extract the archive
       // The archive contains a folder like scrcpy-macos-aarch64-v3.1/
-      await execAsync(`tar -xzf "${archivePath}" -C "${this.scrcpyDir}"`, { timeout: 60000 });
+      const { stdout: archiveEntries } = await execFileAsync('tar', ['-tzf', archivePath], {
+        encoding: 'utf8',
+        timeout: 60000,
+      });
+      const unsafeEntry = archiveEntries.split('\n').find((entry) =>
+        entry.startsWith('/') || entry.split('/').includes('..')
+      );
+      if (unsafeEntry) {
+        throw new Error('Downloaded scrcpy archive contains an unsafe path');
+      }
+      await execFileAsync('tar', ['-xzf', archivePath, '-C', this.scrcpyDir], { timeout: 60000 });
 
       onProgress?.(80, 'Setting up...');
 
@@ -203,7 +224,10 @@ class ScrcpyService {
   /**
    * Start screen mirroring
    */
-  startMirror(deviceId: string, config: ScrcpyConfig = {}): { success: boolean; error?: string } {
+  async startMirror(deviceId: string, config: ScrcpyConfig = {}): Promise<{ success: boolean; error?: string }> {
+    if (!deviceId || !/^[A-Za-z0-9._:-]+$/.test(deviceId)) {
+      return { success: false, error: 'Invalid Android device ID' };
+    }
     const scrcpyPath = this.getScrcpyPath();
     if (!scrcpyPath) {
       return { success: false, error: 'scrcpy not found. Please download it first.' };
@@ -211,7 +235,7 @@ class ScrcpyService {
 
     // Stop existing mirror if running
     if (this.scrcpyProcess) {
-      this.stopMirror();
+      await this.stopMirror();
     }
 
     // Build command arguments
@@ -250,15 +274,16 @@ class ScrcpyService {
         PATH: `${scrcpyDir}:${process.env.PATH || ''}`,
       };
 
-      this.scrcpyProcess = spawn(scrcpyPath, args, {
+      const child = spawn(scrcpyPath, args, {
         env,
         cwd: scrcpyDir,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      this.scrcpyProcess = child;
 
       this.currentDeviceId = deviceId;
 
-      this.scrcpyProcess.on('error', (error) => {
+      child.on('error', (error) => {
         console.error('[Scrcpy] Process error:', error);
         this.notifyStateChange({
           isRunning: false,
@@ -266,12 +291,15 @@ class ScrcpyService {
           pid: null,
           error: error.message,
         });
-        this.scrcpyProcess = null;
-        this.currentDeviceId = null;
+        if (this.scrcpyProcess === child) {
+          this.scrcpyProcess = null;
+          this.currentDeviceId = null;
+        }
       });
 
-      this.scrcpyProcess.on('exit', (code, signal) => {
+      child.on('exit', (code, signal) => {
         console.log(`[Scrcpy] Process exited with code ${code}, signal ${signal}`);
+        if (this.scrcpyProcess !== child) return;
         this.notifyStateChange({
           isRunning: false,
           deviceId: null,
@@ -283,7 +311,7 @@ class ScrcpyService {
       });
 
       // Log stderr for debugging
-      this.scrcpyProcess.stderr?.on('data', (data) => {
+      child.stderr?.on('data', (data) => {
         const message = data.toString().trim();
         if (message) {
           console.log('[Scrcpy stderr]', message);
@@ -294,7 +322,7 @@ class ScrcpyService {
       this.notifyStateChange({
         isRunning: true,
         deviceId,
-        pid: this.scrcpyProcess.pid || null,
+        pid: child.pid || null,
         error: null,
       });
 
@@ -308,16 +336,27 @@ class ScrcpyService {
   /**
    * Stop screen mirroring
    */
-  stopMirror(): void {
-    if (this.scrcpyProcess) {
-      this.scrcpyProcess.kill('SIGTERM');
-      // Force kill after timeout
-      setTimeout(() => {
-        if (this.scrcpyProcess) {
-          this.scrcpyProcess.kill('SIGKILL');
+  async stopMirror(): Promise<void> {
+    const process = this.scrcpyProcess;
+    if (!process) return;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(forceKillTimer);
+        resolve();
+      };
+      const forceKillTimer = setTimeout(() => {
+        if (process.exitCode === null && process.signalCode === null) {
+          process.kill('SIGKILL');
         }
+        finish();
       }, 2000);
-    }
+      process.once('exit', finish);
+      process.kill('SIGTERM');
+    });
   }
 
   /**

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import type { Device } from '@android-debugger/shared';
 
 /**
@@ -6,41 +6,16 @@ import type { Device } from '@android-debugger/shared';
  * This ensures logcat is always running when a device is selected,
  * so SDK messages are captured regardless of which panel is active.
  */
-export function useBackgroundLogcat(device: Device | null) {
-  const isStreamingRef = useRef(false);
-  const deviceIdRef = useRef<string | null>(null);
-
+export function useBackgroundLogcat(device: Device | null, packageName: string) {
   useEffect(() => {
-    // Start logcat when device is selected
-    if (device && device.id !== deviceIdRef.current) {
-      // Stop previous stream if any
-      if (isStreamingRef.current) {
-        window.electronAPI.stopLogcat();
-      }
-
-      // Start new stream
-      window.electronAPI.startLogcat(device.id);
-      isStreamingRef.current = true;
-      deviceIdRef.current = device.id;
-    }
-
-    // Stop logcat when device is deselected
-    if (!device && isStreamingRef.current) {
-      window.electronAPI.stopLogcat();
-      isStreamingRef.current = false;
-      deviceIdRef.current = null;
-    }
-
-    // Cleanup on unmount
+    if (!device) return;
+    window.electronAPI.startSdkLogcat(device.id, packageName || undefined);
     return () => {
-      if (isStreamingRef.current) {
-        window.electronAPI.stopLogcat();
-        isStreamingRef.current = false;
-      }
+      window.electronAPI.stopSdkLogcat();
     };
-  }, [device?.id]);
+  }, [device?.id, packageName]);
 
   return {
-    isStreaming: isStreamingRef.current,
+    isStreaming: Boolean(device),
   };
 }

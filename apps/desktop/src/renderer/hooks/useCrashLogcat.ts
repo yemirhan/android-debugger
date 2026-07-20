@@ -19,10 +19,7 @@ export function useCrashLogcat(device: Device | null) {
 
   const clearCrashes = useCallback(() => {
     setCrashes([]);
-    if (device) {
-      window.electronAPI.clearCrashLogcat(device.id);
-    }
-  }, [device]);
+  }, []);
 
   // Listen for crash entries
   useEffect(() => {
@@ -41,21 +38,17 @@ export function useCrashLogcat(device: Device | null) {
     };
   }, []);
 
-  // Stop monitoring when device changes
   useEffect(() => {
-    return () => {
-      if (isMonitoring) {
-        stopMonitoring();
-      }
-    };
-  }, [device?.id, isMonitoring, stopMonitoring]);
-
-  // Auto-start monitoring when device is set
-  useEffect(() => {
-    if (device && !isMonitoring) {
-      startMonitoring();
+    setCrashes([]);
+    if (!device) {
+      setIsMonitoring(false);
+      return;
     }
-  }, [device]);
+
+    window.electronAPI.startCrashLogcat(device.id);
+    setIsMonitoring(true);
+    return () => window.electronAPI.stopCrashLogcat();
+  }, [device?.id]);
 
   return {
     crashes,

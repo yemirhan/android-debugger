@@ -40,10 +40,12 @@ const originalConsoleLog = console.log.bind(console);
 export class LogcatTransport {
   private sequenceNumber = 0;
   private readonly prefix = 'SDKMSG';
+  private readonly sourceId = Math.random().toString(36).slice(2, 10).padEnd(8, '0');
 
   send(message: SdkMessage): void {
     // Get a single sequence number for ALL chunks of this message
-    const seq = String(++this.sequenceNumber).padStart(6, '0');
+    this.sequenceNumber = (this.sequenceNumber + 1) % 1_000_000;
+    const seq = String(this.sequenceNumber).padStart(6, '0');
     const chunks = this.chunkMessage(message);
 
     for (const chunk of chunks) {
@@ -95,7 +97,8 @@ export class LogcatTransport {
 
   private formatLogEntry(type: SdkMessageType, chunk: ChunkInfo, seq: string): string {
     const compressFlag = chunk.compressed ? 'Z' : '-';
-    // Format: SDKMSG:000001:NETWORK:Z:1/3 {...data...}
-    return `${this.prefix}:${seq}:${type.toUpperCase()}:${compressFlag}:${chunk.index}/${chunk.total} ${chunk.data}`;
+    // The per-runtime source ID prevents chunk collisions after app reloads or
+    // while multiple instrumented processes write to the same log buffer.
+    return `${this.prefix}:${this.sourceId}:${seq}:${type.toUpperCase()}:${compressFlag}:${chunk.index}/${chunk.total} ${chunk.data}`;
   }
 }

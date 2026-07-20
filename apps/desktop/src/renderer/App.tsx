@@ -40,6 +40,7 @@ export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 's
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+  const activeDevice = selectedDevice?.status === 'device' ? selectedDevice : null;
   const [packageName, setPackageName] = useState<string>('');
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
   const { setNavigateToSettings } = useUpdateContext();
@@ -47,29 +48,37 @@ function AppContent() {
 
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
-  useBackgroundLogcat(selectedDevice);
+  useBackgroundLogcat(activeDevice, packageName);
 
   // Register settings navigation for update modal
   useEffect(() => {
     setNavigateToSettings(() => setActiveTab('settings'));
   }, [setNavigateToSettings]);
 
-  // Auto-select first device
+  // Keep the selection synchronized with refreshed device state, preferring a
+  // ready device when the previous target disappears.
   useEffect(() => {
     if (!selectedDevice && devices.length > 0) {
-      setSelectedDevice(devices[0]);
+      setSelectedDevice(devices.find((device) => device.status === 'device') ?? devices[0]);
+      return;
     }
-  }, [devices, selectedDevice]);
-
-  // Update selected device if it disconnects
-  useEffect(() => {
-    if (selectedDevice && !devices.find((d) => d.id === selectedDevice.id)) {
-      setSelectedDevice(devices[0] || null);
+    if (!selectedDevice) return;
+    const latest = devices.find((device) => device.id === selectedDevice.id);
+    if (!latest) {
+      setSelectedDevice(devices.find((device) => device.status === 'device') ?? devices[0] ?? null);
+    } else if (
+      latest.status !== selectedDevice.status ||
+      latest.model !== selectedDevice.model ||
+      latest.androidVersion !== selectedDevice.androidVersion ||
+      latest.wifiName !== selectedDevice.wifiName
+    ) {
+      setSelectedDevice(latest);
     }
   }, [devices, selectedDevice]);
 
   useEffect(() => {
     window.electronAPI.setSelectedDevice(selectedDevice?.id ?? null);
+    setPackageName('');
   }, [selectedDevice?.id]);
 
   useEffect(() => {
@@ -95,7 +104,7 @@ function AppContent() {
     if (activeTab === 'dashboard') {
       return (
         <Dashboard
-          device={selectedDevice}
+          device={activeDevice}
           packageName={packageName}
           onNavigate={setActiveTab}
           onRefreshDevices={refreshDevices}
@@ -113,7 +122,7 @@ function AppContent() {
       return <BundleAnalyzerPanel />;
     }
 
-    if (!selectedDevice) {
+    if (!activeDevice) {
       return (
         <div className="flex-1 flex items-center justify-center text-text-secondary panel-content">
           <div className="text-center">
@@ -122,8 +131,8 @@ function AppContent() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
             </div>
-            <p className="text-lg font-medium text-text-primary mb-1">No Device Connected</p>
-            <p className="text-sm text-text-muted">Connect an Android device via USB and enable USB debugging</p>
+            <p className="text-lg font-medium text-text-primary mb-1">Device Not Ready</p>
+            <p className="text-sm text-text-muted">Connect and authorize an Android device with USB debugging enabled</p>
           </div>
         </div>
       );
@@ -133,16 +142,16 @@ function AppContent() {
       case 'memory':
         return (
           <MemoryPanel
-            device={selectedDevice}
+            device={activeDevice}
             packageName={packageName}
           />
         );
       case 'logs':
-        return <LogsPanel device={selectedDevice} packageName={packageName} />;
+        return <LogsPanel device={activeDevice} packageName={packageName} />;
       case 'cpu-fps':
         return (
           <CpuFpsPanel
-            device={selectedDevice}
+            device={activeDevice}
             packageName={packageName}
           />
         );
@@ -151,51 +160,51 @@ function AppContent() {
       case 'sdk':
         return <SdkPanel />;
       case 'app-info':
-        return <AppMetadataPanel device={selectedDevice} packageName={packageName} />;
+        return <AppMetadataPanel device={activeDevice} packageName={packageName} />;
       case 'screen-capture':
-        return <ScreenCapturePanel device={selectedDevice} />;
+        return <ScreenCapturePanel device={activeDevice} />;
       case 'dev-options':
-        return <DevOptionsPanel device={selectedDevice} />;
+        return <DevOptionsPanel device={activeDevice} />;
       case 'file-inspector':
-        return <FileInspectorPanel device={selectedDevice} packageName={packageName} />;
+        return <FileInspectorPanel device={activeDevice} packageName={packageName} />;
       case 'intent-tester':
-        return <IntentTesterPanel device={selectedDevice} />;
+        return <IntentTesterPanel device={activeDevice} />;
       case 'battery':
-        return <BatteryPanel device={selectedDevice} />;
+        return <BatteryPanel device={activeDevice} />;
       case 'crashes':
-        return <CrashPanel device={selectedDevice} />;
+        return <CrashPanel device={activeDevice} />;
       case 'services':
-        return <ServicesPanel device={selectedDevice} packageName={packageName} />;
+        return <ServicesPanel device={activeDevice} packageName={packageName} />;
       case 'network-stats':
-        return <NetworkStatsPanel device={selectedDevice} packageName={packageName} />;
+        return <NetworkStatsPanel device={activeDevice} packageName={packageName} />;
       case 'activity-stack':
-        return <ActivityStackPanel device={selectedDevice} packageName={packageName} />;
+        return <ActivityStackPanel device={activeDevice} packageName={packageName} />;
       case 'jobs':
-        return <JobSchedulerPanel device={selectedDevice} packageName={packageName} />;
+        return <JobSchedulerPanel device={activeDevice} packageName={packageName} />;
       case 'alarms':
-        return <AlarmMonitorPanel device={selectedDevice} packageName={packageName} />;
+        return <AlarmMonitorPanel device={activeDevice} packageName={packageName} />;
       case 'websocket':
         return <WebSocketPanel />;
       case 'install-app':
-        return <AppInstallerPanel device={selectedDevice} />;
+        return <AppInstallerPanel device={activeDevice} />;
       case 'thread-monitor':
-        return <ThreadMonitorPanel device={selectedDevice} packageName={packageName} />;
+        return <ThreadMonitorPanel device={activeDevice} packageName={packageName} />;
       case 'gc-monitor':
-        return <GcMonitorPanel device={selectedDevice} packageName={packageName} />;
+        return <GcMonitorPanel device={activeDevice} packageName={packageName} />;
       case 'heap-dump':
-        return <HeapDumpPanel device={selectedDevice} packageName={packageName} />;
+        return <HeapDumpPanel device={activeDevice} packageName={packageName} />;
       case 'method-trace':
-        return <MethodTracePanel device={selectedDevice} packageName={packageName} />;
+        return <MethodTracePanel device={activeDevice} packageName={packageName} />;
       case 'screen-mirror':
-        return <ScreenMirrorPanel device={selectedDevice} />;
+        return <ScreenMirrorPanel device={activeDevice} />;
       default:
         return null;
     }
   };
 
   return (
-    <SdkProvider>
-      <LogsProvider selectedDevice={selectedDevice} packageName={packageName}>
+    <SdkProvider sessionKey={`${activeDevice?.id ?? ''}:${packageName}`}>
+      <LogsProvider selectedDevice={activeDevice} packageName={packageName}>
         <div className="h-screen flex flex-col bg-background text-text-primary">
           <Header
             devices={devices}
