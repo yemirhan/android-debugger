@@ -3260,6 +3260,7 @@ export class AdbService extends EventEmitter {
     const id = `heap-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const remotePath = `/data/local/tmp/${id}.hprof`;
     const localPath = path.join(os.tmpdir(), `${id}.hprof`);
+    let captureAttempted = false;
 
     try {
       onProgress?.('capturing', 10);
@@ -3278,6 +3279,7 @@ export class AdbService extends EventEmitter {
 
       // Capture heap dump
       onProgress?.('capturing', 30);
+      captureAttempted = true;
       await runAdb(
         deviceId,
         ['shell', 'am', 'dumpheap', String(pid), remotePath],
@@ -3314,6 +3316,14 @@ export class AdbService extends EventEmitter {
         status: 'ready',
       };
     } catch (error) {
+      if (captureAttempted) {
+        await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
+      }
+      try {
+        if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
+      } catch (cleanupError) {
+        console.error('Error cleaning up failed heap dump:', cleanupError);
+      }
       const message = error instanceof Error ? error.message : 'Unknown error';
       return {
         id,
@@ -3341,10 +3351,26 @@ export class AdbService extends EventEmitter {
   async getHeapInstances(filePath: string, classId: number): Promise<HeapInstance[]> {
     try {
       if (!fs.existsSync(filePath)) return [];
-      return parseHprof(fs.readFileSync(filePath)).instances.get(classId) ?? [];
+      return parseHprof(fs.readFileSync(filePath), { instanceClassId: classId }).instances.get(classId) ?? [];
     } catch (error) {
       console.error('Error parsing HPROF instances:', error);
       return [];
+    }
+  }
+
+  deleteHeapDumps(filePaths: string[]): void {
+    const tempDirectory = path.resolve(os.tmpdir());
+    for (const filePath of filePaths.slice(0, 100)) {
+      const resolved = path.resolve(filePath);
+      const fileName = path.basename(resolved);
+      if (path.dirname(resolved) !== tempDirectory || !/^heap-[a-zA-Z0-9-]+\.hprof$/.test(fileName)) {
+        continue;
+      }
+      try {
+        if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
+      } catch (error) {
+        console.error('Error deleting heap dump:', error);
+      }
     }
   }
 

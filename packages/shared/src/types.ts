@@ -610,6 +610,79 @@ export interface HeapAnalysis {
   classes: HeapClass[];
 }
 
+export type HeapSnapshotKind = 'baseline' | 'checkpoint' | 'final' | 'manual';
+export type HeapLeakSessionPhase =
+  | 'capturing-baseline'
+  | 'running'
+  | 'capturing-checkpoint'
+  | 'capturing-final'
+  | 'complete'
+  | 'error';
+export type HeapCaptureAutomation = 'manual' | 'interval' | 'memory-threshold';
+
+export interface HeapSnapshot {
+  id: string;
+  label: string;
+  kind: HeapSnapshotKind;
+  iteration: number;
+  timestamp: number;
+  dump: HeapDumpInfo;
+  analysis: HeapAnalysis;
+}
+
+export interface HeapMemorySample {
+  timestamp: number;
+  totalPssKb: number;
+}
+
+export interface HeapClassDelta {
+  name: string;
+  baselineInstances: number;
+  finalInstances: number;
+  instanceDelta: number;
+  baselineShallowSize: number;
+  finalShallowSize: number;
+  shallowSizeDelta: number;
+  growthPercent: number;
+  growthSteps: number;
+  snapshotCount: number;
+  monotonicGrowth: boolean;
+  appOwned: boolean;
+  score: number;
+  confidence: 'high' | 'medium' | 'low';
+  reasons: string[];
+}
+
+export interface HeapComparison {
+  baselineObjects: number;
+  finalObjects: number;
+  objectDelta: number;
+  baselineSize: number;
+  finalSize: number;
+  sizeDelta: number;
+  snapshotsCompared: number;
+  growingClasses: number;
+  suspects: HeapClassDelta[];
+  classes: HeapClassDelta[];
+}
+
+export interface HeapLeakSession {
+  id: string;
+  name: string;
+  phase: HeapLeakSessionPhase;
+  automation: HeapCaptureAutomation;
+  intervalSeconds: number;
+  thresholdMb: number;
+  maxSnapshots: number;
+  startedAt: number;
+  completedAt?: number;
+  iterations: number;
+  snapshots: HeapSnapshot[];
+  memorySamples: HeapMemorySample[];
+  comparison?: HeapComparison;
+  error?: string;
+}
+
 // Method Trace types
 export type MethodTraceStatus = 'recording' | 'parsing' | 'ready' | 'error';
 

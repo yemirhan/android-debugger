@@ -101,7 +101,7 @@ test('HPROF parser counts instances and arrays without fabricating retained size
     hprofRecord(0x02, loadClass),
     hprofRecord(0x01, string),
     hprofRecord(0x1c, Buffer.concat([classDump, instance, byteArray])),
-  ]));
+  ]), { instanceClassId: 2 });
   assert.equal(result.analysis.totalObjects, 2);
   assert.equal(result.analysis.totalSize, 19);
   const foo = result.analysis.classes.find((heapClass) => heapClass.id === 2);

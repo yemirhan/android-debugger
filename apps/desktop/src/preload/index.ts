@@ -209,6 +209,8 @@ export interface ElectronAPI {
   captureHeapDump: (deviceId: string, packageName: string) => Promise<HeapDumpInfo>;
   analyzeHeapDump: (filePath: string) => Promise<HeapAnalysis | null>;
   getHeapInstances: (filePath: string, classId: number) => Promise<HeapInstance[]>;
+  deleteHeapDumps: (filePaths: string[]) => Promise<void>;
+  exportHeapReport: (report: string, defaultName: string) => Promise<{ success: boolean; canceled?: boolean; path?: string }>;
   onHeapDumpProgress: (callback: (progress: { id: string; status: string; progress?: number; error?: string }) => void) => UnsubscribeFn;
 
   // Method Trace
@@ -519,6 +521,9 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('profiler:analyze-heap-dump', filePath),
   getHeapInstances: (filePath, classId) =>
     ipcRenderer.invoke('profiler:get-heap-instances', filePath, classId),
+  deleteHeapDumps: (filePaths) => ipcRenderer.invoke('profiler:delete-heap-dumps', filePaths),
+  exportHeapReport: (report, defaultName) =>
+    ipcRenderer.invoke('profiler:export-heap-report', report, defaultName),
   onHeapDumpProgress: (callback) => {
     const listener = (_: Electron.IpcRendererEvent, progress: { id: string; status: string; progress?: number; error?: string }) => callback(progress);
     ipcRenderer.on('heap-dump-progress', listener);

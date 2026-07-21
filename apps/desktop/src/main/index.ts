@@ -1218,6 +1218,30 @@ function setupIpcHandlers(): void {
     return adbService.getHeapInstances(filePath, classId);
   });
 
+  ipcMain.handle('profiler:delete-heap-dumps', (_, filePaths: string[]) => {
+    adbService.deleteHeapDumps(Array.isArray(filePaths) ? filePaths : []);
+  });
+
+  ipcMain.handle('profiler:export-heap-report', async (_, report: string, defaultName: string) => {
+    if (typeof report !== 'string' || report.length > 5 * 1024 * 1024) {
+      throw new Error('Invalid heap report');
+    }
+    const safeName = typeof defaultName === 'string'
+      ? defaultName.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80)
+      : 'heap-leak-report';
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export Heap Leak Report',
+      defaultPath: `${safeName || 'heap-leak-report'}.txt`,
+      filters: [{ name: 'Text Report', extensions: ['txt'] }],
+    };
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    fs.writeFileSync(result.filePath, report, 'utf8');
+    return { success: true, path: result.filePath };
+  });
+
   // Method Trace
   ipcMain.handle('profiler:start-method-trace', async (_, deviceId: string, packageName: string) => {
     return adbService.startMethodTrace(deviceId, packageName);

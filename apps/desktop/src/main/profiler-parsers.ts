@@ -12,6 +12,10 @@ interface HprofParseResult {
   instances: Map<number, HeapInstance[]>;
 }
 
+interface HprofParseOptions {
+  instanceClassId?: number;
+}
+
 interface HprofRecord {
   tag: number;
   start: number;
@@ -78,7 +82,7 @@ function addClassSample(
   classes.set(classId, current);
 }
 
-export function parseHprof(buffer: Buffer): HprofParseResult {
+export function parseHprof(buffer: Buffer, options: HprofParseOptions = {}): HprofParseResult {
   const terminator = buffer.indexOf(0);
   if (terminator < 0 || !buffer.subarray(0, terminator).toString('utf8').startsWith('JAVA PROFILE ')) {
     throw new Error('Invalid HPROF header');
@@ -118,6 +122,7 @@ export function parseHprof(buffer: Buffer): HprofParseResult {
   let totalSize = 0;
 
   const rememberInstance = (id: number, classId: number, shallowSize: number): void => {
+    if (options.instanceClassId === undefined || options.instanceClassId !== classId) return;
     const list = instances.get(classId) ?? [];
     if (list.length < 10_000) {
       list.push({
@@ -223,7 +228,7 @@ export function parseHprof(buffer: Buffer): HprofParseResult {
     name: className(id),
     instanceCount: sample.instanceCount,
     shallowSize: sample.shallowSize,
-  })).sort((a, b) => b.shallowSize - a.shallowSize).slice(0, 500);
+  })).sort((a, b) => b.shallowSize - a.shallowSize);
 
   for (const [classId, values] of instances) {
     const name = className(classId);
