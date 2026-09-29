@@ -43,7 +43,6 @@ import type {
   BundleAnalysisResult,
 } from '@android-debugger/shared';
 import type { MonitorApi, MonitorKind } from './monitor-types';
-
 import type {
   LogBatch,
   LogHistoryRequest,
@@ -51,6 +50,7 @@ import type {
   LogStreamRequest,
   LogStreamStatus,
 } from '../main/logcat-format';
+import type { MetroAppCommand, MetroProbe } from '../main/rn-devtools-protocol';
 
 export type UnsubscribeFn = () => void;
 export type SocketTransportType = 'socket' | 'logcat' | 'none';
@@ -254,6 +254,18 @@ export interface ElectronAPI extends MonitorApi {
   showItemInFolder: (filePath: string) => Promise<void>;
   writeClipboardText: (text: string) => Promise<void>;
   writeClipboardImage: (filePath: string) => Promise<void>;
+
+  // React Native DevTools (Metro)
+  rnDevtools: {
+    probe: (port: number) => Promise<MetroProbe>;
+    sendCommand: (port: number, method: MetroAppCommand) => Promise<{ ok: boolean; error?: string }>;
+    openExternal: (port: number, targetId: string) => Promise<{ ok: boolean; error?: string }>;
+    isReversed: (deviceId: string, port: number) => Promise<boolean>;
+    reverse: (deviceId: string, port: number) => Promise<{ ok: boolean; error?: string }>;
+    openDevMenuViaAdb: (deviceId: string) => Promise<{ ok: boolean; error?: string }>;
+    /** App shortcuts pressed while focus is inside the DevTools webview. */
+    onShortcut: (callback: (shortcut: 'command-palette') => void) => UnsubscribeFn;
+  };
 }
 
 const socketStatusListeners = new Set<(status: { type: SocketTransportType }) => void>();
@@ -622,6 +634,21 @@ const electronAPI: ElectronAPI = {
   showItemInFolder: (filePath) => ipcRenderer.invoke('shell:show-item-in-folder', filePath),
   writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
   writeClipboardImage: (filePath) => ipcRenderer.invoke('clipboard:write-image', filePath),
+
+  // React Native DevTools (Metro)
+  rnDevtools: {
+    probe: (port) => ipcRenderer.invoke('rn-devtools:probe', port),
+    sendCommand: (port, method) => ipcRenderer.invoke('rn-devtools:command', port, method),
+    openExternal: (port, targetId) => ipcRenderer.invoke('rn-devtools:open-external', port, targetId),
+    isReversed: (deviceId, port) => ipcRenderer.invoke('rn-devtools:is-reversed', deviceId, port),
+    reverse: (deviceId, port) => ipcRenderer.invoke('rn-devtools:reverse', deviceId, port),
+    openDevMenuViaAdb: (deviceId) => ipcRenderer.invoke('rn-devtools:dev-menu-adb', deviceId),
+    onShortcut: (callback) => {
+      const listener = (_: Electron.IpcRendererEvent, shortcut: 'command-palette') => callback(shortcut);
+      ipcRenderer.on('rn-devtools:shortcut', listener);
+      return () => ipcRenderer.removeListener('rn-devtools:shortcut', listener);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

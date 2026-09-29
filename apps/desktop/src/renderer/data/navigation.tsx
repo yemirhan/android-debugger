@@ -34,6 +34,7 @@ import {
   ScreenMirrorIcon,
   SettingsIcon,
 } from '../components/icons';
+import { ReactNativeIcon } from '../components/rn-devtools/icons';
 
 export const dashboardItem: NavItem = { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> };
 export const settingsItem: NavItem = { id: 'settings', label: 'Settings', icon: <SettingsIcon /> };
@@ -64,6 +65,7 @@ export const navigationGroups: NavGroup[] = [
       { id: 'network', label: 'Network', icon: <NetworkIcon /> },
       { id: 'websocket', label: 'WebSocket', icon: <WebSocketIcon /> },
       { id: 'sdk', label: 'SDK', icon: <SdkIcon /> },
+      { id: 'rn-devtools', label: 'React Native DevTools', icon: <ReactNativeIcon /> },
     ],
   },
   {

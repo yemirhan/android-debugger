@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { deflateSync } from 'zlib';
 import type { UpdateSettings, UpdateInfo, UpdateProgress, UpdateCheckResult, BundleAnalysisResult } from '@android-debugger/shared';
 import { analyzeBundle, extractBundleEntry } from './bundle-analyzer';
+import { registerRnDevtoolsIpc, guardDevtoolsWebviews } from './rn-devtools';
 
 interface AdbInfo {
   path: string;
@@ -594,8 +595,11 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Hosts the React Native DevTools frontend; locked down by guardDevtoolsWebviews.
+      webviewTag: true,
     },
   });
+  guardDevtoolsWebviews(mainWindow.webContents);
 
   // Load the renderer
   const load = process.env.ELECTRON_RENDERER_URL
@@ -1386,6 +1390,7 @@ function setupAutoUpdaterEvents(): void {
 
 app.whenReady().then(() => {
   setupIpcHandlers();
+  registerRnDevtoolsIpc();
   setupAutoUpdaterEvents();
   createWindow();
   createTray();
