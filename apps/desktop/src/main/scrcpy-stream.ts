@@ -73,6 +73,10 @@ function adb(deviceId: string, args: string[], timeout = ADB_TIMEOUT_MS) {
   return execFileAsync('adb', ['-s', deviceId, ...args], { encoding: 'utf8', timeout });
 }
 
+function ignoreSocketError(): void {
+  // Errors are always followed by 'close', which is what ends the session.
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -209,7 +213,13 @@ export class ScrcpyMirrorSession {
         socket.removeListener('end', onFail);
         socket.removeListener('close', onFail);
         clearTimeout(timer);
-        if (!result) socket.destroy();
+        if (result) {
+          // Keep an 'error' listener until wireSockets() installs the real
+          // handlers; an unhandled socket error would crash the main process.
+          socket.on('error', ignoreSocketError);
+        } else {
+          socket.destroy();
+        }
         resolve(result);
       };
       const onReadable = () => {
@@ -237,6 +247,7 @@ export class ScrcpyMirrorSession {
       socket.once('error', onError);
       socket.once('connect', () => {
         socket.removeListener('error', onError);
+        socket.on('error', ignoreSocketError);
         resolve(socket);
       });
     });
@@ -290,7 +301,7 @@ export class ScrcpyMirrorSession {
       this.close(serverError ?? 'The mirror connection closed. The device may have been disconnected.');
     };
     for (const socket of [videoSocket, controlSocket]) {
-      socket.on('error', () => {});
+      // 'error' is already swallowed (ignoreSocketError); 'close' follows it.
       socket.on('close', onSocketGone);
     }
   }

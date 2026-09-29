@@ -4,8 +4,9 @@
  * the window is hidden or showing another tab. Filled by tapping the same
  * streams index.ts / monitor-hub.ts already forward to the renderer.
  *
- * Pure (type-only imports) so it can be unit tested with node:test.
+ * Pure (type-only imports plus node:vm) so it can be unit tested with node:test.
  */
+import * as vm from 'node:vm';
 import type {
   ConsoleMessage,
   CrashEntry,
@@ -380,30 +381,62 @@ export interface LogQueryResult {
   matched: number;
 }
 
-export function queryLogLines(lines: readonly LogLine[], query: LogQuery): LogQueryResult {
+/** Wall-clock budget for one regex search over the log lines. */
+export const REGEX_SEARCH_TIMEOUT_MS = 1000;
+
+const REGEX_SEARCH_SCRIPT = new vm.Script(`(() => {
+  const re = new RegExp(pattern, 'i');
+  const hits = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (re.test(messages[i]) || re.test(tags[i])) hits.push(i);
+  }
+  return hits;
+})()`);
+
+/**
+ * Runs a client-supplied regex in a vm context with a timeout, so a
+ * catastrophically backtracking pattern (e.g. "(a+)+$") errors out instead of
+ * freezing the main process.
+ */
+function regexSearch(pattern: string, candidates: readonly LogLine[], timeoutMs: number): Set<number> {
+  const messages = candidates.map((line) => line.message);
+  const tags = candidates.map((line) => line.tag);
+  try {
+    const hits = REGEX_SEARCH_SCRIPT.runInNewContext({ pattern, messages, tags }, { timeout: timeoutMs }) as number[];
+    return new Set(Array.from(hits));
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      throw new Error('The regular expression took too long to run. Simplify it (avoid nested quantifiers such as "(a+)+").');
+    }
+    throw error;
+  }
+}
+
+export function queryLogLines(
+  lines: readonly LogLine[],
+  query: LogQuery,
+  options: { regexTimeoutMs?: number } = {}
+): LogQueryResult {
   const minRank = LEVEL_RANK[query.minLevel ?? 'V'] ?? 0;
   const include = query.tags?.length ? new Set(query.tags.map((tag) => tag.toLowerCase())) : null;
   const exclude = query.excludeTags?.length ? new Set(query.excludeTags.map((tag) => tag.toLowerCase())) : null;
-  let matchText: ((text: string) => boolean) | null = null;
   const search = query.search?.trim();
+  let needle: string | null = null;
   if (search) {
     if (query.regex) {
-      let re: RegExp;
       try {
-        re = new RegExp(search, 'i');
+        new RegExp(search, 'i'); // syntax check only; matching runs under a timeout
       } catch (error) {
         const reason = error instanceof Error ? error.message.replace(/^Invalid regular expression:\s*/, '') : String(error);
         throw new Error(`Invalid regular expression: ${reason}`);
       }
-      matchText = (text) => re.test(text);
     } else {
-      const needle = search.toLowerCase();
-      matchText = (text) => text.toLowerCase().includes(needle);
+      needle = search.toLowerCase();
     }
   }
   const since = query.sinceEpochMs ?? null;
 
-  const matched: LogLine[] = [];
+  let matched: LogLine[] = [];
   for (const line of lines) {
     if ((LEVEL_RANK[line.level] ?? 0) < minRank) continue;
     const tag = line.tag.toLowerCase();
@@ -411,8 +444,12 @@ export function queryLogLines(lines: readonly LogLine[], query: LogQuery): LogQu
     if (exclude && exclude.has(tag)) continue;
     // Lines without a device timestamp can't be placed in time; keep them.
     if (since !== null && line.epochMs > 0 && line.epochMs < since) continue;
-    if (matchText && !matchText(line.message) && !matchText(line.tag)) continue;
+    if (needle !== null && !line.message.toLowerCase().includes(needle) && !tag.includes(needle)) continue;
     matched.push(line);
+  }
+  if (search && query.regex && matched.length > 0) {
+    const hits = regexSearch(search, matched, options.regexTimeoutMs ?? REGEX_SEARCH_TIMEOUT_MS);
+    matched = matched.filter((_, index) => hits.has(index));
   }
   const limit = Math.max(1, Math.floor(query.limit));
   return { lines: matched.slice(-limit), matched: matched.length };

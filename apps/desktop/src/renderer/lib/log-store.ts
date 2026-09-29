@@ -15,6 +15,7 @@ export type LogStatus =
   | 'starting'
   | 'streaming'
   | 'waiting-for-app'
+  | 'app-not-installed'
   | 'ended'
   | 'error';
 
@@ -92,6 +93,8 @@ export function createLogStore(options: LogStoreOptions) {
   let target: LogTarget | null = null;
   let resumeRequested = false;
   let consecutiveEnds = 0;
+  /** Identifies the current "load earlier lines" request; bumped on every reset. */
+  let historyRequest = 0;
 
   const set = (patch: Partial<LogStoreState>) => {
     state = { ...state, ...patch };
@@ -100,18 +103,21 @@ export function createLogStore(options: LogStoreOptions) {
 
   const trim = (rows: LogRow[], capacity: number) => (rows.length > capacity ? rows.slice(rows.length - capacity) : rows);
 
-  const resetRows = (): Partial<LogStoreState> => ({
-    rows: [],
-    generation: state.generation + 1,
-    received: 0,
-    dropped: 0,
-    evicted: 0,
-    coverageStartEpochMs: undefined,
-    history: 'idle',
-    historyMessage: undefined,
-    frozenRows: state.paused ? [] : null,
-    frozenGeneration: state.generation + 1,
-  });
+  const resetRows = (): Partial<LogStoreState> => {
+    historyRequest++; // a pending history load belongs to the old buffer
+    return {
+      rows: [],
+      generation: state.generation + 1,
+      received: 0,
+      dropped: 0,
+      evicted: 0,
+      coverageStartEpochMs: undefined,
+      history: 'idle',
+      historyMessage: undefined,
+      frozenRows: state.paused ? [] : null,
+      frozenGeneration: state.generation + 1,
+    };
+  };
 
   return {
     subscribe(listener: () => void): () => void {
@@ -231,6 +237,7 @@ export function createLogStore(options: LogStoreOptions) {
     },
 
     clear(): void {
+      historyRequest++;
       const generation = state.generation + 1;
       set({
         rows: [],
@@ -247,12 +254,18 @@ export function createLogStore(options: LogStoreOptions) {
       });
     },
 
-    setHistoryLoading(): void {
+    /**
+     * Starts a history load. Pass the returned token to prependHistory(); a
+     * target change or clear in the meantime makes the result stale.
+     */
+    beginHistoryLoad(): number {
       set({ history: 'loading', historyMessage: undefined });
+      return ++historyRequest;
     },
 
     /** Prepends lines that were logged before the buffer's coverage started. */
-    prependHistory(entries: LogLine[], error?: string): void {
+    prependHistory(token: number, entries: LogLine[], error?: string): void {
+      if (token !== historyRequest) return;
       if (error) {
         set({ history: 'error', historyMessage: error });
         return;

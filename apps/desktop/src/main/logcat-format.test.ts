@@ -7,6 +7,8 @@ import {
   buildHistoryArgs,
   buildSdkStreamArgs,
   buildStreamArgs,
+  MAX_RESUME_GAP_MS,
+  chooseStreamStart,
   formatLogcatSince,
   parseDeviceEpoch,
   parseLogcatLine,
@@ -138,4 +140,15 @@ test('tail buffer keeps the newest items', () => {
   const tail = new TailBuffer<number>(3);
   for (let i = 1; i <= 10; i++) tail.push(i);
   assert.deepEqual(tail.toArray(), [8, 9, 10]);
+});
+
+test('streams resume after a short gap but start at "now" after a long one', () => {
+  const now = { since: '1790670100.000', epochMs: 1790670100000 };
+  assert.deepEqual(chooseStreamStart(undefined, now), { since: now.since, sinceEpochMs: now.epochMs });
+  assert.deepEqual(chooseStreamStart(1790670090000, now), { since: '1790670090.001', sinceEpochMs: 1790670090001 });
+  // Away longer than the limit (unplugged overnight, rebooted): no replay.
+  assert.deepEqual(chooseStreamStart(now.epochMs - MAX_RESUME_GAP_MS - 1, now), { since: now.since, sinceEpochMs: now.epochMs });
+  // Device time unknown: keep resuming rather than replaying the whole buffer.
+  assert.deepEqual(chooseStreamStart(1000, null), { since: '1.001', sinceEpochMs: 1001 });
+  assert.deepEqual(chooseStreamStart(undefined, null), { since: null, sinceEpochMs: undefined });
 });

@@ -40,6 +40,18 @@ test('queryLogLines filters by level, tags, search, regex and time and keeps the
   assert.equal(limited.matched, 4);
   assert.deepEqual(limited.lines.map((l) => l.message), ['crash soon']);
   assert.throws(() => queryLogLines(lines, { search: '(', regex: true, limit: 1 }), /Invalid regular expression/);
+  // Tags are searched too.
+  assert.equal(queryLogLines(lines, { search: '^ui$', regex: true, limit: 10 }).matched, 2);
+});
+
+test('queryLogLines stops a catastrophically backtracking regex instead of hanging', () => {
+  const lines = [line({ message: `${'a'.repeat(40)}b` })];
+  const started = Date.now();
+  assert.throws(
+    () => queryLogLines(lines, { search: '(a+)+$', regex: true, limit: 10 }, { regexTimeoutMs: 100 }),
+    /took too long/
+  );
+  assert.ok(Date.now() - started < 2000);
 });
 
 test('parseSince understands relative, ISO and epoch values', () => {

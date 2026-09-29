@@ -52,7 +52,7 @@ import {
   buildHistoryArgs,
   buildSdkStreamArgs,
   buildStreamArgs,
-  formatLogcatSince,
+  chooseStreamStart,
   parseDeviceEpoch,
   parseLogcatLine,
   type LogBatch,
@@ -524,16 +524,22 @@ export class AdbService extends EventEmitter {
   /**
    * Resolves how to scope logcat to one app: the uid (Android 9+, survives app
    * restarts) or, on older devices, the current pid. Both are missing when the
-   * app is not installed / not running.
+   * app is not installed / not running; `notInstalled` tells the two apart on
+   * Android 9+, where an installed app always has a uid.
    */
-  async resolveLogTarget(deviceId: string, packageName: string): Promise<{ uid?: number; pid?: number }> {
+  async resolveLogTarget(
+    deviceId: string,
+    packageName: string
+  ): Promise<{ uid?: number; pid?: number; notInstalled?: boolean }> {
     const sdk = await this.getDeviceSdkVersion(deviceId);
-    if (sdk === 0 || sdk >= 28) {
+    const uidLookup = sdk >= 28;
+    if (sdk === 0 || uidLookup) {
       const uid = await this.getUid(deviceId, packageName);
       if (uid) return { uid };
     }
     const pid = await this.getPid(deviceId, packageName);
-    return pid ? { pid } : {};
+    if (pid) return { pid };
+    return uidLookup ? { notInstalled: true } : {};
   }
 
   /** Device wall-clock time, so logcat can start at "now" (`-T`). */
@@ -576,23 +582,16 @@ export class AdbService extends EventEmitter {
         if (!isCurrent()) return;
         // Never fall back to the whole device's log when an app was asked for.
         if (!target.uid && !target.pid) {
-          status('waiting-for-app', { message: `${packageName} is not running.` });
+          if (target.notInstalled) status('app-not-installed', { message: `${packageName} isn’t installed on this device.` });
+          else status('waiting-for-app', { message: `${packageName} is not running.` });
           return;
         }
-        selector = { mode, ...target };
+        selector = { mode, uid: target.uid, pid: target.pid };
       }
 
-      let since: string | null;
-      let sinceEpochMs: number | undefined;
-      if (request.resumeAfterEpochMs && request.resumeAfterEpochMs > 0) {
-        sinceEpochMs = request.resumeAfterEpochMs + 1;
-        since = formatLogcatSince(sinceEpochMs);
-      } else {
-        const now = await this.getDeviceLogcatNow(deviceId);
-        if (!isCurrent()) return;
-        since = now?.since ?? null;
-        sinceEpochMs = now?.epochMs;
-      }
+      const now = await this.getDeviceLogcatNow(deviceId);
+      if (!isCurrent()) return;
+      const { since, sinceEpochMs } = chooseStreamStart(request.resumeAfterEpochMs, now);
 
       const child = spawn('adb', ['-s', deviceId, ...buildStreamArgs(selector, since)]);
       this.logcatProcess = child;
@@ -661,8 +660,13 @@ export class AdbService extends EventEmitter {
         if (!packageName) return { entries: [], error: 'Choose an app first.' };
         assertPackageName(packageName);
         const target = await this.resolveLogTarget(deviceId, packageName);
-        if (!target.uid && !target.pid) return { entries: [], error: `${packageName} is not running.` };
-        selector = { mode, ...target };
+        if (!target.uid && !target.pid) {
+          return {
+            entries: [],
+            error: target.notInstalled ? `${packageName} isn’t installed on this device.` : `${packageName} is not running.`,
+          };
+        }
+        selector = { mode, uid: target.uid, pid: target.pid };
       }
 
       const tail = new TailBuffer<LogLine>(limit);

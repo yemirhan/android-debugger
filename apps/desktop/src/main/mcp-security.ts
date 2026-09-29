@@ -8,7 +8,8 @@
  *  - carry no Origin, or a loopback one (blocks browsers on other sites),
  *  - present the per-install bearer token.
  */
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import * as path from 'node:path';
 
 export interface McpRequestHeaders {
   host?: string;
@@ -68,7 +69,54 @@ export function checkMcpRequest(headers: McpRequestHeaders, expected: { port: nu
   return { ok: true };
 }
 
+/**
+ * Lets the stdio bridge check it is talking to this app before it sends the
+ * token: any request with a nonce header gets HMAC(token, nonce) back.
+ * Mirrors bridgeProof() in mcp-bridge-core.ts.
+ */
+export const MCP_NONCE_HEADER = 'x-android-debugger-nonce';
+export const MCP_PROOF_HEADER = 'x-android-debugger-proof';
+
+export function mcpServerProof(token: string, nonce: unknown): string | null {
+  if (typeof nonce !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) return null;
+  return createHmac('sha256', token).update(`android-debugger-mcp:${nonce}`).digest('base64url');
+}
+
 /** 32 random bytes as URL-safe base64 (43 characters). */
 export function generateMcpToken(): string {
   return randomBytes(32).toString('base64url');
+}
+
+export type SavePathCheck = { ok: true; path: string } | { ok: false; message: string };
+
+/**
+ * Validates a tool-supplied save location (screenshots, recordings). The text
+ * an assistant reads from the device (logs, network bodies) is untrusted, so a
+ * custom path may never replace an existing file, and writing outside the
+ * captures folder counts as a risky action.
+ */
+export function checkSavePath(
+  savePath: string,
+  extension: string,
+  capturesDir: string,
+  options: { riskyAllowed: boolean; exists: (filePath: string) => boolean; settingsHint: string }
+): SavePathCheck {
+  if (!path.isAbsolute(savePath) || !savePath.toLowerCase().endsWith(extension)) {
+    return { ok: false, message: `savePath must be an absolute path ending in ${extension}.` };
+  }
+  const resolved = path.resolve(savePath);
+  if (options.exists(resolved)) {
+    return { ok: false, message: `${resolved} already exists. Choose a new file name; existing files are never overwritten.` };
+  }
+  const relative = path.relative(path.resolve(capturesDir), resolved);
+  const insideCaptures = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (!insideCaptures && !options.riskyAllowed) {
+    return {
+      ok: false,
+      message:
+        `Saving outside the captures folder (${capturesDir}) needs "Allow risky tools" in ${options.settingsHint}. ` +
+        'Leave savePath out to save in the captures folder.',
+    };
+  }
+  return { ok: true, path: resolved };
 }

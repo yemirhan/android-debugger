@@ -2,6 +2,7 @@ import { ipcMain, clipboard, MessageChannelMain, type MessagePortMain, type WebC
 import { randomUUID } from 'crypto';
 import { scrcpyService } from './scrcpy-service';
 import { ScrcpyMirrorSession, ServerVersionMismatchError, type MirrorSessionOptions } from './scrcpy-stream';
+import { isSupportedServerVersion, MIN_SCRCPY_SERVER_MAJOR } from './scrcpy-protocol';
 import type {
   MirrorPortMessage,
   MirrorServerStatus,
@@ -24,6 +25,12 @@ interface ActiveMirror {
 }
 
 let active: ActiveMirror | null = null;
+/** Bumped by every start; a start that was overtaken while awaiting gives up. */
+let startGeneration = 0;
+
+const OUTDATED_SERVER_ERROR = (version: string) =>
+  `scrcpy ${version} is too old for in-app mirroring (needs ${MIN_SCRCPY_SERVER_MAJOR}.0 or newer). ` +
+  'Update it with "brew upgrade scrcpy" or download the latest version below.';
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
@@ -72,16 +79,23 @@ async function startMirrorSession(
     return { success: false, error: 'Invalid Android device ID', code: 'failed' };
   }
   const options = sanitizeOptions(rawOptions);
+  const generation = ++startGeneration;
+  const superseded = (): MirrorStartResult => ({ success: false, error: 'Mirroring was stopped', code: 'failed' });
 
   await stopMirrorSession();
+  if (generation !== startGeneration) return superseded();
 
   const server = await scrcpyService.getServerInfo();
+  if (generation !== startGeneration) return superseded();
   if (!server) {
     return {
       success: false,
       code: 'server-missing',
       error: 'The scrcpy server was not found. Install scrcpy (brew install scrcpy) or download it below.',
     };
+  }
+  if (!isSupportedServerVersion(server.version)) {
+    return { success: false, code: 'server-missing', error: OUTDATED_SERVER_ERROR(server.version ?? '') };
   }
 
   const id = randomUUID();
@@ -142,7 +156,10 @@ async function startMirrorSession(
   webContents.on('did-start-navigation', onNavigate);
   webContents.on('render-process-gone', onGone);
   webContents.on('destroyed', onGone);
+  let detached = false;
   const detach = () => {
+    if (detached) return;
+    detached = true;
     if (webContents.isDestroyed()) return;
     webContents.removeListener('did-start-navigation', onNavigate);
     webContents.removeListener('render-process-gone', onGone);
@@ -170,6 +187,7 @@ async function startMirrorSession(
     } catch (error) {
       // The installed server reports its own version; retry once with it.
       if (!(error instanceof ServerVersionMismatchError) || active?.id !== id) throw error;
+      if (!isSupportedServerVersion(error.serverVersion)) throw new Error(OUTDATED_SERVER_ERROR(error.serverVersion));
       session = createSession(error.serverVersion);
       active = { id, deviceId, session, port: port1, detach };
       await session.start();
@@ -178,10 +196,8 @@ async function startMirrorSession(
     return { success: true, sessionId: id };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to start mirroring';
-    if (active?.id === id) {
-      active = null;
-      detach();
-    }
+    if (active?.id === id) active = null;
+    detach();
     if (!closed) {
       closed = true;
       post(port1, { type: 'closed', error: message });
@@ -194,7 +210,8 @@ async function startMirrorSession(
 
 async function getServerStatus(): Promise<MirrorServerStatus> {
   const info = await scrcpyService.getServerInfo();
-  return { available: !!info, version: info?.version ?? null, path: info?.path ?? null };
+  const outdated = !!info && !isSupportedServerVersion(info.version);
+  return { available: !!info && !outdated, outdated, version: info?.version ?? null, path: info?.path ?? null };
 }
 
 export function registerMirrorIpcHandlers(): void {

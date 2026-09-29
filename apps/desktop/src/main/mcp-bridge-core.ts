@@ -6,11 +6,26 @@
  * Must NOT be imported by the main process bundle (it would turn into a shared
  * chunk and the bridge would stop being a single self-contained file).
  */
+import { createHmac, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 export const BRIDGE_APP_FOLDER = 'Android Debugger';
 export const BRIDGE_CONFIG_FILE = 'mcp.json';
+
+/**
+ * Before sending the token, the bridge asks the listener to prove it knows it:
+ * the server answers any request carrying a nonce with HMAC(token, nonce).
+ * Anything else on the port (another local user squatting it while the app
+ * is closed) can't, so it never sees the token. Kept in sync with
+ * mcp-security.ts (checked by mcp-bridge.test.ts).
+ */
+export const BRIDGE_NONCE_HEADER = 'x-android-debugger-nonce';
+export const BRIDGE_PROOF_HEADER = 'x-android-debugger-proof';
+
+export function bridgeProof(token: string, nonce: string): string {
+  return createHmac('sha256', token).update(`android-debugger-mcp:${nonce}`).digest('base64url');
+}
 
 export interface BridgeArgs {
   configPath?: string;
@@ -108,7 +123,8 @@ export type FetchLike = (
 export async function forwardLine(
   line: string,
   loadConfig: () => BridgeConfig,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  makeNonce: () => string = () => randomBytes(24).toString('base64url')
 ): Promise<{ stdout: string[]; stderr: string[] }> {
   const trimmed = line.trim();
   if (!trimmed) return { stdout: [], stderr: [] };
@@ -127,9 +143,41 @@ export async function forwardLine(
     return failAll('The MCP server is turned off. Turn it on in Android Debugger → Settings → AI assistants (MCP).');
   }
 
+  const url = `http://127.0.0.1:${config.port}/mcp`;
+  const unreachable = (error: unknown) => {
+    const cause = (error as { cause?: { code?: string } })?.cause?.code;
+    return failAll(
+      cause === 'ECONNREFUSED'
+        ? `Android Debugger is not running (nothing is listening on 127.0.0.1:${config.port}). Open the app and try again.`
+        : `Could not reach Android Debugger on 127.0.0.1:${config.port}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  };
+
+  // Make sure the listener is Android Debugger before handing it the token.
+  const nonce = makeNonce();
+  let proof: string | null;
+  try {
+    const probe = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', [BRIDGE_NONCE_HEADER]: nonce },
+      body: '{}',
+    });
+    await probe.text().catch(() => '');
+    proof = probe.headers.get(BRIDGE_PROOF_HEADER);
+  } catch (error) {
+    return unreachable(error);
+  }
+  if (proof !== bridgeProof(config.token, nonce)) {
+    return failAll(
+      `The program listening on 127.0.0.1:${config.port} is not Android Debugger (or uses a different token), ` +
+        'so the bridge did not send it your token. Open Android Debugger and check Settings → AI assistants (MCP): ' +
+        'if the port is in use, pick another one.'
+    );
+  }
+
   let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await fetchImpl(`http://127.0.0.1:${config.port}/mcp`, {
+    response = await fetchImpl(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -139,12 +187,7 @@ export async function forwardLine(
       body: trimmed,
     });
   } catch (error) {
-    const cause = (error as { cause?: { code?: string } })?.cause?.code;
-    return failAll(
-      cause === 'ECONNREFUSED'
-        ? `Android Debugger is not running (nothing is listening on 127.0.0.1:${config.port}). Open the app and try again.`
-        : `Could not reach Android Debugger on 127.0.0.1:${config.port}: ${error instanceof Error ? error.message : String(error)}`
-    );
+    return unreachable(error);
   }
 
   const body = await response.text();

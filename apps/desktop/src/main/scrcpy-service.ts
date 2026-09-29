@@ -9,10 +9,13 @@ import { parseScrcpyVersion } from './scrcpy-protocol';
 
 const execFileAsync = promisify(execFile);
 
-const SCRCPY_VERSION = '3.1';
+// Must stay on a major version the in-app mirror's demuxer understands (see
+// isSupportedServerVersion in scrcpy-protocol.ts). Hashes from the release's
+// SHA256SUMS.txt.
+const SCRCPY_VERSION = '4.1';
 const SCRCPY_SHA256: Record<'arm64' | 'x64', string> = {
-  arm64: '478618d940421e5f57942f5479d493ecbb38210682937a200f712aee5f235daf',
-  x64: 'acde98e29c273710ffa469371dbca4a728a44c41c380381f8a54e5b5301b9e87',
+  arm64: '20fd47c9014dd5e0fa77091f3cb7adbda8445a360c4584aeaa0150b5b3988ff3',
+  x64: 'ee2a7223bc8dbdc4f482db1134bcf441178dafb833492b71ca4c22090c58ce72',
 };
 
 class ScrcpyService {
@@ -207,7 +210,7 @@ class ScrcpyService {
       }
 
       // Extract the archive
-      // The archive contains a folder like scrcpy-macos-aarch64-v3.1/
+      // The archive contains a folder like scrcpy-macos-aarch64-v4.1/
       const { stdout: archiveEntries } = await execFileAsync('tar', ['-tzf', archivePath], {
         encoding: 'utf8',
         timeout: 60000,

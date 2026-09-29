@@ -307,8 +307,11 @@ export function guardDevtoolsWebviews(host: WebContents): void {
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
     webPreferences.webviewTag = false;
-    params.partition = RN_DEVTOOLS_PARTITION;
-    delete (params as Record<string, unknown>).allowpopups;
+    // Electron builds the guest from webPreferences (already derived from the
+    // tag's attributes), so the session and popup lockdown must be set here,
+    // not on params, or a tag without partition="..." gets the default session.
+    webPreferences.partition = RN_DEVTOOLS_PARTITION;
+    (webPreferences as Record<string, unknown>).disablePopups = true;
   });
 
   host.on('did-attach-webview', (_, guest) => {

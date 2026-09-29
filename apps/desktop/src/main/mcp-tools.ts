@@ -6,6 +6,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import * as fs from 'fs';
 import { z } from 'zod';
 import type { Device, IntentConfig, LogLevel } from '@android-debugger/shared';
 import type { AdbService } from './adb';
@@ -21,6 +22,7 @@ import {
   type McpDataStore,
   type MonitorSample,
 } from './mcp-store';
+import { checkSavePath } from './mcp-security';
 
 export interface McpSelection {
   deviceId: string | null;
@@ -145,6 +147,16 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
     }
     if (!PACKAGE_RE.test(packageName)) throw new ToolError(`"${packageName}" is not a valid Android package name.`);
     return packageName;
+  }
+
+  function validateSavePath(savePath: string, extension: string): string {
+    const check = checkSavePath(savePath, extension, host.capturesDir(), {
+      riskyAllowed: host.isRiskyAllowed(),
+      exists: (filePath) => fs.existsSync(filePath),
+      settingsHint: SETTINGS_HINT,
+    });
+    if (!check.ok) throw new ToolError(check.message);
+    return check.path;
   }
 
   /** Registers a tool whose handler errors become isError results with a readable message. */
@@ -448,7 +460,12 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
         'Captures the device screen and returns it as an image. The full-size PNG is saved to the captures folder (or savePath).',
       inputSchema: {
         device: deviceArg,
-        savePath: z.string().optional().describe('Absolute .png path to save to. Defaults to Pictures/Android Debugger.'),
+        savePath: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute .png path for a new file. Defaults to Pictures/Android Debugger. Existing files are never overwritten; paths outside the captures folder need risky tools allowed.'
+          ),
         maxDimension: z
           .number()
           .int()
@@ -460,11 +477,9 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
       },
     },
     async ({ device, savePath, maxDimension, includeImage }) => {
-      if (savePath && (!/^(\/|[A-Za-z]:[\\/])/.test(savePath) || !savePath.toLowerCase().endsWith('.png'))) {
-        throw new ToolError('savePath must be an absolute path ending in .png.');
-      }
+      const outPath = savePath ? validateSavePath(savePath, '.png') : undefined;
       const target = await resolveDevice(device);
-      const saved = await host.captureScreenshot(target.id, deviceLabel(target), savePath);
+      const saved = await host.captureScreenshot(target.id, deviceLabel(target), outPath);
       if (!includeImage) return text(`Saved a screenshot of ${target.id} to ${saved.path}.`);
       const image = host.encodeImage(saved.path, maxDimension);
       const scaled =
@@ -491,19 +506,22 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
         'Starts recording the device screen (Android limits a recording to 3 minutes). Call stop_screen_recording to save it.',
       inputSchema: {
         device: deviceArg,
-        savePath: z.string().optional().describe('Absolute .mp4 path. Defaults to Pictures/Android Debugger.'),
+        savePath: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute .mp4 path for a new file. Defaults to Pictures/Android Debugger. Existing files are never overwritten; paths outside the captures folder need risky tools allowed.'
+          ),
       },
     },
     async ({ device, savePath }) => {
-      if (savePath && (!/^(\/|[A-Za-z]:[\\/])/.test(savePath) || !savePath.toLowerCase().endsWith('.mp4'))) {
-        throw new ToolError('savePath must be an absolute path ending in .mp4.');
-      }
+      const outPath = savePath ? validateSavePath(savePath, '.mp4') : undefined;
       const target = await resolveDevice(device);
       const state = adb.getRecordingState();
       if (state.isRecording) {
         throw new ToolError(`A recording is already running on ${state.deviceId ?? 'a device'}. Call stop_screen_recording first.`);
       }
-      const result = await host.startRecording(target.id, deviceLabel(target), savePath);
+      const result = await host.startRecording(target.id, deviceLabel(target), outPath);
       if (!result.success) throw new ToolError('Screen recording could not start.');
       return text(`Recording ${target.id}. It will be saved to ${result.path ?? host.capturesDir()} when you call stop_screen_recording.`);
     }
@@ -594,9 +612,13 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
         const liveResult = queryLogLines(live.lines, query);
         // "auto" only answers from the live stream when it reaches back far enough;
         // otherwise the device's own buffer usually holds more history.
+        // A stopped or ended stream is missing everything logged since, so
+        // "auto" only trusts it while it is still running.
+        const running = live.state === 'streaming' || live.state === 'starting';
         const firstEpoch = live.lines[0]?.epochMs ?? 0;
         const covers =
-          sinceEpochMs !== null ? firstEpoch > 0 && firstEpoch <= sinceEpochMs : liveResult.matched >= limit;
+          running &&
+          (sinceEpochMs !== null ? firstEpoch > 0 && firstEpoch <= sinceEpochMs : liveResult.matched >= limit);
         if (source === 'live' || covers) {
           result = liveResult;
           origin = `live stream (${live.state === 'idle' ? 'stopped' : live.state}, ${live.lines.length} lines buffered)`;

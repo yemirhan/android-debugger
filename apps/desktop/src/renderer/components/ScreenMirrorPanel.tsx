@@ -296,12 +296,15 @@ function StageMessage({ env, device, error, serverMissing, onResume, onOpenWindo
       </>
     );
   } else if (serverMissing) {
-    title = 'Install scrcpy to mirror here';
+    const outdated = env.serverStatus.outdated === true;
+    title = outdated ? 'Update scrcpy to mirror here' : 'Install scrcpy to mirror here';
     body = (
       <>
-        In-app mirroring uses the scrcpy server. Install it with Homebrew, then check again:
+        {outdated
+          ? `In-app mirroring needs scrcpy 4.0 or newer (found ${env.serverStatus.version ?? 'an older version'}). Update it with Homebrew, then check again:`
+          : 'In-app mirroring uses the scrcpy server. Install it with Homebrew, then check again:'}
         <code className="block mt-3 px-3 py-2 rounded-md bg-background border border-border-muted font-mono text-xs text-text-primary text-left select-text">
-          brew install scrcpy
+          {outdated ? 'brew upgrade scrcpy' : 'brew install scrcpy'}
         </code>
         <span className="block mt-3">Or download it here (about 10 MB).</span>
       </>

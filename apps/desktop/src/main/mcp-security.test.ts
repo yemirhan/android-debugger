@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkMcpRequest, generateMcpToken, hasValidBearer, isAllowedHost, isAllowedOrigin } from './mcp-security.ts';
+import {
+  checkMcpRequest,
+  checkSavePath,
+  generateMcpToken,
+  hasValidBearer,
+  isAllowedHost,
+  isAllowedOrigin,
+} from './mcp-security.ts';
 
 const PORT = 45321;
 const TOKEN = 'a'.repeat(43);
@@ -52,4 +59,31 @@ test('generated tokens are long and unique', () => {
   const b = generateMcpToken();
   assert.match(a, /^[A-Za-z0-9_-]{43}$/);
   assert.notEqual(a, b);
+});
+
+test('save paths stay in the captures folder unless risky tools are on, and never overwrite', () => {
+  const captures = '/Users/me/Pictures/Android Debugger';
+  const existing = new Set([`${captures}/old.png`, '/Users/me/Pictures/important.png']);
+  const opts = (riskyAllowed: boolean) => ({ riskyAllowed, exists: (p: string) => existing.has(p), settingsHint: 'Settings' });
+
+  assert.deepEqual(checkSavePath(`${captures}/new.png`, '.png', captures, opts(false)), { ok: true, path: `${captures}/new.png` });
+  assert.deepEqual(checkSavePath(`${captures}/sub/new.PNG`, '.png', captures, opts(false)), {
+    ok: true,
+    path: `${captures}/sub/new.PNG`,
+  });
+
+  // Overwriting is refused even with risky tools on.
+  assert.equal(checkSavePath(`${captures}/old.png`, '.png', captures, opts(true)).ok, false);
+  assert.equal(checkSavePath('/Users/me/Pictures/important.png', '.png', captures, opts(true)).ok, false);
+  // Escaping the folder needs risky tools.
+  assert.equal(checkSavePath('/Users/me/Desktop/shot.png', '.png', captures, opts(false)).ok, false);
+  assert.equal(checkSavePath(`${captures}/../../Desktop/shot.png`, '.png', captures, opts(false)).ok, false);
+  assert.equal(checkSavePath(`${captures} evil/shot.png`, '.png', captures, opts(false)).ok, false);
+  assert.deepEqual(checkSavePath('/Users/me/Desktop/shot.png', '.png', captures, opts(true)), {
+    ok: true,
+    path: '/Users/me/Desktop/shot.png',
+  });
+  // Shape checks.
+  assert.equal(checkSavePath('relative/shot.png', '.png', captures, opts(true)).ok, false);
+  assert.equal(checkSavePath(`${captures}/clip.mov`, '.mp4', captures, opts(true)).ok, false);
 });

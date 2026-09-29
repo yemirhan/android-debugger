@@ -147,7 +147,9 @@ test('history is prepended before streamed lines and moves coverage back', () =>
   assert.equal(store.getState().coverageStartEpochMs, 9000);
   store.receiveBatch({ sessionId, entries: [line({ message: 'live' })], dropped: 0 });
   const generation = store.getState().generation;
-  store.prependHistory([line({ message: 'old1', epochMs: 100 }), line({ message: 'old2', epochMs: 200 })]);
+  const token = store.beginHistoryLoad();
+  assert.equal(store.getState().history, 'loading');
+  store.prependHistory(token, [line({ message: 'old1', epochMs: 100 }), line({ message: 'old2', epochMs: 200 })]);
   const state = store.getState();
   assert.deepEqual(state.rows.map((r) => r.message), ['old1', 'old2', 'live']);
   assert.ok(state.rows[0].seq < state.rows[1].seq && state.rows[1].seq < state.rows[2].seq);
@@ -155,10 +157,38 @@ test('history is prepended before streamed lines and moves coverage back', () =>
   assert.equal(state.history, 'loaded');
   assert.ok(state.generation > generation);
 
-  store.prependHistory([]);
+  store.prependHistory(store.beginHistoryLoad(), []);
   assert.equal(store.getState().history, 'empty');
-  store.prependHistory([], 'boom');
+  store.prependHistory(store.beginHistoryLoad(), [], 'boom');
   assert.equal(store.getState().historyMessage, 'boom');
+});
+
+test('a history load that finishes after the target changed or the view was cleared is dropped', () => {
+  const store = makeStore(10);
+  const { sessionId } = store.beginSession(target);
+  store.receiveStatus({ sessionId, state: 'streaming', sinceEpochMs: 9000 });
+
+  // Switch mode while the dump is running: the old device's lines never land.
+  const stale = store.beginHistoryLoad();
+  const next = store.beginSession({ ...target, mode: 'device' });
+  store.receiveBatch({ sessionId: next.sessionId, entries: [line({ message: 'new' })], dropped: 0 });
+  store.prependHistory(stale, [line({ message: 'old', epochMs: 100 })]);
+  assert.deepEqual(store.getState().rows.map((r) => r.message), ['new']);
+  assert.equal(store.getState().history, 'idle');
+
+  // Clear while loading: cleared lines don't come back.
+  const beforeClear = store.beginHistoryLoad();
+  store.clear();
+  store.prependHistory(beforeClear, [line({ message: 'old', epochMs: 100 })]);
+  assert.equal(store.getState().rows.length, 0);
+
+  // A second click supersedes the first request.
+  const first = store.beginHistoryLoad();
+  const second = store.beginHistoryLoad();
+  store.prependHistory(first, [line({ message: 'first', epochMs: 100 })]);
+  assert.equal(store.getState().rows.length, 0);
+  store.prependHistory(second, [line({ message: 'second', epochMs: 100 })]);
+  assert.deepEqual(store.getState().rows.map((r) => r.message), ['second']);
 });
 
 test('pause freezes the visible rows while new lines keep arriving', () => {

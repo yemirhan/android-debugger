@@ -64,6 +64,8 @@ function describeStatus(status: LogStatus, paused: boolean): StatusInfo {
       return { label: 'Stopped', dot: 'bg-text-muted' };
     case 'waiting-for-app':
       return { label: 'Waiting for app', dot: 'bg-amber-400' };
+    case 'app-not-installed':
+      return { label: 'App not installed', dot: 'bg-amber-400' };
     case 'ended':
       return { label: 'Stream ended', dot: 'bg-log-error' };
     case 'error':
@@ -115,15 +117,21 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
   const handleSelect = useCallback((row: LogRow | null) => setSelectedSeq(row ? row.seq : null), []);
 
   const loadHistory = async () => {
-    logStore.setHistoryLoading();
-    const result = await window.electronAPI.loadLogHistory({
-      deviceId: device.id,
-      mode,
-      packageName: mode === 'app' ? packageName : undefined,
-      beforeEpochMs: logStore.getState().coverageStartEpochMs,
-      limit: HISTORY_LINES,
-    });
-    logStore.prependHistory(result.entries, result.error);
+    // The token drops the result if the device/mode/app changes or the view
+    // is cleared while `logcat -d` runs.
+    const token = logStore.beginHistoryLoad();
+    try {
+      const result = await window.electronAPI.loadLogHistory({
+        deviceId: device.id,
+        mode,
+        packageName: mode === 'app' ? packageName : undefined,
+        beforeEpochMs: logStore.getState().coverageStartEpochMs,
+        limit: HISTORY_LINES,
+      });
+      logStore.prependHistory(token, result.entries, result.error);
+    } catch (error) {
+      logStore.prependHistory(token, [], error instanceof Error ? error.message : 'Could not load earlier lines.');
+    }
   };
 
   const canStream = status !== 'needs-app' && status !== 'no-device';
@@ -322,7 +330,7 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
       </div>
 
       {/* Stream problems keep the captured lines visible */}
-      {state.rows.length > 0 && (status === 'ended' || status === 'error' || status === 'waiting-for-app') && (
+      {state.rows.length > 0 && (status === 'ended' || status === 'error' || status === 'waiting-for-app' || status === 'app-not-installed') && (
         <StreamBanner state={state} packageName={packageName} deviceId={device.id} />
       )}
 
@@ -426,13 +434,26 @@ function ToolbarButton({
 }
 
 function StreamBanner({ state, packageName, deviceId }: { state: LogStoreState; packageName: string; deviceId: string }) {
-  const { status, statusMessage } = state;
+  const { status } = state;
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const statusMessage = launchError ?? state.statusMessage;
   const title =
     status === 'waiting-for-app'
       ? `${packageName} isn’t running`
-      : status === 'ended'
-        ? 'The log stream ended'
-        : 'Couldn’t read the device log';
+      : status === 'app-not-installed'
+        ? `${packageName} isn’t installed`
+        : status === 'ended'
+          ? 'The log stream ended'
+          : 'Couldn’t read the device log';
+  const launch = () => {
+    setLaunchError(null);
+    window.electronAPI
+      .launchApp(deviceId, packageName)
+      .then(() => logStore.restart(false))
+      .catch((error: unknown) =>
+        setLaunchError(`Couldn’t launch the app: ${error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(error)}`)
+      );
+  };
   return (
     <div className="flex items-center gap-3 px-3 py-2 rounded-lg border border-log-error/30 bg-log-error/10 text-sm animate-fade-in">
       <span className="text-text-primary">{title}</span>
@@ -440,7 +461,7 @@ function StreamBanner({ state, packageName, deviceId }: { state: LogStoreState; 
       <div className="ml-auto flex items-center gap-2 flex-shrink-0">
         {status === 'waiting-for-app' && packageName && (
           <button
-            onClick={() => window.electronAPI.launchApp(deviceId, packageName).then(() => logStore.restart(false))}
+            onClick={launch}
             className="h-7 px-2.5 rounded-md text-sm text-text-primary bg-surface hover:bg-surface-hover border border-border-muted transition-colors"
           >
             Launch app
@@ -500,6 +521,15 @@ function renderEmptyState({
           title={`${packageName || 'The app'} isn’t running`}
           description="This device is older than Android 9, so logs are matched by process. Start the app, then try again."
           action={{ label: 'Try again', onClick: () => logStore.restart(false) }}
+        />
+      );
+    case 'app-not-installed':
+      return (
+        <EmptyState
+          icon={<LogsIconLarge />}
+          title={`${packageName || 'The app'} isn’t installed on this device`}
+          description="Install it, or pick another app in the toolbar. Switch to Device to see every line in the meantime."
+          action={{ label: 'Show device logs', onClick: () => logStore.setMode('device') }}
         />
       );
     case 'stopped':

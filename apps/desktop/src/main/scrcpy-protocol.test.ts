@@ -11,6 +11,7 @@ import {
   floatToI16FixedPoint,
   floatToU16FixedPoint,
   formatScid,
+  isSupportedServerVersion,
   parseScrcpyVersion,
   parseServerVersionMismatch,
   serializeBackOrScreenOn,
@@ -417,4 +418,16 @@ test('keyboard: ctrl shortcuts are key codes with meta state; cmd is for the hos
   assert.deepEqual(translateKeyEvent(key({ key: 'v', code: 'KeyV', metaKey: true }), 'up'), { kind: 'ignore' });
   assert.deepEqual(translateKeyEvent(key({ key: 'Shift', code: 'ShiftLeft', shiftKey: true }), 'down'), { kind: 'ignore' });
   assert.deepEqual(translateKeyEvent(key({ key: 'Dead', code: 'KeyE', altKey: true }), 'down'), { kind: 'ignore' });
+});
+
+test('isSupportedServerVersion only accepts the 4.x+ stream layout', () => {
+  assert.equal(isSupportedServerVersion('4.1'), true);
+  assert.equal(isSupportedServerVersion('4.0'), true);
+  assert.equal(isSupportedServerVersion('10.2-rc1'), true);
+  assert.equal(isSupportedServerVersion('3.1'), false);
+  assert.equal(isSupportedServerVersion('3.3.4'), false);
+  assert.equal(isSupportedServerVersion('2.7'), false);
+  // Unknown versions are allowed; the server reports its own on a mismatch.
+  assert.equal(isSupportedServerVersion(null), true);
+  assert.equal(isSupportedServerVersion(''), true);
 });

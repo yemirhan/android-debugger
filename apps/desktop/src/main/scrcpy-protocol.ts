@@ -524,6 +524,21 @@ export function parseScrcpyVersion(output: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Oldest scrcpy major version whose stream layout the demuxer understands. */
+export const MIN_SCRCPY_SERVER_MAJOR = 4;
+
+/**
+ * Whether the in-app mirror can talk to this server version. scrcpy 3.x uses
+ * a different video header (codec + size, no session packets, other flag
+ * bits), so it would desync the parser. Unknown versions are allowed: the
+ * server itself reports its version on a mismatch and that is checked again.
+ */
+export function isSupportedServerVersion(version: string | null | undefined): boolean {
+  if (!version) return true;
+  const major = Number.parseInt(version, 10);
+  return !Number.isFinite(major) || major >= MIN_SCRCPY_SERVER_MAJOR;
+}
+
 /** Server reply when the version argument does not match the jar. */
 export function parseServerVersionMismatch(output: string): string | null {
   const match = output.match(/server version \(([^)\s]+)\) does not match the client/);

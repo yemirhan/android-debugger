@@ -34,7 +34,10 @@ export interface MirrorStartResult {
 }
 
 export interface MirrorServerStatus {
+  /** A server the in-app mirror can use is installed. */
   available: boolean;
+  /** A server is installed but too old for the in-app mirror (scrcpy < 4). */
+  outdated?: boolean;
   version: string | null;
   path: string | null;
 }

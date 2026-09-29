@@ -17,7 +17,7 @@ import {
   saveMcpSettings,
   type McpSettings,
 } from './mcp-config';
-import { checkMcpRequest, generateMcpToken } from './mcp-security';
+import { checkMcpRequest, generateMcpToken, mcpServerProof, MCP_NONCE_HEADER, MCP_PROOF_HEADER } from './mcp-security';
 import { createMcpServer, type McpToolHost } from './mcp-tools';
 import type { McpPublicState, McpServerState, McpSetupInfo } from './mcp-types';
 
@@ -173,6 +173,8 @@ export class McpController {
     };
 
     try {
+      const proof = mcpServerProof(this.settings.token, req.headers[MCP_NONCE_HEADER]);
+      if (proof) res.setHeader(MCP_PROOF_HEADER, proof);
       const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
       const check = checkMcpRequest(
         {

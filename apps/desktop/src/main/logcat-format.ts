@@ -35,6 +35,8 @@ export type LogStreamState =
   | 'streaming'
   /** App mode on a pre-Android 9 device, and the app is not running. */
   | 'waiting-for-app'
+  /** App mode, and the chosen package isn't installed on the device. */
+  | 'app-not-installed'
   /** logcat exited on its own (device unplugged, adb restarted, ...). */
   | 'ended'
   | 'error';
@@ -120,6 +122,26 @@ export function parseDeviceEpoch(stdout: string): { since: string; epochMs: numb
 export function formatLogcatSince(epochMs: number): string {
   const ms = Math.max(0, Math.floor(epochMs));
   return `${Math.floor(ms / 1000)}.${String(ms % 1000).padStart(3, '0')}`;
+}
+
+/** Resuming further back than this would replay stale lines; start at "now" instead. */
+export const MAX_RESUME_GAP_MS = 60_000;
+
+/**
+ * Where a stream starts: right after the last received line when resuming
+ * after a short gap (adb restart, cable glitch), otherwise at the device's
+ * current time. A device that was away longer (unplugged overnight, rebooted)
+ * starts fresh rather than dumping everything logged meanwhile.
+ */
+export function chooseStreamStart(
+  resumeAfterEpochMs: number | undefined,
+  now: { since: string; epochMs: number } | null
+): { since: string | null; sinceEpochMs?: number } {
+  if (resumeAfterEpochMs && resumeAfterEpochMs > 0 && (!now || now.epochMs - resumeAfterEpochMs <= MAX_RESUME_GAP_MS)) {
+    const sinceEpochMs = resumeAfterEpochMs + 1;
+    return { since: formatLogcatSince(sinceEpochMs), sinceEpochMs };
+  }
+  return { since: now?.since ?? null, sinceEpochMs: now?.epochMs };
 }
 
 // 2026-09-29 11:20:17.453 +0300  7488 22593 I NearbySharing: message
