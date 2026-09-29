@@ -244,6 +244,16 @@ export interface ElectronAPI extends MonitorApi {
   onMirrorStarted: (callback: (state: ScrcpyState) => void) => UnsubscribeFn;
   onMirrorStopped: (callback: () => void) => UnsubscribeFn;
   onMirrorError: (callback: (error: string) => void) => UnsubscribeFn;
+
+  // Command panel
+  captureScreenshot: (deviceId: string, deviceLabel?: string) => Promise<{ path: string; bytes: number }>;
+  startRecordingToCaptures: (deviceId: string, deviceLabel?: string) => Promise<{ success: boolean; path?: string }>;
+  uninstallApp: (deviceId: string, packageName: string) => Promise<void>;
+  sendKeyEvents: (deviceId: string, keyCodes: number[]) => Promise<void>;
+  openCapturesFolder: () => Promise<void>;
+  showItemInFolder: (filePath: string) => Promise<void>;
+  writeClipboardText: (text: string) => Promise<void>;
+  writeClipboardImage: (filePath: string) => Promise<void>;
 }
 
 const socketStatusListeners = new Set<(status: { type: SocketTransportType }) => void>();
@@ -600,6 +610,18 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('scrcpy-mirror-error', listener);
     return () => ipcRenderer.removeListener('scrcpy-mirror-error', listener);
   },
+
+  // Command panel
+  captureScreenshot: (deviceId, deviceLabel) =>
+    ipcRenderer.invoke('commands:capture-screenshot', deviceId, deviceLabel),
+  startRecordingToCaptures: (deviceId, deviceLabel) =>
+    ipcRenderer.invoke('commands:start-recording', deviceId, deviceLabel),
+  uninstallApp: (deviceId, packageName) => ipcRenderer.invoke('commands:uninstall-app', deviceId, packageName),
+  sendKeyEvents: (deviceId, keyCodes) => ipcRenderer.invoke('commands:send-key-events', deviceId, keyCodes),
+  openCapturesFolder: () => ipcRenderer.invoke('commands:open-captures-folder'),
+  showItemInFolder: (filePath) => ipcRenderer.invoke('shell:show-item-in-folder', filePath),
+  writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  writeClipboardImage: (filePath) => ipcRenderer.invoke('clipboard:write-image', filePath),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

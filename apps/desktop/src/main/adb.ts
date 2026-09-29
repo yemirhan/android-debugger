@@ -63,6 +63,8 @@ import {
   type LogStreamStatus,
   type LogcatSelector,
 } from './logcat-format';
+import { parseCmdWifiStatus, parseDumpsysWifi } from './wifi-parser';
+import { parseAmStartError, parseResolvedActivity } from './launch-parsers';
 import { parseHprof, parseMethodTrace } from './profiler-parsers';
 import {
   shellQuote,
@@ -227,51 +229,57 @@ export class AdbService extends EventEmitter {
   async getDevices(): Promise<Device[]> {
     try {
       const { stdout } = await runAdb(null, ['devices', '-l']);
-      const lines = stdout.trim().split('\n').slice(1);
-      const devices: Device[] = [];
+      const entries = stdout
+        .trim()
+        .split('\n')
+        .slice(1)
+        .filter((line) => line.trim())
+        .map((line) => {
+          const parts = line.split(/\s+/);
+          return { id: parts[0], status: parts[1] as Device['status'] };
+        });
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        const parts = line.split(/\s+/);
-        const id = parts[0];
-        const status = parts[1] as Device['status'];
-
-        if (status === 'device') {
-          const deviceInfo = await this.getDeviceInfo(id);
-          if (deviceInfo) {
-            devices.push(deviceInfo);
-          }
-        } else {
-          devices.push({
-            id,
-            model: 'Unknown',
-            androidVersion: 'Unknown',
-            status,
-          });
-        }
+      // Forget cached props for serials that went away (an emulator port can
+      // be reused by a different AVD).
+      const present = new Set(entries.map((entry) => entry.id));
+      for (const id of [...this.staticDeviceInfo.keys()]) {
+        if (!present.has(id)) this.staticDeviceInfo.delete(id);
       }
 
-      return devices;
+      // Query ready devices in parallel so one slow device doesn't delay the
+      // whole poll by the sum of every device's round trips.
+      const devices = await Promise.all(
+        entries.map(({ id, status }): Promise<Device | null> | Device =>
+          status === 'device'
+            ? this.getDeviceInfo(id)
+            : { id, model: 'Unknown', androidVersion: 'Unknown', status }
+        )
+      );
+      return devices.filter((device): device is Device => device !== null);
     } catch (error) {
       console.error('Error getting devices:', error);
       return [];
     }
   }
 
+  // Model and Android version don't change while a device stays connected, so
+  // they're read once per serial. Wi-Fi is re-read on every poll.
+  private staticDeviceInfo = new Map<string, { model: string; androidVersion: string }>();
+  /** Serials whose Android version has no `cmd wifi status` (pre-Android 11). */
+  private noCmdWifiStatus = new Set<string>();
+
   async getDeviceInfo(deviceId: string): Promise<Device | null> {
     try {
       assertDeviceId(deviceId);
-      const [modelResult, versionResult, wifiName] = await Promise.all([
-        runAdb(deviceId, ['shell', 'getprop', 'ro.product.model']),
-        runAdb(deviceId, ['shell', 'getprop', 'ro.build.version.release']),
+      const [info, wifiName] = await Promise.all([
+        this.getStaticDeviceInfo(deviceId),
         this.getWifiName(deviceId),
       ]);
 
       return {
         id: deviceId,
-        model: modelResult.stdout.trim() || 'Unknown',
-        androidVersion: versionResult.stdout.trim() || 'Unknown',
+        model: info.model,
+        androidVersion: info.androidVersion,
         status: 'device',
         wifiName,
       };
@@ -281,44 +289,53 @@ export class AdbService extends EventEmitter {
     }
   }
 
-  private parseWifiSsid(output: string): string | null {
-    const match = output.match(/SSID:\s*"?([^"\n,]+)"?/);
-    if (!match) {
-      return null;
+  private async getStaticDeviceInfo(deviceId: string): Promise<{ model: string; androidVersion: string }> {
+    const cached = this.staticDeviceInfo.get(deviceId);
+    if (cached) return cached;
+    const [modelResult, versionResult] = await Promise.all([
+      runAdb(deviceId, ['shell', 'getprop', 'ro.product.model'], { timeout: 10_000 }),
+      runAdb(deviceId, ['shell', 'getprop', 'ro.build.version.release'], { timeout: 10_000 }),
+    ]);
+    const info = {
+      model: modelResult.stdout.trim() || 'Unknown',
+      androidVersion: versionResult.stdout.trim() || 'Unknown',
+    };
+    // Only cache real answers; a device that is still booting can report empty props.
+    if (info.model !== 'Unknown' && info.androidVersion !== 'Unknown') {
+      this.staticDeviceInfo.set(deviceId, info);
     }
-
-    const ssid = match[1].trim();
-    if (!ssid) {
-      return null;
-    }
-
-    const lowered = ssid.toLowerCase();
-    if (lowered.includes('unknown ssid') || lowered === 'null') {
-      return null;
-    }
-
-    return ssid;
+    return info;
   }
 
+  /**
+   * The SSID the device is connected to right now, or null when Wi-Fi is off
+   * or not associated. `cmd wifi status` is authoritative whenever it answers;
+   * `dumpsys wifi` is only a fallback for devices without it, and only its live
+   * `mWifiInfo` line is read (saved networks and history list old SSIDs).
+   */
   private async getWifiName(deviceId: string): Promise<string | null> {
-    const commands: string[][] = [
-      ['shell', 'cmd', 'wifi', 'status'],
-      ['shell', 'dumpsys', 'wifi'],
-    ];
-
-    for (const command of commands) {
+    if (!this.noCmdWifiStatus.has(deviceId)) {
+      const unsupported = /unknown command|can't find service|no shell command/i;
       try {
-        const { stdout } = await runAdb(deviceId, command);
-        const ssid = this.parseWifiSsid(stdout);
-        if (ssid) {
-          return ssid;
-        }
-      } catch {
-        // Ignore and try fallback command.
+        const { stdout, stderr } = await runAdb(deviceId, ['shell', 'cmd', 'wifi', 'status'], { timeout: 5_000 });
+        const status = parseCmdWifiStatus(stdout);
+        if (status.state === 'connected') return status.ssid;
+        if (status.state === 'disconnected') return null;
+        if (unsupported.test(`${stdout}\n${stderr}`)) this.noCmdWifiStatus.add(deviceId);
+      } catch (error) {
+        // Old Android versions exit non-zero for the unknown subcommand.
+        const { stdout = '', stderr = '' } = (error ?? {}) as { stdout?: string; stderr?: string };
+        if (unsupported.test(`${stdout}\n${stderr}`)) this.noCmdWifiStatus.add(deviceId);
       }
     }
 
-    return null;
+    try {
+      const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'wifi'], { timeout: 10_000 });
+      const status = parseDumpsysWifi(stdout);
+      return status.state === 'connected' ? status.ssid : null;
+    } catch {
+      return null;
+    }
   }
 
   async getMemInfo(deviceId: string, packageName: string): Promise<MemoryInfo | null> {
@@ -910,14 +927,35 @@ export class AdbService extends EventEmitter {
   }
 
   async launchApp(deviceId: string, packageName: string): Promise<void> {
+    assertPackageName(packageName);
+    const launcher = ['-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER'];
+
+    // Resolve the launcher activity and start it directly. monkey aborts on
+    // devices without physical system keys, which includes most emulators.
+    let component: string | null = null;
     try {
-      assertPackageName(packageName);
-      await runAdb(deviceId, [
-        'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1',
-      ]);
-    } catch (error) {
-      console.error('Error launching app:', error);
-      throw error;
+      const { stdout } = await runAdb(
+        deviceId,
+        ['shell', 'cmd', 'package', 'resolve-activity', '--brief', ...launcher, packageName],
+        { timeout: 10_000 }
+      );
+      component = parseResolvedActivity(stdout, packageName);
+    } catch {
+      // Older Android without `cmd package resolve-activity`; fall back below.
+    }
+
+    if (component) {
+      const { stdout, stderr } = await runAdb(deviceId, ['shell', 'am', 'start', ...launcher, '-n', component]);
+      const error = parseAmStartError(`${stdout}\n${stderr}`);
+      if (error) throw new Error(error);
+      return;
+    }
+
+    const { stdout } = await runAdb(deviceId, [
+      'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '--pct-syskeys', '0', '1',
+    ]).catch((error: { stdout?: string }) => ({ stdout: error?.stdout ?? '' }));
+    if (!/Events injected:\s*1/.test(stdout)) {
+      throw new Error(`${packageName} has no launcher activity to start`);
     }
   }
 
@@ -939,6 +977,47 @@ export class AdbService extends EventEmitter {
       console.error('Error clearing app data:', error);
       throw error;
     }
+  }
+
+  /** Uninstalls a package for all users. Throws with adb's failure reason. */
+  async uninstallApp(deviceId: string, packageName: string): Promise<void> {
+    assertPackageName(packageName);
+    let output: string;
+    try {
+      const { stdout, stderr } = await runAdb(deviceId, ['uninstall', packageName], { timeout: 60_000 });
+      output = `${stdout}\n${stderr}`;
+    } catch (error) {
+      const { stdout = '', stderr = '' } = (error ?? {}) as { stdout?: string; stderr?: string };
+      output = `${stdout}\n${stderr}`;
+      if (!output.trim()) throw error;
+    }
+    if (/^\s*Success\s*$/m.test(output)) return;
+    const failure = output.match(/Failure\s*\[([^\]]+)\]/)?.[1] ?? output.trim().split('\n').pop()?.trim();
+    throw new Error(failure ? `Uninstall failed: ${failure}` : 'Uninstall failed');
+  }
+
+  /** Sends one or more key events in a single `input keyevent` call (so double taps stay fast). */
+  async sendKeyEvents(deviceId: string, keyCodes: number[]): Promise<void> {
+    if (keyCodes.length === 0 || keyCodes.some((code) => !Number.isInteger(code) || code < 0 || code > 400)) {
+      throw new Error('Invalid key code');
+    }
+    await runAdb(deviceId, ['shell', 'input', 'keyevent', ...keyCodes.map(String)], { timeout: 10_000 });
+  }
+
+  /**
+   * Streams a PNG screenshot straight to `localPath` (no temp file on the
+   * device). Unlike takeScreenshot, errors are thrown with adb's reason.
+   */
+  async captureScreenshotTo(deviceId: string, localPath: string): Promise<{ path: string; bytes: number }> {
+    const { stdout, stderr } = await runAdbBuffer(deviceId, ['exec-out', 'screencap', '-p']);
+    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    if (stdout.length < 8 || !stdout.subarray(0, 4).equals(pngSignature)) {
+      const reason = stderr.toString('utf8').trim() || stdout.toString('utf8').trim();
+      throw new Error(reason ? `Screenshot failed: ${reason}` : 'The device returned an empty screenshot');
+    }
+    await fs.promises.mkdir(path.dirname(localPath), { recursive: true });
+    await fs.promises.writeFile(localPath, stdout);
+    return { path: localPath, bytes: stdout.length };
   }
 
   // ==================== App Metadata ====================

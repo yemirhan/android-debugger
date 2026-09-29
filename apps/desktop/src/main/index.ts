@@ -139,6 +139,7 @@ import type { LogHistoryRequest, LogStreamRequest } from './logcat-format';
 import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
 import { registerMonitorIpc } from './monitor-hub';
+import { registerCommandIpc } from './command-ipc';
 import type {
   Device,
   MemoryInfo,
@@ -581,6 +582,12 @@ function createWindow(): void {
     minHeight: 700,
     backgroundColor: '#131519',
     titleBarStyle: 'hiddenInset',
+    // Center the traffic lights in the 48px renderer header (Header.tsx h-12).
+    // Measured via the accessibility API: the 12x14pt button frames land at
+    // (x + 1, y + 1) = (19, 17), so their centers sit on the header's 24pt
+    // midline (the hiddenInset default put them at 19pt) and the row ends at
+    // x = 71. Header.tsx pads its left edge to clear that.
+    trafficLightPosition: { x: 18, y: 16 },
     title: isDev ? 'Android Debugger (Dev)' : 'Android Debugger',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -640,6 +647,9 @@ function stopRendererSessions(): void {
 function setupIpcHandlers(): void {
   // Background monitors (memory, CPU, FPS, battery, network, threads, GC)
   registerMonitorIpc(adbService);
+
+  // Command panel actions (captures, uninstall, key events, clipboard)
+  registerCommandIpc({ adbService, onRecordingState: handleRecordingState });
 
   // Device handlers
   ipcMain.handle('adb:get-devices', async () => {
