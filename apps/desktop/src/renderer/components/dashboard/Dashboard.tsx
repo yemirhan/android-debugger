@@ -162,7 +162,7 @@ export function Dashboard({ device, packageName, onNavigate }: DashboardProps) {
             <div>
               <dt className="text-xs text-text-muted">Wi-Fi</dt>
               <dd className="text-sm text-text-primary mt-0.5 max-w-[180px] truncate">
-                {device.wifiName?.trim() || <span className="text-text-muted">Not connected</span>}
+                {device.wifiName?.trim() || <span className="text-text-muted">No Wi-Fi</span>}
               </dd>
             </div>
           </dl>

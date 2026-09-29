@@ -44,8 +44,9 @@ export function Header({
 
   return (
     <header className="h-12 flex-shrink-0 bg-surface border-b border-border-muted flex items-center justify-between gap-4 pr-3 drag-region">
-      {/* Left section: leaves room for the macOS traffic lights */}
-      <div className="flex items-center gap-2 no-drag pl-[78px] min-w-0">
+      {/* Left section: leaves room for the macOS traffic lights (they end at
+          x=71, see trafficLightPosition in main/index.ts) plus a 13px gap */}
+      <div className="flex items-center gap-2 no-drag pl-[84px] min-w-0">
         <button
           onClick={onToggleSidebar}
           className="w-8 h-8 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary transition-colors"

@@ -34,7 +34,7 @@ import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { useNavigationState } from './hooks/useNavigationState';
 import { SdkProvider, LogsProvider, CrashProvider, UpdateProvider, useUpdateContext } from './contexts';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
-import { CommandPalette } from './components/CommandPalette';
+import { CommandCenter } from './components/CommandCenter';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { getNavItem } from './data/navigation';
 
@@ -83,18 +83,6 @@ function AppContent() {
   const { setNavigateToSettings } = useUpdateContext();
   const { sidebarExpanded, toggleSidebar, isGroupExpanded, toggleGroup } = useNavigationState(activeTab);
   const [paletteOpen, setPaletteOpen] = useState(false);
-
-  // ⌘K / Ctrl+K opens the tool switcher from anywhere
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
@@ -311,11 +299,20 @@ function AppContent() {
             </div>
           </div>
           <UpdateAvailableModal />
-          <CommandPalette
+          {/* Command panel (⌘K / ⌘⇧P), global shortcuts and toasts */}
+          <CommandCenter
             isOpen={paletteOpen}
-            onClose={() => setPaletteOpen(false)}
-            onSelect={setActiveTab}
-            hasPackage={!!packageName}
+            onOpenChange={setPaletteOpen}
+            devices={devices}
+            selectedDevice={selectedDevice}
+            packageName={packageName}
+            activeTab={activeTab}
+            sidebarExpanded={sidebarExpanded}
+            onNavigate={setActiveTab}
+            onSelectDevice={handleDeviceSelect}
+            onSelectPackage={handlePackageChange}
+            onRefreshDevices={refreshDevices}
+            onToggleSidebar={toggleSidebar}
           />
         </CrashProvider>
       </LogsProvider>
