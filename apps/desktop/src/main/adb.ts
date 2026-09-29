@@ -10,7 +10,6 @@ import type {
   CpuInfo,
   FpsInfo,
   LogEntry,
-  LogLevel,
   AppMetadata,
   DeveloperOptions,
   FileEntry,
@@ -45,6 +44,24 @@ import type {
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
+import {
+  Batcher,
+  LineSplitter,
+  TailBuffer,
+  buildHistoryArgs,
+  buildSdkStreamArgs,
+  buildStreamArgs,
+  formatLogcatSince,
+  parseDeviceEpoch,
+  parseLogcatLine,
+  type LogBatch,
+  type LogHistoryRequest,
+  type LogHistoryResult,
+  type LogLine,
+  type LogStreamRequest,
+  type LogStreamStatus,
+  type LogcatSelector,
+} from './logcat-format';
 import { parseHprof, parseMethodTrace } from './profiler-parsers';
 import {
   shellQuote,
@@ -144,7 +161,10 @@ async function runAdbBuffer(
   return runCommandBuffer('adb', ['-s', deviceId, ...args], { timeout: DEFAULT_ADB_TIMEOUT_MS, ...options });
 }
 
-type LogCallback = (entry: LogEntry) => void;
+export interface LogStreamHandlers {
+  onBatch: (batch: LogBatch) => void;
+  onStatus: (status: LogStreamStatus) => void;
+}
 type SdkMessageCallback = (message: SdkMessage) => void;
 type CrashCallback = (entry: CrashEntry) => void;
 type ThreadCallback = (snapshot: ThreadSnapshot) => void;
@@ -166,6 +186,11 @@ export class AdbService extends EventEmitter {
   private networkMonitorGeneration = 0;
   private logcatParser: LogcatMessageParser = new LogcatMessageParser();
   private sdkMessageCallback: SdkMessageCallback | null = null;
+  private logStreamGeneration = 0;
+  private logStreamBatcher: Batcher<LogLine> | null = null;
+  private logHistoryCounter = 0;
+  private sdkStreamGeneration = 0;
+  private sdkBatcher: Batcher<SdkMessage> | null = null;
 
   // Profiler properties
   private threadMonitorInterval: NodeJS.Timeout | null = null;
@@ -470,158 +495,270 @@ export class AdbService extends EventEmitter {
     }
   }
 
-  startLogcat(
-    deviceId: string,
-    callback: LogCallback,
-    filters?: string[],
-    pid?: number,
-    uid?: number
-  ): void {
-    this.stopLogcat();
-
-    if (!deviceId) {
-      return;
+  /**
+   * Resolves how to scope logcat to one app: the uid (Android 9+, survives app
+   * restarts) or, on older devices, the current pid. Both are missing when the
+   * app is not installed / not running.
+   */
+  async resolveLogTarget(deviceId: string, packageName: string): Promise<{ uid?: number; pid?: number }> {
+    const sdk = await this.getDeviceSdkVersion(deviceId);
+    if (sdk === 0 || sdk >= 28) {
+      const uid = await this.getUid(deviceId, packageName);
+      if (uid) return { uid };
     }
-    assertDeviceId(deviceId);
-
-    const defaultFilters = ['*:S', 'ReactNative:V', 'ReactNativeJS:V'];
-    const logFilters = filters || defaultFilters;
-
-    // Build args - prefer --uid (stable across app restarts), then --pid, otherwise use filters
-    const args = ['-s', deviceId, 'logcat', '-v', 'time'];
-    if (uid) {
-      args.push(`--uid=${uid}`);
-    } else if (pid) {
-      args.push('--pid', pid.toString());
-    } else {
-      args.push(...logFilters);
-    }
-    const process = spawn('adb', args);
-    this.logcatProcess = process;
-    // Decode as a stream so multi-byte UTF-8 characters split across chunks survive.
-    process.stdout?.setEncoding('utf8');
-
-    let buffer = '';
-
-    process.stdout?.on('data', (data: string) => {
-      if (this.logcatProcess !== process) return;
-      buffer += data;
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        // Regular log entry
-        const entry = this.parseLogLine(line);
-        if (entry) {
-          callback(entry);
-        }
-      }
-    });
-
-    process.stderr?.on('data', (data: Buffer) => {
-      console.error('Logcat error:', data.toString());
-    });
-
-    process.on('error', (error) => {
-      if (this.logcatProcess !== process) return;
-      console.error('Logcat process error:', error);
-    });
-    process.on('close', () => {
-      if (this.logcatProcess === process) this.logcatProcess = null;
-    });
+    const pid = await this.getPid(deviceId, packageName);
+    return pid ? { pid } : {};
   }
 
+  /** Device wall-clock time, so logcat can start at "now" (`-T`). */
+  async getDeviceLogcatNow(deviceId: string): Promise<{ since: string; epochMs: number } | null> {
+    try {
+      const { stdout } = await runAdb(deviceId, ['shell', 'date', '+%s.%N'], { timeout: 5_000 });
+      return parseDeviceEpoch(stdout);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Starts the visible log stream. Lines are parsed here and delivered in
+   * batches (~13/s) rather than one IPC message per line. The stream starts at
+   * the device's current time, so the ring buffer is never replayed; older
+   * lines are only loaded on request via loadLogHistory().
+   */
+  async startLogStream(request: LogStreamRequest, handlers: LogStreamHandlers): Promise<void> {
+    this.stopLogcat();
+    const generation = this.logStreamGeneration;
+    const { sessionId, deviceId, mode, packageName } = request;
+    const isCurrent = () => generation === this.logStreamGeneration;
+    const status = (state: LogStreamStatus['state'], extra: Partial<LogStreamStatus> = {}) => {
+      if (isCurrent()) handlers.onStatus({ sessionId, state, ...extra });
+    };
+
+    try {
+      assertDeviceId(deviceId);
+      status('starting');
+
+      let selector: LogcatSelector = { mode };
+      if (mode === 'app') {
+        if (!packageName) {
+          status('error', { message: 'Choose an app to see its logs.' });
+          return;
+        }
+        assertPackageName(packageName);
+        const target = await this.resolveLogTarget(deviceId, packageName);
+        if (!isCurrent()) return;
+        // Never fall back to the whole device's log when an app was asked for.
+        if (!target.uid && !target.pid) {
+          status('waiting-for-app', { message: `${packageName} is not running.` });
+          return;
+        }
+        selector = { mode, ...target };
+      }
+
+      let since: string | null;
+      let sinceEpochMs: number | undefined;
+      if (request.resumeAfterEpochMs && request.resumeAfterEpochMs > 0) {
+        sinceEpochMs = request.resumeAfterEpochMs + 1;
+        since = formatLogcatSince(sinceEpochMs);
+      } else {
+        const now = await this.getDeviceLogcatNow(deviceId);
+        if (!isCurrent()) return;
+        since = now?.since ?? null;
+        sinceEpochMs = now?.epochMs;
+      }
+
+      const child = spawn('adb', ['-s', deviceId, ...buildStreamArgs(selector, since)]);
+      this.logcatProcess = child;
+      child.stdout?.setEncoding('utf8');
+      const splitter = new LineSplitter();
+      let lineId = 0;
+      let received = 0;
+      let stderr = '';
+      const batcher = new Batcher<LogLine>((entries, dropped) => {
+        if (isCurrent()) handlers.onBatch({ sessionId, entries, dropped });
+      });
+      this.logStreamBatcher = batcher;
+
+      const handleLines = (lines: string[]) => {
+        for (const line of lines) {
+          const entry = parseLogcatLine(line, `${sessionId}:${++lineId}`);
+          // SDK transport chunks are internal; the SDK stream decodes them.
+          if (!entry || entry.message.includes('SDKMSG:')) continue;
+          received++;
+          batcher.push(entry);
+        }
+      };
+
+      child.stdout?.on('data', (data: string) => {
+        if (this.logcatProcess !== child) return;
+        handleLines(splitter.push(data));
+      });
+      child.stderr?.on('data', (data: Buffer) => {
+        stderr = (stderr + data.toString()).slice(-2000);
+      });
+      child.on('error', (error) => {
+        if (this.logcatProcess !== child) return;
+        this.logcatProcess = null;
+        batcher.dispose(true);
+        status('error', { message: `Could not start adb logcat: ${error.message}` });
+      });
+      child.on('close', (code) => {
+        if (this.logcatProcess !== child) return;
+        handleLines(splitter.flush());
+        batcher.dispose(true);
+        this.logcatProcess = null;
+        const detail = stderr.trim().split('\n').pop();
+        status('ended', {
+          message: detail || (received === 0 && code ? `adb logcat exited with code ${code}.` : undefined),
+        });
+      });
+
+      status('streaming', { sinceEpochMs });
+    } catch (error) {
+      status('error', { message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /**
+   * Returns the newest `limit` lines still in the device's ring buffer that are
+   * older than `beforeEpochMs` (where the live stream started), so history can
+   * be prepended without duplicating streamed lines.
+   */
+  async loadLogHistory(request: LogHistoryRequest): Promise<LogHistoryResult> {
+    const { deviceId, mode, packageName, beforeEpochMs } = request;
+    const limit = Math.min(Math.max(Math.floor(request.limit ?? 1000), 1), 20_000);
+    try {
+      assertDeviceId(deviceId);
+      let selector: LogcatSelector = { mode };
+      if (mode === 'app') {
+        if (!packageName) return { entries: [], error: 'Choose an app first.' };
+        assertPackageName(packageName);
+        const target = await this.resolveLogTarget(deviceId, packageName);
+        if (!target.uid && !target.pid) return { entries: [], error: `${packageName} is not running.` };
+        selector = { mode, ...target };
+      }
+
+      const tail = new TailBuffer<LogLine>(limit);
+      const historyId = ++this.logHistoryCounter;
+      let lineId = 0;
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('adb', ['-s', deviceId, ...buildHistoryArgs(selector)]);
+        child.stdout?.setEncoding('utf8');
+        const splitter = new LineSplitter();
+        let stderr = '';
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error('Timed out reading the device log.'));
+        }, DEFAULT_ADB_TIMEOUT_MS);
+        const handle = (lines: string[]) => {
+          for (const line of lines) {
+            const entry = parseLogcatLine(line, `h${historyId}:${++lineId}`);
+            if (!entry || entry.message.includes('SDKMSG:')) continue;
+            if (beforeEpochMs && entry.epochMs && entry.epochMs >= beforeEpochMs) continue;
+            tail.push(entry);
+          }
+        };
+        child.stdout?.on('data', (data: string) => handle(splitter.push(data)));
+        child.stderr?.on('data', (data: Buffer) => {
+          stderr = (stderr + data.toString()).slice(-2000);
+        });
+        child.on('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          handle(splitter.flush());
+          if (code && stderr.trim()) reject(new Error(stderr.trim().split('\n').pop()));
+          else resolve();
+        });
+      });
+      return { entries: tail.toArray() };
+    } catch (error) {
+      return { entries: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Parses one logcat line (threadtime/year/zone or legacy `time` format). */
   private parseLogLine(line: string): LogEntry | null {
-    // Format: MM-DD HH:MM:SS.mmm L/TAG(PID): message
-    const match = line.match(
-      /^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+([VDIWEFS])\/([^(]+)\(\s*(\d+)\):\s*(.*)$/
-    );
-
-    if (match) {
-      return {
-        id: uuidv4(),
-        timestamp: match[1],
-        level: match[2] as LogLevel,
-        tag: match[3].trim(),
-        pid: parseInt(match[4], 10),
-        message: match[5],
-      };
-    }
-
-    // Alternative format without PID
-    const altMatch = line.match(
-      /^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+([VDIWEFS])\/([^:]+):\s*(.*)$/
-    );
-
-    if (altMatch) {
-      return {
-        id: uuidv4(),
-        timestamp: altMatch[1],
-        level: altMatch[2] as LogLevel,
-        tag: altMatch[3].trim(),
-        message: altMatch[4],
-      };
-    }
-
-    return null;
+    return parseLogcatLine(line, uuidv4());
   }
 
   stopLogcat(): void {
+    this.logStreamGeneration++;
+    this.logStreamBatcher?.dispose();
+    this.logStreamBatcher = null;
     if (this.logcatProcess) {
-      this.logcatProcess.kill();
+      const child = this.logcatProcess;
       this.logcatProcess = null;
+      child.kill();
     }
   }
 
-  startSdkLogcat(deviceId: string, pid?: number): void {
+  /**
+   * Starts the logcat stream that carries SDK messages (network, console,
+   * state...). It only reads React Native tags, scoped to the app's uid when
+   * known, and starts at "now" so old sessions are never replayed.
+   */
+  async startSdkLogcat(deviceId: string, packageName?: string): Promise<void> {
     this.stopSdkLogcat();
+    const generation = this.sdkStreamGeneration;
     assertDeviceId(deviceId);
     this.logcatParser.reset();
 
-    const args = ['-s', deviceId, 'logcat', '-v', 'time'];
-    if (pid) {
-      args.push('--pid', String(pid));
-    } else {
-      args.push('*:S', 'ReactNative:V', 'ReactNativeJS:V');
+    let target: { uid?: number; pid?: number } = {};
+    if (packageName) {
+      assertPackageName(packageName);
+      target = await this.resolveLogTarget(deviceId, packageName);
     }
+    const now = await this.getDeviceLogcatNow(deviceId);
+    if (generation !== this.sdkStreamGeneration) return;
 
-    const process = spawn('adb', args);
-    this.sdkLogcatProcess = process;
+    const child = spawn('adb', ['-s', deviceId, ...buildSdkStreamArgs(target, now?.since ?? null)]);
+    this.sdkLogcatProcess = child;
     // Decode as a stream so multi-byte UTF-8 characters split across chunks survive.
-    process.stdout?.setEncoding('utf8');
-    let buffer = '';
+    child.stdout?.setEncoding('utf8');
+    const splitter = new LineSplitter();
+    // One IPC message per ~50ms instead of one per SDK message.
+    const batcher = new Batcher<SdkMessage>((messages) => {
+      if (this.sdkLogcatProcess === child) this.emit('sdk-messages', messages);
+    }, 50);
+    this.sdkBatcher = batcher;
 
-    process.stdout?.on('data', (data: string) => {
-      if (this.sdkLogcatProcess !== process) return;
-      buffer += data;
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || '';
-      for (const line of lines) {
+    child.stdout?.on('data', (data: string) => {
+      if (this.sdkLogcatProcess !== child) return;
+      for (const line of splitter.push(data)) {
         const sdkMessage = this.logcatParser.parseLogLine(line);
         if (sdkMessage) {
-          this.emit('sdk-message', sdkMessage);
+          batcher.push(sdkMessage);
           this.sdkMessageCallback?.(sdkMessage);
         }
       }
     });
 
-    process.stderr?.on('data', (data: Buffer) => {
+    child.stderr?.on('data', (data: Buffer) => {
       console.error('SDK logcat error:', data.toString());
     });
-    process.on('error', (error) => {
+    child.on('error', (error) => {
       console.error('SDK logcat process error:', error);
     });
-    process.on('close', () => {
-      if (this.sdkLogcatProcess === process) {
+    child.on('close', () => {
+      if (this.sdkLogcatProcess === child) {
+        batcher.dispose(true);
         this.sdkLogcatProcess = null;
       }
     });
   }
 
   stopSdkLogcat(): void {
+    this.sdkStreamGeneration++;
+    this.sdkBatcher?.dispose();
+    this.sdkBatcher = null;
     if (this.sdkLogcatProcess) {
-      this.sdkLogcatProcess.kill();
+      const child = this.sdkLogcatProcess;
       this.sdkLogcatProcess = null;
+      child.kill();
     }
     this.logcatParser.reset();
   }

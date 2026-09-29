@@ -4,7 +4,6 @@ import type {
   MemoryInfo,
   CpuInfo,
   FpsInfo,
-  LogEntry,
   SdkMessage,
   AppMetadata,
   DeveloperOptions,
@@ -44,6 +43,14 @@ import type {
   BundleAnalysisResult,
 } from '@android-debugger/shared';
 
+import type {
+  LogBatch,
+  LogHistoryRequest,
+  LogHistoryResult,
+  LogStreamRequest,
+  LogStreamStatus,
+} from '../main/logcat-format';
+
 export type UnsubscribeFn = () => void;
 export type SocketTransportType = 'socket' | 'logcat' | 'none';
 
@@ -61,12 +68,16 @@ export interface ElectronAPI {
   onMemoryUpdate: (callback: (info: MemoryInfo) => void) => UnsubscribeFn;
 
   // Logs
-  startLogcat: (deviceId: string, filters?: string[], packageName?: string) => void;
+  /** Starts the visible log stream from "now"; batches/status echo `request.sessionId`. */
+  startLogStream: (request: LogStreamRequest) => void;
   stopLogcat: () => void;
+  loadLogHistory: (request: LogHistoryRequest) => Promise<LogHistoryResult>;
+  exportLogs: (content: string, defaultName: string) => Promise<{ success: boolean; canceled?: boolean; path?: string }>;
+  onLogBatch: (callback: (batch: LogBatch) => void) => UnsubscribeFn;
+  onLogStreamStatus: (callback: (status: LogStreamStatus) => void) => UnsubscribeFn;
   startSdkLogcat: (deviceId: string, packageName?: string) => void;
   stopSdkLogcat: () => void;
   clearLogcat: (deviceId: string) => Promise<void>;
-  onLogEntry: (callback: (entry: LogEntry) => void) => UnsubscribeFn;
 
   // CPU
   getCpu: (deviceId: string, packageName: string) => Promise<CpuInfo | null>;
@@ -259,16 +270,23 @@ const electronAPI: ElectronAPI = {
   },
 
   // Logs
-  startLogcat: (deviceId, filters, packageName) => ipcRenderer.send('adb:start-logcat', deviceId, filters, packageName),
+  startLogStream: (request) => ipcRenderer.send('logs:start', request),
   stopLogcat: () => ipcRenderer.send('adb:stop-logcat'),
+  loadLogHistory: (request) => ipcRenderer.invoke('logs:history', request),
+  exportLogs: (content, defaultName) => ipcRenderer.invoke('logs:export', content, defaultName),
+  onLogBatch: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, batch: LogBatch) => callback(batch);
+    ipcRenderer.on('logs:batch', listener);
+    return () => ipcRenderer.removeListener('logs:batch', listener);
+  },
+  onLogStreamStatus: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, status: LogStreamStatus) => callback(status);
+    ipcRenderer.on('logs:status', listener);
+    return () => ipcRenderer.removeListener('logs:status', listener);
+  },
   startSdkLogcat: (deviceId, packageName) => ipcRenderer.send('adb:start-sdk-logcat', deviceId, packageName),
   stopSdkLogcat: () => ipcRenderer.send('adb:stop-sdk-logcat'),
   clearLogcat: (deviceId) => ipcRenderer.invoke('adb:clear-logcat', deviceId),
-  onLogEntry: (callback) => {
-    const listener = (_: Electron.IpcRendererEvent, entry: LogEntry) => callback(entry);
-    ipcRenderer.on('log-entry', listener);
-    return () => ipcRenderer.removeListener('log-entry', listener);
-  },
 
   // CPU
   getCpu: (deviceId, packageName) => ipcRenderer.invoke('adb:get-cpu', deviceId, packageName),
@@ -302,10 +320,13 @@ const electronAPI: ElectronAPI = {
 
   // SDK Messages (received via logcat)
   onSdkMessage: (callback) => {
-    const listener = (_: Electron.IpcRendererEvent, data: { message: SdkMessage }) =>
-      callback(data);
-    ipcRenderer.on('sdk-message', listener);
-    return () => ipcRenderer.removeListener('sdk-message', listener);
+    // Main batches SDK messages; delivering a batch in one task lets React
+    // coalesce the resulting state updates into a single render.
+    const listener = (_: Electron.IpcRendererEvent, messages: SdkMessage[]) => {
+      for (const message of messages) callback({ message });
+    };
+    ipcRenderer.on('sdk-messages', listener);
+    return () => ipcRenderer.removeListener('sdk-messages', listener);
   },
   // Native socket transport is not available in this build. Keep the optional
   // renderer hook honest by immediately selecting the supported logcat transport.

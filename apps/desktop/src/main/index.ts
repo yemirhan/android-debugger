@@ -135,11 +135,11 @@ function getJavaInfo(): JavaInfo | null {
   }
 }
 
+import type { LogHistoryRequest, LogStreamRequest } from './logcat-format';
 import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
 import type {
   Device,
-  LogEntry,
   MemoryInfo,
   CpuInfo,
   FpsInfo,
@@ -252,8 +252,6 @@ let selectedDeviceId: string | null = null;
 let trayUpdateInterval: NodeJS.Timeout | null = null;
 let isRecording = false;
 let recordingDeviceId: string | null = null;
-let sdkLogcatRequestId = 0;
-let displayLogcatRequestId = 0;
 
 const trayIconPixels = [
   '....##....##....',
@@ -635,9 +633,6 @@ function clampPollInterval(interval: unknown, fallback: number): number {
 }
 
 function stopRendererSessions(): void {
-  // Invalidate in-flight async logcat starts (they await a PID lookup first).
-  displayLogcatRequestId++;
-  sdkLogcatRequestId++;
   void adbService.stopAll(false);
 }
 
@@ -679,64 +674,42 @@ function setupIpcHandlers(): void {
     adbService.stopMemoryMonitor();
   });
 
-  // Log handlers
-  ipcMain.on('adb:start-logcat', async (_, deviceId: string, filters?: string[], packageName?: string) => {
-    const requestId = ++displayLogcatRequestId;
+  // Log handlers: the stream is batched and tagged with the renderer's session id.
+  ipcMain.on('logs:start', (_, request: LogStreamRequest) => {
+    void adbService.startLogStream(request, {
+      onBatch: (batch) => mainWindow?.webContents.send('logs:batch', batch),
+      onStatus: (status) => mainWindow?.webContents.send('logs:status', status),
+    });
+  });
 
-    try {
-      let pid: number | undefined;
-      let uid: number | undefined;
-      if (packageName) {
-        // --uid needs Android 9+; fall back to the current PID on older devices.
-        const sdk = await adbService.getDeviceSdkVersion(deviceId);
-        if (sdk === 0 || sdk >= 28) {
-          uid = (await adbService.getUid(deviceId, packageName)) ?? undefined;
-        }
-        if (!uid) {
-          pid = (await adbService.getPid(deviceId, packageName)) ?? undefined;
-        }
-        // Never fall back to the whole device's log when an app was asked for.
-        if (!uid && !pid) {
-          if (requestId === displayLogcatRequestId) adbService.stopLogcat();
-          return;
-        }
-      }
+  ipcMain.handle('logs:history', (_, request: LogHistoryRequest) => adbService.loadLogHistory(request));
 
-      if (requestId !== displayLogcatRequestId) return;
-
-      adbService.startLogcat(
-        deviceId,
-        (entry: LogEntry) => {
-          mainWindow?.webContents.send('log-entry', entry);
-        },
-        filters,
-        pid,
-        uid
-      );
-    } catch (error) {
-      // ipcMain.on listeners have no caller to reject to.
-      console.error('Error starting logcat:', error);
-    }
+  ipcMain.handle('logs:export', async (_, content: string, defaultName: string) => {
+    if (typeof content !== 'string' || content.length > 128 * 1024 * 1024) throw new Error('Invalid log export');
+    const safeName =
+      typeof defaultName === 'string' ? defaultName.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80) : 'logcat';
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export logs',
+      defaultPath: `${safeName || 'logcat'}.txt`,
+      filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+    };
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    await fs.promises.writeFile(result.filePath, content, 'utf8');
+    return { success: true, path: result.filePath };
   });
 
   ipcMain.on('adb:stop-logcat', () => {
-    displayLogcatRequestId++;
     adbService.stopLogcat();
   });
 
-  ipcMain.on('adb:start-sdk-logcat', async (_, deviceId: string, packageName?: string) => {
-    const requestId = ++sdkLogcatRequestId;
-    try {
-      const pid = packageName ? await adbService.getPid(deviceId, packageName) : undefined;
-      if (requestId !== sdkLogcatRequestId) return;
-      adbService.startSdkLogcat(deviceId, pid || undefined);
-    } catch (error) {
+  ipcMain.on('adb:start-sdk-logcat', (_, deviceId: string, packageName?: string) => {
+    adbService.startSdkLogcat(deviceId, packageName || undefined).catch((error) => {
       console.error('Error starting SDK logcat:', error);
-    }
+    });
   });
 
   ipcMain.on('adb:stop-sdk-logcat', () => {
-    sdkLogcatRequestId++;
     adbService.stopSdkLogcat();
   });
 
@@ -803,9 +776,8 @@ function setupIpcHandlers(): void {
 
   // SDK message forwarding - SDK messages are now parsed from logcat
   // and forwarded to the renderer automatically when logcat is running
-  adbService.on('sdk-message', (message: SdkMessage) => {
-    console.log('[Main] Received SDK message from ADB, forwarding to renderer:', message.type);
-    mainWindow?.webContents.send('sdk-message', { message });
+  adbService.on('sdk-messages', (messages: SdkMessage[]) => {
+    mainWindow?.webContents.send('sdk-messages', messages);
   });
 
   // App Metadata handlers

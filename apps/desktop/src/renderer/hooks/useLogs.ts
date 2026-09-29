@@ -1,116 +1,107 @@
-import { useState, useCallback, useMemo } from 'react';
-import type { LogEntry, LogLevel, Device } from '@android-debugger/shared';
-import { useLogsContext } from '../contexts';
+import { useDeferredValue, useMemo, useSyncExternalStore } from 'react';
+import type { LogStreamMode } from '../../main/logcat-format';
+import { getAppSettings } from '../lib/app-settings';
+import {
+  DEFAULT_LOG_FILTER,
+  FilteredRowsCache,
+  compileLogFilter,
+  firstIndexAfter,
+  type LogRow,
+} from '../lib/log-filter';
+import { createLogStore, type LogStoreState } from '../lib/log-store';
 
-export interface LogFilter {
-  search: string;
-  levels: Set<LogLevel>;
-  tags: string[];
+const MODE_KEY = 'android-debugger:log-mode';
+
+function loadMode(): LogStreamMode {
+  try {
+    const saved = localStorage.getItem(MODE_KEY);
+    if (saved === 'rn' || saved === 'app' || saved === 'device') return saved;
+  } catch {
+    // Storage unavailable; use the default.
+  }
+  return 'rn';
 }
 
-export function useLogs(device: Device | null) {
-  const {
-    logs,
-    isStreaming,
-    isPaused,
-    logMode,
-    clearLogs: clearLogsContext,
-    togglePause,
-    startStreaming,
-    stopStreaming,
-    setLogMode,
-  } = useLogsContext();
+/**
+ * The one log buffer for the app. It outlives the Logs panel, so switching
+ * tabs never drops, replays or re-processes lines.
+ */
+export const logStore = createLogStore({
+  capacity: getAppSettings().maxLogEntries,
+  defaultFilter: DEFAULT_LOG_FILTER,
+  mode: loadMode(),
+  enabled: getAppSettings().autoStartLogcat,
+  onModeChange: (mode) => {
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // Persistence is best-effort.
+    }
+  },
+});
 
-  const [filter, setFilter] = useState<LogFilter>({
-    search: '',
-    levels: new Set(['V', 'D', 'I', 'W', 'E', 'F'] as LogLevel[]),
-    tags: [],
-  });
+export function useLogStore(): LogStoreState {
+  return useSyncExternalStore(logStore.subscribe, logStore.getState);
+}
 
-  // Clear logs
-  const clearLogs = useCallback(async () => {
-    await clearLogsContext(device?.id);
-  }, [device?.id, clearLogsContext]);
+type LogControls = Pick<LogStoreState, 'mode' | 'enabled' | 'restartToken' | 'status'>;
+let controlsCache: LogControls | null = null;
+function getControls(): LogControls {
+  const { mode, enabled, restartToken, status } = logStore.getState();
+  const c = controlsCache;
+  if (!c || c.mode !== mode || c.enabled !== enabled || c.restartToken !== restartToken || c.status !== status) {
+    controlsCache = { mode, enabled, restartToken, status };
+  }
+  return controlsCache!;
+}
 
-  // Update filter
-  const updateFilter = useCallback((newFilter: Partial<LogFilter>) => {
-    setFilter((prev) => ({ ...prev, ...newFilter }));
-  }, []);
+/** Stream controls only: does not re-render when lines arrive. */
+export function useLogControls(): LogControls {
+  return useSyncExternalStore(logStore.subscribe, getControls);
+}
 
-  // Toggle log level
-  const toggleLevel = useCallback((level: LogLevel) => {
-    setFilter((prev) => {
-      const newLevels = new Set(prev.levels);
-      if (newLevels.has(level)) {
-        newLevels.delete(level);
-      } else {
-        newLevels.add(level);
-      }
-      return { ...prev, levels: newLevels };
-    });
-  }, []);
+// Module-level so a remounted panel reuses the already-filtered rows.
+const liveCache = new FilteredRowsCache();
+const frozenCache = new FilteredRowsCache();
 
-  // Filter logs (memoized: the buffer can hold up to maxLogEntries entries, see Settings)
-  const filteredLogs = useMemo(() => {
-    const searchLower = filter.search.toLowerCase();
-    return logs.filter((log) => {
-      // Hide SDK internal messages (these are handled separately by the SDK panel)
-      if (log.message.includes('SDKMSG:')) {
-        return false;
-      }
+export interface LogView {
+  state: LogStoreState;
+  /** Rows to display (filtered; frozen while paused). Oldest first. */
+  rows: readonly LogRow[];
+  /** Inline error for an invalid regex; the search is ignored meanwhile. */
+  filterError: string | null;
+  filterActive: boolean;
+  /** True while a new filter is still being applied in the background. */
+  isFiltering: boolean;
+  /** Raw lines that arrived after pausing. */
+  newWhilePaused: number;
+}
 
-      // Filter by level
-      if (!filter.levels.has(log.level)) {
-        return false;
-      }
+export function useLogView(): LogView {
+  const state = useLogStore();
+  // Typing in the search box stays responsive: filtering a large buffer
+  // happens in a lower-priority render.
+  const deferredFilter = useDeferredValue(state.filter);
+  const compiled = useMemo(() => compileLogFilter(deferredFilter), [deferredFilter]);
+  const current = useMemo(() => compileLogFilter(state.filter), [state.filter]);
 
-      // Filter by tags
-      if (filter.tags.length > 0 && !filter.tags.includes(log.tag)) {
-        return false;
-      }
+  const frozen = state.paused ? state.frozenRows : null;
+  const rows = frozen
+    ? frozenCache.get(frozen, state.frozenGeneration, compiled)
+    : liveCache.get(state.rows, state.generation, compiled);
 
-      // Filter by search
-      if (searchLower) {
-        return (
-          log.message.toLowerCase().includes(searchLower) ||
-          log.tag.toLowerCase().includes(searchLower)
-        );
-      }
-
-      return true;
-    });
-  }, [logs, filter]);
-
-  // Export logs to file (reverse to get chronological order - oldest first)
-  const exportLogs = useCallback(() => {
-    const content = [...filteredLogs]
-      .reverse()
-      .map((log) => `${log.timestamp} ${log.level}/${log.tag}: ${log.message}`)
-      .join('\n');
-
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `logs-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [filteredLogs]);
+  let newWhilePaused = 0;
+  if (frozen) {
+    const lastFrozenSeq = frozen.length > 0 ? frozen[frozen.length - 1].seq : -Infinity;
+    newWhilePaused = state.rows.length - firstIndexAfter(state.rows, lastFrozenSeq);
+  }
 
   return {
-    logs: filteredLogs,
-    totalLogs: logs.length,
-    isStreaming,
-    isPaused,
-    logMode,
-    filter,
-    clearLogs,
-    togglePause,
-    startStreaming,
-    stopStreaming,
-    setLogMode,
-    updateFilter,
-    toggleLevel,
-    exportLogs,
+    state,
+    rows,
+    filterError: current.error,
+    filterActive: current.isActive,
+    isFiltering: deferredFilter !== state.filter,
+    newWhilePaused,
   };
 }
