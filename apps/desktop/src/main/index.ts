@@ -1450,8 +1450,10 @@ app.on('before-quit', (event) => {
     tray = null;
   }
 
-  void Promise.all([
-    adbService.stopAll(true),
-    scrcpyService.stopMirror(),
+  // Cleanup is best-effort: a hung adb/scrcpy child must never keep the app from quitting.
+  const cleanupTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+  void Promise.race([
+    Promise.allSettled([adbService.stopAll(true), scrcpyService.stopMirror()]),
+    cleanupTimeout,
   ]).finally(() => app.quit());
 });
