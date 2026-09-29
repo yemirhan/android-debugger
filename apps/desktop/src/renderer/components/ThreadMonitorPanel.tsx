@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import type { Device, ThreadInfo, ThreadState } from '@android-debugger/shared';
 import { useThreadMonitor } from '../hooks/useThreadMonitor';
+import { MonitorLiveBadge, MonitorToggle } from './monitoring/MonitorToggle';
 import { InfoIcon, ThreadsIcon } from './icons';
 
 interface ThreadMonitorPanelProps {
@@ -97,12 +98,13 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
               {current.threads.length} threads
             </span>
           )}
+          <MonitorLiveBadge live={isMonitoring} what="threads" />
         </div>
         <div className="flex items-center gap-2">
           <select
             value={filterState}
             onChange={(e) => setFilterState(e.target.value as ThreadState | 'all')}
-            className="px-3 py-1.5 text-xs font-medium bg-surface rounded-md border border-border-muted text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+            className="h-8 px-2.5 text-sm bg-surface rounded-md border border-border-muted text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
           >
             <option value="all">All States</option>
             <option value="running">Running</option>
@@ -115,20 +117,16 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
           </select>
           <button
             onClick={clearData}
-            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+            className="h-8 px-3 text-sm text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-colors btn-press"
           >
             Clear
           </button>
-          <button
-            onClick={isMonitoring ? stopMonitoring : startMonitoring}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
-              isMonitoring
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-            }`}
-          >
-            {isMonitoring ? 'Stop' : 'Start'}
-          </button>
+          <MonitorToggle
+            isMonitoring={isMonitoring}
+            onStart={startMonitoring}
+            onStop={stopMonitoring}
+            what="threads"
+          />
         </div>
       </div>
 
@@ -227,8 +225,8 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
               {current && current.threads.length > 0 && filterState !== 'all'
                 ? `No ${filterState} threads`
                 : isMonitoring
-                  ? 'Waiting for thread data...'
-                  : 'Start monitoring to see threads'}
+                  ? 'Waiting for the first thread snapshot…'
+                  : 'Thread monitoring is paused. Press Start to see threads.'}
             </p>
           </div>
         )}

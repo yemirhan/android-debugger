@@ -3,6 +3,7 @@ import type { TabId } from '../../App';
 import type { NavItem } from '../../types/navigation';
 import { SidebarItem } from './SidebarItem';
 import { ChevronRightIcon } from '../icons';
+import { MonitorLiveDot } from '../monitoring/MonitorLiveDot';
 
 interface SidebarGroupProps {
   id: string;
@@ -52,6 +53,7 @@ export function SidebarGroup({
           `}
         >
           <span className="w-4 h-4 [&>svg]:w-4 [&>svg]:h-4">{icon}</span>
+          <MonitorLiveDot tabIds={items.map((item) => item.id)} variant="corner" />
         </button>
 
         {isHovered && (
@@ -82,6 +84,7 @@ export function SidebarGroup({
                     {item.icon}
                   </span>
                   <span className="text-[13px]">{item.label}</span>
+                  <MonitorLiveDot tabIds={[item.id]} />
                 </button>
               ))}
             </div>
@@ -102,6 +105,7 @@ export function SidebarGroup({
         {!isExpanded && hasActiveItem && (
           <span className="w-1.5 h-1.5 rounded-full bg-accent" aria-hidden />
         )}
+        {!isExpanded && <MonitorLiveDot tabIds={items.map((item) => item.id)} />}
         <ChevronRightIcon
           className={`w-3 h-3 transition-all duration-150 ${
             isExpanded ? 'rotate-90 opacity-0 group-hover:opacity-100' : 'opacity-100'

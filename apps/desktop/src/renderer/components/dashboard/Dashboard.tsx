@@ -173,7 +173,7 @@ export function Dashboard({ device, packageName, onNavigate }: DashboardProps) {
           {hasPackage && monitoringStopped && (
             <div className="mb-3 flex items-center gap-3 rounded-lg border border-border-muted bg-surface px-4 py-2.5">
               <p className="flex-1 text-sm text-text-secondary">
-                Live monitoring is off because auto-start is disabled in Settings.
+                Memory, CPU and frame rate monitoring is paused. Start it to collect history in the background.
               </p>
               <button
                 onClick={() => {

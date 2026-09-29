@@ -43,11 +43,12 @@ import type {
   ScrcpyState,
   BundleAnalysisResult,
 } from '@android-debugger/shared';
+import type { MonitorApi, MonitorKind } from './monitor-types';
 
 export type UnsubscribeFn = () => void;
 export type SocketTransportType = 'socket' | 'logcat' | 'none';
 
-export interface ElectronAPI {
+export interface ElectronAPI extends MonitorApi {
   // Device
   getDevices: () => Promise<Device[]>;
   getDeviceInfo: (deviceId: string) => Promise<Device | null>;
@@ -237,6 +238,17 @@ export interface ElectronAPI {
 const socketStatusListeners = new Set<(status: { type: SocketTransportType }) => void>();
 
 const electronAPI: ElectronAPI = {
+  // Background monitors (see monitor-types.ts)
+  startMonitor: (kind, deviceId, packageName, interval, session) =>
+    ipcRenderer.send('monitor:start', kind, deviceId, packageName, interval, session),
+  stopMonitor: (kind) => ipcRenderer.send('monitor:stop', kind),
+  onMonitorSample: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, kind: MonitorKind, session: number, payload: unknown) =>
+      callback(kind, session, payload);
+    ipcRenderer.on('monitor:sample', listener);
+    return () => ipcRenderer.removeListener('monitor:sample', listener);
+  },
+
   // Device
   getDevices: () => ipcRenderer.invoke('adb:get-devices'),
   getDeviceInfo: (deviceId) => ipcRenderer.invoke('adb:get-device-info', deviceId),

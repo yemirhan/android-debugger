@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { TabId } from '../../App';
+import { MonitorLiveDot } from '../monitoring/MonitorLiveDot';
 
 interface SidebarItemProps {
   id: TabId;
@@ -52,6 +53,7 @@ export function SidebarItem({
             {label}
           </span>
         )}
+        <MonitorLiveDot tabIds={[id]} variant={isExpanded ? 'inline' : 'corner'} />
       </button>
 
       {/* Tooltip when collapsed */}

@@ -45,6 +45,7 @@ import type {
 } from '@android-debugger/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
+import { parseLogcatEpoch } from './monitor-protocol';
 import { parseHprof, parseMethodTrace } from './profiler-parsers';
 import {
   shellQuote,
@@ -118,6 +119,10 @@ function assertPackageName(packageName: string): void {
 // block its caller forever, e.g. freezing a monitor's polling loop. execFile
 // kills the child when the timeout elapses and rejects the promise.
 const DEFAULT_ADB_TIMEOUT_MS = 30_000;
+// GC monitor: how often to look for the app when it isn't running, and how
+// often to check whether it restarted under a new PID.
+const GC_MONITOR_RETRY_MS = 3_000;
+const GC_MONITOR_PID_CHECK_MS = 5_000;
 // For transfers and installs whose duration scales with file size and link
 // speed (e.g. Wi-Fi adb); these must never be cut short. 0 disables the timeout.
 const NO_TIMEOUT = 0;
@@ -172,6 +177,9 @@ export class AdbService extends EventEmitter {
   private threadMonitorGeneration = 0;
   private gcMonitorProcess: ChildProcess | null = null;
   private gcMonitorGeneration = 0;
+  private gcMonitorTimer: NodeJS.Timeout | null = null;
+  /** Last logcat time read for the current GC target (see startGcMonitor). */
+  private gcStreamCursor: { key: string; epoch: number } | null = null;
   private methodTraceActive: boolean = false;
   private methodTraceStarting: boolean = false;
   private methodTraceGeneration = 0;
@@ -2178,30 +2186,35 @@ export class AdbService extends EventEmitter {
       if (!pid) {
         return null;
       }
-
-      // Read every thread's stat in one adb round-trip instead of two adb
-      // processes per thread. The stat line already carries the thread name
-      // (same 15-char value as /proc/.../comm). Threads can exit between the
-      // glob expansion and the read, so ignore cat's errors.
-      const { stdout: statOutput } = await runAdb(deviceId, [
-        'shell', `cat /proc/${pid}/task/*/stat 2>/dev/null; true`,
-      ]);
-
-      const threadResults = statOutput.split('\n').map((line): ThreadInfo | null => {
-        const stat = line.trim();
-        const tid = parseInt(stat, 10);
-        return stat && Number.isFinite(tid) ? this.parseThreadStat(tid, stat, '') : null;
-      });
-      const threads = threadResults.filter((thread): thread is ThreadInfo => thread !== null);
-
-      return {
-        timestamp: Date.now(),
-        threads,
-      };
+      return await this.readThreadSnapshot(deviceId, pid);
     } catch (error) {
       console.error('Error getting threads:', error);
       return null;
     }
+  }
+
+  /** Snapshot a process's threads, or null if it has none (it exited). */
+  private async readThreadSnapshot(deviceId: string, pid: number): Promise<ThreadSnapshot | null> {
+    // Read every thread's stat in one adb round-trip instead of two adb
+    // processes per thread. The stat line already carries the thread name
+    // (same 15-char value as /proc/.../comm). Threads can exit between the
+    // glob expansion and the read, so ignore cat's errors.
+    const { stdout: statOutput } = await runAdb(deviceId, [
+      'shell', `cat /proc/${pid}/task/*/stat 2>/dev/null; true`,
+    ]);
+
+    const threadResults = statOutput.split('\n').map((line): ThreadInfo | null => {
+      const stat = line.trim();
+      const tid = parseInt(stat, 10);
+      return stat && Number.isFinite(tid) ? this.parseThreadStat(tid, stat, '') : null;
+    });
+    const threads = threadResults.filter((thread): thread is ThreadInfo => thread !== null);
+    if (threads.length === 0) return null;
+
+    return {
+      timestamp: Date.now(),
+      threads,
+    };
   }
 
   private parseThreadStat(tid: number, stat: string, comm: string): ThreadInfo | null {
@@ -2265,8 +2278,29 @@ export class AdbService extends EventEmitter {
     }
 
     const generation = ++this.threadMonitorGeneration;
+    // Reuse the PID between polls (one adb call per poll instead of two) and
+    // look it up again when the process is gone or every few polls, which
+    // also guards against the PID being recycled after an app restart.
+    let pid: number | null = null;
+    let pollsSinceLookup = 0;
     const poll = async () => {
-      const snapshot = await this.getThreads(deviceId, packageName);
+      let snapshot: ThreadSnapshot | null = null;
+      try {
+        if (pid && pollsSinceLookup < 10) {
+          pollsSinceLookup++;
+          snapshot = await this.readThreadSnapshot(deviceId, pid);
+        }
+        if (!snapshot && generation === this.threadMonitorGeneration) {
+          pid = await this.getPid(deviceId, packageName);
+          pollsSinceLookup = 0;
+          if (pid && generation === this.threadMonitorGeneration) {
+            snapshot = await this.readThreadSnapshot(deviceId, pid);
+          }
+        }
+      } catch (error) {
+        console.error('Error getting threads:', error);
+        pid = null;
+      }
       if (generation !== this.threadMonitorGeneration) return;
       if (snapshot) {
         callback(snapshot);
@@ -2298,28 +2332,54 @@ export class AdbService extends EventEmitter {
     }
 
     const generation = ++this.gcMonitorGeneration;
-    void this.startGcMonitorProcess(deviceId, packageName, callback, generation);
+    // Resuming the same app continues after the last line already read, so a
+    // pause/resume doesn't replay (and duplicate) the logcat backlog.
+    const key = `${deviceId}\u0000${packageName}`;
+    if (this.gcStreamCursor?.key !== key) this.gcStreamCursor = { key, epoch: 0 };
+    void this.startGcMonitorProcess(deviceId, packageName, callback, generation, this.gcStreamCursor);
   }
 
+  /**
+   * Stream the app's logcat for GC lines. `logcat --pid` follows one process,
+   * so this runs as a background monitor that survives app restarts: it waits
+   * for the app to start, and respawns when the PID changes or logcat exits.
+   */
   private async startGcMonitorProcess(
     deviceId: string,
     packageName: string,
     callback: GcEventCallback,
-    generation: number
+    generation: number,
+    cursor: { epoch: number }
   ): Promise<void> {
+    const isCurrent = () => generation === this.gcMonitorGeneration;
+    const retry = () => {
+      if (!isCurrent()) return;
+      if (this.gcMonitorTimer) clearTimeout(this.gcMonitorTimer);
+      this.gcMonitorTimer = setTimeout(() => {
+        this.gcMonitorTimer = null;
+        void this.startGcMonitorProcess(deviceId, packageName, callback, generation, cursor);
+      }, GC_MONITOR_RETRY_MS);
+    };
+
     const pid = await this.getPid(deviceId, packageName);
-    if (!pid || generation !== this.gcMonitorGeneration) {
+    if (!isCurrent()) return;
+    if (!pid) {
+      // App not running (yet); check again shortly.
+      retry();
       return;
     }
 
     // Monitor GC events via the app's logcat. Since Android 8 ART logs GC
     // lines under the process name rather than the `art` tag, so filter by
-    // PID only and let parseGcLogLine pick out the GC messages.
+    // PID only and let parseGcLogLine pick out the GC messages. Epoch
+    // timestamps give replayed backlog lines their real time and let a
+    // restart resume right after the last line seen (-T).
     const process = spawn('adb', [
       '-s', deviceId,
       'logcat',
       '--pid', String(pid),
-      '-v', 'time',
+      '-v', 'epoch',
+      ...(cursor.epoch > 0 ? ['-T', (cursor.epoch + 0.001).toFixed(3)] : []),
     ]);
     this.gcMonitorProcess = process;
     process.stdout?.setEncoding('utf8');
@@ -2327,14 +2387,17 @@ export class AdbService extends EventEmitter {
     let buffer = '';
 
     process.stdout?.on('data', (data: string) => {
-      if (generation !== this.gcMonitorGeneration || this.gcMonitorProcess !== process) return;
+      if (!isCurrent() || this.gcMonitorProcess !== process) return;
       buffer += data;
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
 
       for (const line of lines) {
+        const epoch = parseLogcatEpoch(line);
+        if (epoch !== null) cursor.epoch = Math.max(cursor.epoch, epoch);
         const gcEvent = this.parseGcLogLine(line);
         if (gcEvent) {
+          if (epoch !== null) gcEvent.timestamp = Math.round(epoch * 1000);
           callback(gcEvent);
         }
       }
@@ -2345,8 +2408,29 @@ export class AdbService extends EventEmitter {
       console.error('GC monitor process error:', error);
     });
     process.on('close', () => {
-      if (this.gcMonitorProcess === process) this.gcMonitorProcess = null;
+      if (this.gcMonitorProcess !== process) return;
+      // logcat exited on its own (device hiccup, adb restart): re-attach.
+      this.gcMonitorProcess = null;
+      retry();
     });
+
+    // `logcat --pid` keeps following a dead PID after the app restarts, so
+    // periodically check whether the app now runs under a different PID.
+    const watchPid = () => {
+      this.gcMonitorTimer = setTimeout(async () => {
+        this.gcMonitorTimer = null;
+        const currentPid = await this.getPid(deviceId, packageName);
+        if (!isCurrent() || this.gcMonitorProcess !== process) return;
+        if (currentPid === pid) {
+          watchPid();
+          return;
+        }
+        this.gcMonitorProcess = null;
+        process.kill();
+        void this.startGcMonitorProcess(deviceId, packageName, callback, generation, cursor);
+      }, GC_MONITOR_PID_CHECK_MS);
+    };
+    watchPid();
   }
 
   private parseGcLogLine(line: string): GcEvent | null {
@@ -2438,6 +2522,10 @@ export class AdbService extends EventEmitter {
 
   stopGcMonitor(): void {
     this.gcMonitorGeneration++;
+    if (this.gcMonitorTimer) {
+      clearTimeout(this.gcMonitorTimer);
+      this.gcMonitorTimer = null;
+    }
     if (this.gcMonitorProcess) {
       this.gcMonitorProcess.kill();
       this.gcMonitorProcess = null;

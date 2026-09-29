@@ -137,6 +137,7 @@ function getJavaInfo(): JavaInfo | null {
 
 import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
+import { registerMonitorIpc } from './monitor-hub';
 import type {
   Device,
   LogEntry,
@@ -642,6 +643,9 @@ function stopRendererSessions(): void {
 }
 
 function setupIpcHandlers(): void {
+  // Background monitors (memory, CPU, FPS, battery, network, threads, GC)
+  registerMonitorIpc(adbService);
+
   // Device handlers
   ipcMain.handle('adb:get-devices', async () => {
     const devices = await adbService.getDevices();

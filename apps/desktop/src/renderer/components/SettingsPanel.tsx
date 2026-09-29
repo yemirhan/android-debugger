@@ -221,7 +221,7 @@ export function SettingsPanel() {
 
           <SettingRow
             label="Auto-start monitoring"
-            description="Start memory, CPU, FPS, battery, network and thread monitors when their view opens"
+            description="Collect memory, CPU, FPS, battery, network, thread and GC data in the background as soon as a device or app is selected"
           >
             <Toggle
               value={settings.autoStartMonitoring}
