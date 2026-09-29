@@ -31,6 +31,7 @@ export const APP_TABS = [
   'method-trace',
   'screen-mirror',
   'rn-devtools',
+  'emulators',
 ] as const;
 
 export type AppTabId = (typeof APP_TABS)[number];

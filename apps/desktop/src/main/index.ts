@@ -20,7 +20,7 @@ interface JavaInfo {
   version: string;
 }
 
-const ALLOWED_EXTERNAL_HOSTS = new Set(['chatgpt.com', 'claude.ai', 'www.google.com', 'github.com']);
+const ALLOWED_EXTERNAL_HOSTS = new Set(['chatgpt.com', 'claude.ai', 'www.google.com', 'github.com', 'developer.android.com']);
 
 function parseAllowedExternalUrl(value: string): URL | null {
   try {
@@ -152,6 +152,8 @@ import { mcpConfigPath } from './mcp-config';
 import type { McpSelection, McpToolHost } from './mcp-tools';
 import type { AppSection, AppTabId } from './app-tabs';
 import { registerMirrorIpcHandlers, stopAllMirrorSessions } from './scrcpy-mirror';
+import { emulatorService } from './emulator-service';
+import { registerEmulatorIpc } from './emulator-ipc';
 import type {
   Device,
   MemoryInfo,
@@ -189,6 +191,9 @@ adbService.setBundletoolDir(app.getPath('userData'));
 
 // Set scrcpy directory for on-demand download (not bundled due to notarization issues)
 scrcpyService.setScrcpyDir(app.getPath('userData'));
+
+// Emulator launch logs (the emulator keeps writing them after the app quits).
+emulatorService.setLogDir(join(app.getPath('userData'), 'emulator-logs'));
 
 // Storage for saved intents and history
 const savedIntentsPath = join(app.getPath('userData'), 'saved-intents.json');
@@ -372,6 +377,7 @@ function mcpSetupInfo(): McpSetupInfo {
 function createMcpHost(): McpToolHost {
   return {
     adb: adbService,
+    emulators: emulatorService,
     store: mcpStore,
     appVersion: app.getVersion(),
     getSelection: () => selection,
@@ -1526,6 +1532,11 @@ function setupIpcHandlers(): void {
 
   // In-app mirroring (scrcpy server streamed into the renderer)
   registerMirrorIpcHandlers();
+
+  // Emulators (AVD manager)
+  registerEmulatorIpc(emulatorService, (channel, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+  });
 }
 
 function setupAutoUpdaterEvents(): void {
@@ -1630,6 +1641,8 @@ app.on('before-quit', (event) => {
   void Promise.race([
     Promise.allSettled([
       adbService.stopAll(true),
+      // Kills avdmanager/sdkmanager; running emulators keep running.
+      emulatorService.stopAll(),
       scrcpyService.stopMirror(),
       stopAllMirrorSessions(),
       mcpController?.stop() ?? Promise.resolve(),

@@ -239,7 +239,7 @@ export function McpSettingsSection() {
 
           <SettingRow
             label="Allow risky tools"
-            description="Lets assistants run shell commands, install and uninstall apps, and clear app data"
+            description="Lets assistants run shell commands, install and uninstall apps, clear app data, and delete or wipe emulators"
           >
             <Toggle
               value={state.allowRiskyTools}

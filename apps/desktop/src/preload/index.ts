@@ -54,6 +54,18 @@ import type { MetroAppCommand, MetroProbe } from '../main/rn-devtools-protocol';
 import type { MirrorServerStatus, MirrorStartOptions, MirrorStartResult } from '../renderer/lib/mirror/types';
 import type { McpPublicState, McpSettingsPatch } from '../main/mcp-types';
 import type { AppSection } from '../main/app-tabs';
+import type {
+  AvailableImagesResult,
+  AvdInfo,
+  AvdListResult,
+  BootProgress,
+  CreateAvdRequest,
+  DeviceProfile,
+  EmulatorSetup,
+  ImageInstallJob,
+  StartAvdOptions,
+  SystemImage,
+} from '../main/emulator-types';
 
 export type UnsubscribeFn = () => void;
 export type SocketTransportType = 'socket' | 'logcat' | 'none';
@@ -285,6 +297,30 @@ export interface ElectronAPI extends MonitorApi {
     /** Starts the server again after an error (e.g. the port was freed). */
     retry: () => Promise<McpPublicState>;
     onState: (callback: (state: McpPublicState) => void) => UnsubscribeFn;
+  };
+
+  // Emulators (AVD manager)
+  emulators: {
+    getSetup: (force?: boolean) => Promise<EmulatorSetup>;
+    list: () => Promise<AvdListResult>;
+    start: (name: string, options?: StartAvdOptions) => Promise<BootProgress>;
+    stop: (name: string) => Promise<void>;
+    delete: (name: string) => Promise<void>;
+    wipe: (name: string) => Promise<void>;
+    rename: (name: string, newName: string) => Promise<void>;
+    deleteSnapshot: (name: string, snapshot: string) => Promise<void>;
+    showInFolder: (name: string) => Promise<void>;
+    getDeviceProfiles: (force?: boolean) => Promise<DeviceProfile[]>;
+    getSystemImages: () => Promise<SystemImage[]>;
+    getAvailableImages: (force?: boolean) => Promise<AvailableImagesResult>;
+    create: (request: CreateAvdRequest) => Promise<AvdInfo>;
+    installImage: (packageId: string) => Promise<ImageInstallJob>;
+    getInstallJobs: () => Promise<ImageInstallJob[]>;
+    respondToLicense: (jobId: string, accept: boolean) => Promise<void>;
+    cancelInstall: (jobId: string) => Promise<void>;
+    onBoot: (callback: (progress: BootProgress) => void) => UnsubscribeFn;
+    onInstall: (callback: (job: ImageInstallJob) => void) => UnsubscribeFn;
+    onChanged: (callback: () => void) => UnsubscribeFn;
   };
 
   // In-app screen mirror. Video and input use a MessagePort delivered to the
@@ -694,6 +730,42 @@ const electronAPI: ElectronAPI = {
       const listener = (_: Electron.IpcRendererEvent, state: McpPublicState) => callback(state);
       ipcRenderer.on('mcp:state', listener);
       return () => ipcRenderer.removeListener('mcp:state', listener);
+    },
+  },
+
+  // Emulators (AVD manager)
+  emulators: {
+    getSetup: (force) => ipcRenderer.invoke('emulators:setup', force),
+    list: () => ipcRenderer.invoke('emulators:list'),
+    start: (name, options) => ipcRenderer.invoke('emulators:start', name, options),
+    stop: (name) => ipcRenderer.invoke('emulators:stop', name),
+    delete: (name) => ipcRenderer.invoke('emulators:delete', name),
+    wipe: (name) => ipcRenderer.invoke('emulators:wipe', name),
+    rename: (name, newName) => ipcRenderer.invoke('emulators:rename', name, newName),
+    deleteSnapshot: (name, snapshot) => ipcRenderer.invoke('emulators:delete-snapshot', name, snapshot),
+    showInFolder: (name) => ipcRenderer.invoke('emulators:show-in-folder', name),
+    getDeviceProfiles: (force) => ipcRenderer.invoke('emulators:device-profiles', force),
+    getSystemImages: () => ipcRenderer.invoke('emulators:system-images'),
+    getAvailableImages: (force) => ipcRenderer.invoke('emulators:available-images', force),
+    create: (request) => ipcRenderer.invoke('emulators:create', request),
+    installImage: (packageId) => ipcRenderer.invoke('emulators:install-image', packageId),
+    getInstallJobs: () => ipcRenderer.invoke('emulators:install-jobs'),
+    respondToLicense: (jobId, accept) => ipcRenderer.invoke('emulators:respond-license', jobId, accept),
+    cancelInstall: (jobId) => ipcRenderer.invoke('emulators:cancel-install', jobId),
+    onBoot: (callback) => {
+      const listener = (_: Electron.IpcRendererEvent, progress: BootProgress) => callback(progress);
+      ipcRenderer.on('emulators:boot', listener);
+      return () => ipcRenderer.removeListener('emulators:boot', listener);
+    },
+    onInstall: (callback) => {
+      const listener = (_: Electron.IpcRendererEvent, job: ImageInstallJob) => callback(job);
+      ipcRenderer.on('emulators:install', listener);
+      return () => ipcRenderer.removeListener('emulators:install', listener);
+    },
+    onChanged: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on('emulators:changed', listener);
+      return () => ipcRenderer.removeListener('emulators:changed', listener);
     },
   },
 

@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Device } from '@android-debugger/shared';
+import { EmulatorQuickStart } from './emulators/EmulatorQuickStart';
+import { useEmulators } from '../lib/emulators';
+import type { AvdInfo } from '../../main/emulator-types';
 
 interface DevicePickerProps {
   devices: Device[];
@@ -7,6 +10,8 @@ interface DevicePickerProps {
   onDeviceSelect: (device: Device) => void;
   onRefreshDevices: () => void;
   loading: boolean;
+  /** Opens the Emulators tool. */
+  onManageEmulators: () => void;
 }
 
 const statusCopy: Record<Device['status'], { label: string; dot: string; hint?: string }> = {
@@ -22,6 +27,19 @@ const statusCopy: Record<Device['status'], { label: string; dot: string; hint?: 
     hint: 'Reconnect the cable or restart adb, then refresh.',
   },
 };
+
+const bootingCopy = { label: 'Booting', dot: 'bg-accent animate-pulse-dot' };
+
+function statusFor(device: Device, avd: AvdInfo | undefined) {
+  // adb reports "device" before Android has finished booting.
+  if (device.status === 'device' && avd && (avd.state === 'booting' || avd.state === 'starting')) return bootingCopy;
+  return statusCopy[device.status];
+}
+
+/** Emulators all report model "sdk_gphone64_arm64"; their AVD name tells them apart. */
+function deviceTitle(device: Device, avd: AvdInfo | undefined): string {
+  return avd?.displayName ?? (device.model || device.id);
+}
 
 function describe(device: Device): string {
   const parts = [device.id.startsWith('emulator-') ? 'Emulator' : null];
@@ -47,6 +65,7 @@ export function DevicePicker({
   onDeviceSelect,
   onRefreshDevices,
   loading,
+  onManageEmulators,
 }: DevicePickerProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -67,7 +86,9 @@ export function DevicePicker({
     };
   }, [open]);
 
-  const status = selectedDevice ? statusCopy[selectedDevice.status] : null;
+  const { avds } = useEmulators();
+  const avdFor = (device: Device) => (device.id.startsWith('emulator-') ? avds.find((avd) => avd.serial === device.id) : undefined);
+  const status = selectedDevice ? statusFor(selectedDevice, avdFor(selectedDevice)) : null;
 
   return (
     <div className="relative" ref={rootRef}>
@@ -88,7 +109,7 @@ export function DevicePicker({
           )}
         </span>
         <span className="text-sm text-text-primary truncate">
-          {selectedDevice ? selectedDevice.model || selectedDevice.id : devices.length === 0 ? 'No device' : 'Choose a device'}
+          {selectedDevice ? deviceTitle(selectedDevice, avdFor(selectedDevice)) : devices.length === 0 ? 'No device' : 'Choose a device'}
         </span>
         <span className="text-text-muted flex-shrink-0">
           <ChevronIcon />
@@ -120,7 +141,8 @@ export function DevicePicker({
           ) : (
             <ul role="listbox" className="p-1 max-h-72 overflow-y-auto">
               {devices.map((device) => {
-                const deviceStatus = statusCopy[device.status];
+                const avd = avdFor(device);
+                const deviceStatus: { label: string; dot: string; hint?: string } = statusFor(device, avd);
                 const isSelected = device.id === selectedDevice?.id;
                 return (
                   <li key={device.id}>
@@ -138,7 +160,7 @@ export function DevicePicker({
                       <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${deviceStatus.dot}`} />
                       <span className="flex-1 min-w-0">
                         <span className="flex items-baseline justify-between gap-2">
-                          <span className="text-sm text-text-primary truncate">{device.model || device.id}</span>
+                          <span className="text-sm text-text-primary truncate">{deviceTitle(device, avd)}</span>
                           <span className="text-[11px] text-text-muted flex-shrink-0">{deviceStatus.label}</span>
                         </span>
                         <span className="flex gap-2 text-xs text-text-muted min-w-0">
@@ -155,6 +177,16 @@ export function DevicePicker({
               })}
             </ul>
           )}
+
+          <EmulatorQuickStart
+            variant="picker"
+            limit={devices.length === 0 ? 5 : 3}
+            onManage={() => {
+              setOpen(false);
+              onManageEmulators();
+            }}
+            onStarted={() => setOpen(false)}
+          />
         </div>
       )}
     </div>

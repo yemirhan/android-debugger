@@ -230,6 +230,17 @@ export function SettingsPanel() {
               onChange={(v) => updateSetting('autoStartMonitoring', v)}
             />
           </SettingRow>
+
+          <SettingRow
+            label="Switch to emulators when they finish booting"
+            description="Select an emulator started from Android Debugger as soon as Android is ready"
+          >
+            <Toggle
+              value={settings.autoSelectBootedEmulator}
+              label="Switch to emulators when they finish booting"
+              onChange={(v) => updateSetting('autoSelectBootedEmulator', v)}
+            />
+          </SettingRow>
         </div>
       </section>
 

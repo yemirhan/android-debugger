@@ -205,6 +205,22 @@ export const tabGuides: Record<string, TabGuide> = {
     ],
   },
 
+  emulators: {
+    title: 'Emulators',
+    description: 'Create, start and manage Android emulators (virtual devices) without opening Android Studio.',
+    features: [
+      'Start an emulator with quick boot, cold boot, no window or wiped data',
+      'Follow boot progress; the emulator is selected once Android is ready',
+      'Create emulators from a device profile and an installed system image',
+      'Download more system images (Android versions) with sdkmanager',
+    ],
+    tips: [
+      'Works without a connected device',
+      'Emulators keep running when you quit Android Debugger',
+      'Emulators live in ~/.android/avd, the same place Android Studio uses',
+    ],
+  },
+
   'bundle-analyzer': {
     title: 'Bundle Analyzer',
     description: 'Inspect what is inside an APK or AAB file, like Android Studio\'s APK Analyzer.',

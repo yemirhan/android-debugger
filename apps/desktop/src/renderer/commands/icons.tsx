@@ -82,3 +82,10 @@ export const XCircleIcon = () => <Icon d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7
 export const SparkleIcon = () => (
   <Icon d="M12 3l1.8 4.9L18.7 9.7l-4.9 1.8L12 16.4l-1.8-4.9L5.3 9.7l4.9-1.8L12 3zM18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" />
 );
+export const EmulatorIcon = () => (
+  <Icon>
+    <rect x="6" y="2.75" width="12" height="18.5" rx="2.25" />
+    <path d="M10.5 9.25v5.5l4.25-2.75-4.25-2.75z" />
+  </Icon>
+);
+export const PlusIcon = () => <Icon d="M12 5v14M5 12h14" />;

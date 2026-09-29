@@ -30,6 +30,11 @@ import { HeapDumpPanel } from './components/HeapDumpPanel';
 import { MethodTracePanel } from './components/MethodTracePanel';
 import { ScreenMirrorPanel } from './components/ScreenMirrorPanel';
 import { RnDevtoolsHost } from './components/rn-devtools/RnDevtoolsPanel';
+import { EmulatorsPanel } from './components/emulators/EmulatorsPanel';
+import { EmulatorQuickStart } from './components/emulators/EmulatorQuickStart';
+import { getEmulatorState, onEmulatorBoot } from './lib/emulators';
+import { getAppSettings } from './lib/app-settings';
+import { toast } from './lib/toast';
 import { MirrorPip } from './components/mirror/MirrorPip';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
@@ -88,8 +93,9 @@ function AppContent() {
   const { setNavigateToSettings } = useUpdateContext();
   const { sidebarExpanded, toggleSidebar, isGroupExpanded, toggleGroup } = useNavigationState(activeTab);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Device (and maybe app) chosen by an MCP client, applied once the device list has it.
-  const [mcpTarget, setMcpTarget] = useState<{
+  // Device (and maybe app) chosen by an MCP client, a booted emulator or the
+  // Emulators tool; applied once the device list has it.
+  const [pendingTarget, setPendingTarget] = useState<{
     deviceId: string;
     packageName?: string;
     /** Devices are re-listed once before giving up on an unknown serial. */
@@ -192,35 +198,57 @@ function AppContent() {
   // select_device / select_app from an MCP client. Requests made while no
   // window was open are picked up once this page has mounted.
   useEffect(() => {
-    const unsubscribe = window.electronAPI.onSelectTarget((target) => setMcpTarget(target));
+    const unsubscribe = window.electronAPI.onSelectTarget((target) => setPendingTarget(target));
     window.electronAPI
       .takePendingSelection()
-      .then((target) => target && setMcpTarget((current) => current ?? target))
+      .then((target) => target && setPendingTarget((current) => current ?? target))
       .catch(() => {});
     return unsubscribe;
   }, []);
 
   useEffect(() => {
-    if (!mcpTarget) return;
-    if (selectedDevice?.id !== mcpTarget.deviceId) {
-      const device = devices.find((candidate) => candidate.id === mcpTarget.deviceId);
+    if (!pendingTarget) return;
+    if (selectedDevice?.id !== pendingTarget.deviceId) {
+      const device = devices.find((candidate) => candidate.id === pendingTarget.deviceId);
       if (device) {
         setSelectedDevice(device);
-      } else if (!mcpTarget.refresh) {
-        setMcpTarget({ ...mcpTarget, refresh: 'pending' });
+      } else if (!pendingTarget.refresh) {
+        setPendingTarget({ ...pendingTarget, refresh: 'pending' });
         void refreshDevices().finally(() =>
-          setMcpTarget((current) => (current?.deviceId === mcpTarget.deviceId ? { ...current, refresh: 'done' } : current))
+          setPendingTarget((current) => (current?.deviceId === pendingTarget.deviceId ? { ...current, refresh: 'done' } : current))
         );
-      } else if (mcpTarget.refresh === 'done') {
-        setMcpTarget(null);
+      } else if (pendingTarget.refresh === 'done') {
+        setPendingTarget(null);
       }
       return;
     }
     // Runs after the device-change effect above in the same commit, so the
     // requested app wins over the app remembered for this device.
-    if (mcpTarget.packageName !== undefined) handlePackageChange(mcpTarget.packageName);
-    setMcpTarget(null);
-  }, [mcpTarget, devices, selectedDevice, handlePackageChange, refreshDevices]);
+    if (pendingTarget.packageName !== undefined) handlePackageChange(pendingTarget.packageName);
+    setPendingTarget(null);
+  }, [pendingTarget, devices, selectedDevice, handlePackageChange, refreshDevices]);
+
+  const selectDeviceBySerial = useCallback((serial: string) => setPendingTarget({ deviceId: serial }), []);
+  const openEmulators = useCallback(() => setActiveTab('emulators'), []);
+
+  // Switch to an emulator started from the app once Android has booted.
+  useEffect(
+    () =>
+      onEmulatorBoot((progress) => {
+        const label = getEmulatorState().avds.find((avd) => avd.name === progress.name)?.displayName ?? progress.name;
+        if (progress.phase === 'failed' && progress.error !== 'Stopped') {
+          toast.error(`${label} did not start`, { description: progress.error ?? progress.message });
+          return;
+        }
+        if (progress.phase !== 'ready' || !progress.serial) return;
+        const autoSelect = getAppSettings().autoSelectBootedEmulator;
+        if (autoSelect) setPendingTarget({ deviceId: progress.serial });
+        toast.success(`${label} is ready`, {
+          description: autoSelect ? `Switched to ${progress.serial}.` : `It is listed as ${progress.serial}.`,
+        });
+      }),
+    []
+  );
 
   const renderPanel = () => {
     if (activeTab === 'dashboard' && activeDevice) {
@@ -244,6 +272,11 @@ function AppContent() {
       return <BundleAnalyzerPanel />;
     }
 
+    // Manages emulators on this computer, no device needed
+    if (activeTab === 'emulators') {
+      return <EmulatorsPanel selectedSerial={selectedDevice?.id ?? null} onUseInApp={selectDeviceBySerial} />;
+    }
+
     // Talks to Metro, not the device; RnDevtoolsHost below renders it and
     // keeps it mounted across tab switches so the debugger session survives.
     if (activeTab === 'rn-devtools') {
@@ -257,6 +290,7 @@ function AppContent() {
           hasDevices={devices.length > 0}
           onRefresh={refreshDevices}
           refreshing={devicesLoading}
+          onManageEmulators={openEmulators}
         />
       );
     }
@@ -340,6 +374,7 @@ function AppContent() {
               onPackageChange={handlePackageChange}
               sidebarExpanded={sidebarExpanded}
               onToggleSidebar={toggleSidebar}
+              onManageEmulators={openEmulators}
             />
             <div className="flex-1 flex min-h-0">
               <Sidebar
@@ -392,10 +427,12 @@ interface DeviceNotReadyProps {
   hasDevices: boolean;
   onRefresh: () => void;
   refreshing: boolean;
+  onManageEmulators: () => void;
 }
 
-function DeviceNotReady({ device, hasDevices, onRefresh, refreshing }: DeviceNotReadyProps) {
-  const { title, body } = !hasDevices || !device
+function DeviceNotReady({ device, hasDevices, onRefresh, refreshing, onManageEmulators }: DeviceNotReadyProps) {
+  const noDevice = !hasDevices || !device;
+  const { title, body } = noDevice
     ? {
         title: 'Connect an Android device',
         body: 'Plug in a phone with USB debugging turned on, or start an emulator. It shows up here automatically.',
@@ -427,6 +464,7 @@ function DeviceNotReady({ device, hasDevices, onRefresh, refreshing }: DeviceNot
         >
           {refreshing ? 'Looking for devices…' : 'Look again'}
         </button>
+        {noDevice && <EmulatorQuickStart variant="screen" limit={3} onManage={onManageEmulators} />}
       </div>
     </div>
   );

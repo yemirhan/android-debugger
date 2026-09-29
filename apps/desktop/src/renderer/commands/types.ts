@@ -34,6 +34,7 @@ export interface CommandContext {
 
 export type CommandGroupId =
   | 'device'
+  | 'emulators'
   | 'app'
   | 'capture'
   | 'dev-options'
@@ -43,6 +44,7 @@ export type CommandGroupId =
 
 export const COMMAND_GROUPS: { id: CommandGroupId; label: string }[] = [
   { id: 'device', label: 'Device' },
+  { id: 'emulators', label: 'Emulators' },
   { id: 'app', label: 'App' },
   { id: 'capture', label: 'Capture' },
   { id: 'dev-options', label: 'Developer options' },

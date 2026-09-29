@@ -24,6 +24,10 @@ export interface AppSettings {
   maxLogEntries: number;
   autoStartLogcat: boolean;
   autoStartMonitoring: boolean;
+  /** Switch to an emulator started from the app once it finishes booting. */
+  autoSelectBootedEmulator: boolean;
+  /** Start emulators with -no-audio. */
+  emulatorNoAudio: boolean;
 }
 
 type NumericSettingKey = {
@@ -39,6 +43,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   maxLogEntries: MAX_LOG_ENTRIES,
   autoStartLogcat: true,
   autoStartMonitoring: true,
+  autoSelectBootedEmulator: true,
+  emulatorNoAudio: false,
 };
 
 // Polling bounds match the clamp applied by the main process.
@@ -65,7 +71,7 @@ function sanitize(raw: unknown): AppSettings {
   for (const key of Object.keys(SETTING_LIMITS) as NumericSettingKey[]) {
     if (key in source) result[key] = clampNumber(key, source[key]);
   }
-  for (const key of ['autoStartLogcat', 'autoStartMonitoring'] as const) {
+  for (const key of ['autoStartLogcat', 'autoStartMonitoring', 'autoSelectBootedEmulator', 'emulatorNoAudio'] as const) {
     if (typeof source[key] === 'boolean') result[key] = source[key];
   }
   return result;

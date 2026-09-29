@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import type { Device } from '@android-debugger/shared';
 import type { TabId } from '../App';
 import { registerCoreCommands } from '../commands/core';
+import { registerEmulatorCommands } from '../commands/emulators';
 import type { CommandContext } from '../commands/types';
 import { useCrashContext } from '../contexts';
 import { logStore } from '../hooks/useLogs';
@@ -73,6 +74,7 @@ export function CommandCenter({
   const { isRecording, isMirroring } = useCaptureState();
 
   useEffect(() => registerCoreCommands(), []);
+  useEffect(() => registerEmulatorCommands(), []);
 
   const context = useMemo<CommandContext>(
     () => ({

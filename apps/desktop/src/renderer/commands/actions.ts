@@ -1,4 +1,5 @@
 import type { Device } from '@android-debugger/shared';
+import { getEmulatorState } from '../lib/emulators';
 
 /**
  * Device and app actions behind the command panel, as plain async functions
@@ -18,6 +19,11 @@ export const KEYCODE = {
 } as const;
 
 export function deviceLabel(device: Pick<Device, 'id' | 'model'>): string {
+  // Emulators all report the same model; their AVD name tells them apart.
+  if (device.id.startsWith('emulator-')) {
+    const avd = getEmulatorState().avds.find((candidate) => candidate.serial === device.id);
+    if (avd) return avd.displayName;
+  }
   return device.model && device.model !== 'Unknown' ? device.model : device.id;
 }
 

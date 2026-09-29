@@ -14,6 +14,7 @@ interface HeaderProps {
   onPackageChange: (pkg: string) => void;
   sidebarExpanded: boolean;
   onToggleSidebar: () => void;
+  onManageEmulators: () => void;
 }
 
 const SidebarIcon = () => (
@@ -39,6 +40,7 @@ export function Header({
   onPackageChange,
   sidebarExpanded,
   onToggleSidebar,
+  onManageEmulators,
 }: HeaderProps) {
   const wifiName = selectedDevice?.wifiName?.trim();
   const isReady = selectedDevice?.status === 'device';
@@ -65,6 +67,7 @@ export function Header({
           onDeviceSelect={onDeviceSelect}
           onRefreshDevices={onRefreshDevices}
           loading={loading}
+          onManageEmulators={onManageEmulators}
         />
 
         {isReady && selectedDevice && (

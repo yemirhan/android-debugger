@@ -10,6 +10,9 @@ import * as fs from 'fs';
 import { z } from 'zod';
 import type { Device, IntentConfig, LogLevel } from '@android-debugger/shared';
 import type { AdbService } from './adb';
+import type { EmulatorService } from './emulator-service';
+import type { AvdInfo } from './emulator-types';
+import { abisForHost, defaultDeviceProfile, profileCategoriesForTag, suggestAvdName } from './emulator-parsers';
 import { APP_TABS, type AppSection, type AppTabId } from './app-tabs';
 import type { LogStreamMode } from './logcat-format';
 import {
@@ -31,6 +34,7 @@ export interface McpSelection {
 
 export interface McpToolHost {
   adb: AdbService;
+  emulators: EmulatorService;
   store: McpDataStore;
   appVersion: string;
   getSelection: () => McpSelection;
@@ -53,7 +57,7 @@ export interface McpToolHost {
   openDevMenuViaAdb: (deviceId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export const RISKY_TOOLS = ['run_shell', 'uninstall_app', 'clear_app_data', 'install_app'] as const;
+export const RISKY_TOOLS = ['run_shell', 'uninstall_app', 'clear_app_data', 'install_app', 'delete_emulator'] as const;
 
 /** Thrown for problems the assistant can fix; the message is shown as-is. */
 class ToolError extends Error {}
@@ -159,6 +163,13 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
     return check.path;
   }
 
+  function riskyRefusal(what: string): CallToolResult {
+    return failure(
+      `${what} To allow it, open ${SETTINGS_HINT} and turn on "Allow risky tools" ` +
+        '(navigate_ui with tab "settings" opens that screen). Ask the user before enabling it.'
+    );
+  }
+
   /** Registers a tool whose handler errors become isError results with a readable message. */
   function tool<Shape extends z.ZodRawShape>(
     name: string,
@@ -182,12 +193,7 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
         },
       },
       (async (args: z.infer<z.ZodObject<Shape>>) => {
-        if (risky && !host.isRiskyAllowed()) {
-          return failure(
-            `${name} is a risky tool and is turned off. To allow it, open ${SETTINGS_HINT} and turn on "Allow risky tools" ` +
-              '(navigate_ui with tab "settings" opens that screen). Ask the user before enabling it.'
-          );
-        }
+        if (risky && !host.isRiskyAllowed()) return riskyRefusal(`${name} is a risky tool and is turned off.`);
         try {
           return await handler(args);
         } catch (error) {
@@ -1307,6 +1313,190 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
     }
   );
 
+  // ---------- emulators (AVDs) ----------
+
+  function emulatorSummary(avd: AvdInfo) {
+    return {
+      name: avd.name,
+      displayName: avd.displayName,
+      state: avd.state,
+      serial: avd.serial,
+      androidVersion: avd.androidVersion,
+      apiLevel: avd.apiLevel,
+      abi: avd.abi,
+      systemImage: avd.systemImage,
+      playStore: avd.playStore,
+      deviceProfile: avd.deviceProfile,
+      ramMb: avd.ramMb,
+      boot: avd.boot
+        ? { phase: avd.boot.phase, message: avd.boot.message, error: avd.boot.error, warning: avd.boot.warning }
+        : undefined,
+      problem: avd.problem ?? undefined,
+    };
+  }
+
+  const emulatorName = z.string().min(1).describe('AVD name from list_emulators, e.g. Pixel_8_API_36.');
+
+  tool(
+    'list_emulators',
+    {
+      title: 'List emulators',
+      description:
+        'Lists the Android emulators (AVDs) on this computer: whether each is stopped, booting or running (with its adb serial), ' +
+        'its Android version and system image, plus the installed system images and any Android SDK setup problems.',
+      inputSchema: {},
+      readOnly: true,
+    },
+    async () => {
+      const { setup, avds } = await host.emulators.listAvds();
+      const images = await host.emulators.listSystemImages(setup);
+      return json({
+        emulators: avds.map(emulatorSummary),
+        installedSystemImages: images.map((image) => ({
+          id: image.id,
+          androidVersion: image.androidVersion,
+          apiLevel: image.apiLevel,
+          variant: image.tagDisplay,
+          abi: image.abi,
+        })),
+        canStart: setup.canStart,
+        canCreate: setup.canCreate,
+        setupProblems: setup.issues.length ? setup.issues.map((issue) => `${issue.title}. ${issue.detail}`) : undefined,
+        hint: avds.length ? undefined : setup.canCreate ? 'No emulators yet. create_emulator makes one.' : undefined,
+      });
+    }
+  );
+
+  tool(
+    'start_emulator',
+    {
+      title: 'Start emulator',
+      description:
+        'Boots an Android emulator (AVD). It keeps running after Android Debugger quits. Returns right away unless waitForBoot is true; ' +
+        'booting usually takes 20-90 s. When it is ready it shows up in list_devices as emulator-<port>. ' +
+        'wipeData resets it to factory state and needs "Allow risky tools".',
+      inputSchema: {
+        name: emulatorName,
+        coldBoot: z.boolean().default(false).describe('Boot from scratch instead of the quick-boot snapshot.'),
+        headless: z.boolean().default(false).describe('Run without a window.'),
+        noAudio: z.boolean().default(false).describe('Disable audio.'),
+        wipeData: z.boolean().default(false).describe('Erase all user data first (risky).'),
+        waitForBoot: z
+          .boolean()
+          .default(false)
+          .describe('Wait (up to about 50 s, so MCP clients do not time out) until Android has finished booting.'),
+      },
+    },
+    async ({ name, coldBoot, headless, noAudio, wipeData, waitForBoot }) => {
+      if (wipeData && !host.isRiskyAllowed()) return riskyRefusal('Starting with wipeData erases the emulator and is a risky action, which is turned off.');
+      const started = await host.emulators.startAvd(name, { coldBoot, headless, noAudio, wipeData });
+      if (!waitForBoot) {
+        return json(
+          { name, phase: started.phase, message: started.message },
+          `Starting ${name}. Call list_emulators (or list_devices) to see when it is running, then select_device with its serial.`
+        );
+      }
+      const result = await host.emulators.waitForBoot(name, 50_000);
+      if (result?.phase === 'ready') {
+        return json(
+          { name, phase: result.phase, serial: result.serial },
+          `${name} is ready as ${result.serial}. Call select_device with "${result.serial}" to work with it.`
+        );
+      }
+      if (result?.phase === 'failed') return failure(`${name} did not start: ${result.error ?? result.message}`);
+      return json(
+        { name, phase: result?.phase ?? 'booting', serial: result?.serial ?? null, message: result?.message },
+        `${name} is still booting${result?.warning ? ` (${result.warning})` : ''}. Call list_emulators again in a little while.`
+      );
+    }
+  );
+
+  tool(
+    'stop_emulator',
+    {
+      title: 'Stop emulator',
+      description: 'Shuts down a running emulator (like closing its window; the quick-boot snapshot is saved as usual).',
+      inputSchema: { name: emulatorName },
+    },
+    async ({ name }) => {
+      await host.emulators.stopAvd(name);
+      return text(`Stopped ${name}.`);
+    }
+  );
+
+  tool(
+    'create_emulator',
+    {
+      title: 'Create emulator',
+      description:
+        'Creates an Android emulator (AVD) from an installed system image (see installedSystemImages in list_emulators). ' +
+        'Does not download anything and does not start it; call start_emulator next.',
+      inputSchema: {
+        name: z
+          .string()
+          .regex(/^[A-Za-z0-9._-]+$/)
+          .max(64)
+          .optional()
+          .describe('AVD name: letters, digits, dot, dash, underscore. Defaults to e.g. Pixel_8_API_36.'),
+        systemImage: z
+          .string()
+          .optional()
+          .describe('Installed system image id, e.g. system-images;android-36;google_apis_playstore;arm64-v8a. Defaults to the newest one.'),
+        device: z.string().optional().describe('Device profile id, e.g. pixel_8 or medium_phone. Defaults to a recent Pixel.'),
+        ramMb: z.number().int().min(512).max(65536).optional().describe('RAM in MB. Defaults to the profile\'s value.'),
+        storageGb: z.number().int().min(1).max(512).optional().describe('Internal storage in GB. Defaults to the image\'s value.'),
+        sdCardMb: z.number().int().min(0).max(65536).optional().describe('SD card size in MB; 0 or omitted = no SD card.'),
+      },
+    },
+    async ({ name, systemImage, device, ramMb, storageGb, sdCardMb }) => {
+      const setup = await host.emulators.getSetup();
+      if (!setup.canCreate) {
+        const issue = setup.issues.find((item) => item.id !== 'emulator');
+        throw new ToolError(issue ? `${issue.title}. ${issue.detail}` : 'avdmanager is not available.');
+      }
+      const allImages = await host.emulators.listSystemImages(setup);
+      const images = allImages.filter((image) => abisForHost(setup.hostAbi).includes(image.abi));
+      const image = systemImage ? allImages.find((candidate) => candidate.id === systemImage) : images[0];
+      if (!image) {
+        throw new ToolError(
+          systemImage
+            ? `${systemImage} is not installed. Installed: ${allImages.map((candidate) => candidate.id).join(', ') || 'none'}.`
+            : 'No system image for this computer is installed. Download one in Android Debugger → Emulators → System images.'
+        );
+      }
+      const profiles = await host.emulators.listDeviceProfiles();
+      const suitable = profiles.filter((profile) => profileCategoriesForTag(image.tagId).includes(profile.category));
+      const profile = device ? profiles.find((candidate) => candidate.id === device) : defaultDeviceProfile(suitable.length ? suitable : profiles);
+      if (!profile) {
+        throw new ToolError(`Unknown device profile "${device}". Examples: ${suitable.slice(0, 12).map((item) => item.id).join(', ')}.`);
+      }
+      const existing = (await host.emulators.listAvds()).avds.map((avd) => avd.name);
+      const created = await host.emulators.createAvd({
+        name: name ?? suggestAvdName(profile.name, image.apiLevel, existing),
+        systemImage: image.id,
+        device: profile.id,
+        ramMb,
+        storageGb,
+        sdCardMb,
+      });
+      return json(emulatorSummary(created), `Created ${created.name}. Call start_emulator with name "${created.name}" to boot it.`);
+    }
+  );
+
+  tool(
+    'delete_emulator',
+    {
+      title: 'Delete emulator',
+      description: 'Deletes a stopped emulator (AVD) and all of its data from this computer.',
+      inputSchema: { name: emulatorName },
+      destructive: true,
+    },
+    async ({ name }) => {
+      await host.emulators.deleteAvd(name);
+      return text(`Deleted ${name}.`);
+    }
+  );
+
   // ---------- shell ----------
 
   tool(
@@ -1344,8 +1534,9 @@ export function createMcpServer(host: McpToolHost): McpServer {
         'Controls Android devices and React Native apps through the Android Debugger desktop app. ' +
         'Start with list_devices; most tools default to the device and app selected in the app ' +
         '(change them with select_device / select_app). take_screenshot returns an image you can use to pick ' +
-        'input_tap coordinates. Risky tools (run_shell, install_app, uninstall_app, clear_app_data) only work when ' +
-        'the user allowed them in Settings.',
+        'input_tap coordinates. No device? list_emulators and start_emulator boot an Android emulator. ' +
+        'Risky tools (run_shell, install_app, uninstall_app, clear_app_data, delete_emulator, and start_emulator with wipeData) ' +
+        'only work when the user allowed them in Settings.',
     }
   );
   registerMcpTools(server, host);

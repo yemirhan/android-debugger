@@ -33,6 +33,7 @@ import {
   BundleAnalyzerIcon,
   ScreenMirrorIcon,
   SettingsIcon,
+  EmulatorIcon,
 } from '../components/icons';
 import { ReactNativeIcon } from '../components/rn-devtools/icons';
 
@@ -85,6 +86,7 @@ export const navigationGroups: NavGroup[] = [
     label: 'Tools',
     icon: <ToolsIcon />,
     items: [
+      { id: 'emulators', label: 'Emulators', icon: <EmulatorIcon /> },
       { id: 'install-app', label: 'Install App', icon: <InstallAppIcon /> },
       { id: 'bundle-analyzer', label: 'Bundle Analyzer', icon: <BundleAnalyzerIcon /> },
       { id: 'screen-mirror', label: 'Screen Mirror', icon: <ScreenMirrorIcon /> },

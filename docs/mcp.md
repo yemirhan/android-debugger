@@ -5,6 +5,7 @@ Android Debugger runs a local [Model Context Protocol](https://modelcontextproto
 - read logs, crashes, network requests, console output and performance data
 - take screenshots
 - drive the device and app: launch, tap, type, deep links, developer options
+- list, create, start and stop Android emulators
 
 The server is part of the desktop app, so keep Android Debugger running while you use it. It keeps collecting data when the window is hidden or on another tab.
 
@@ -166,9 +167,14 @@ Most tools take an optional `device` (serial) and `app` (package name). If you l
 | `set_dev_option` | Changes a developer option: layout bounds, show touches, pointer location or animation scales. |
 | `reload_react_native` / `open_dev_menu` | Reloads the JS bundle or opens the React Native dev menu. Uses a key press, or Metro if you pass `metroPort`. |
 | `navigate_ui` | Switches the Android Debugger window to a tab and brings it to the front. |
+| `list_emulators` | Lists the emulators (AVDs) on this computer: stopped, booting or running (with the adb serial), Android version and system image. Also lists installed system images and any Android SDK setup problems. |
+| `start_emulator` | Boots an emulator. Options: `coldBoot`, `headless`, `noAudio`, `waitForBoot` (waits up to about 50 seconds, so clients with a 60-second tool timeout are fine). `wipeData` ⚠️ erases it first and needs risky tools allowed. The emulator keeps running after Android Debugger quits. |
+| `stop_emulator` | Shuts down a running emulator. |
+| `create_emulator` | Creates an emulator from an installed system image and a device profile (both have defaults). Doesn't download anything. |
+| `delete_emulator` ⚠️ | Deletes a stopped emulator and all of its data. |
 | `run_shell` ⚠️ | Runs a command in the device shell. |
 
-⚠️ These are risky tools. They are off by default. Until you turn on **Settings → AI assistants (MCP) → Allow risky tools**, calling one returns a message that explains how to enable it.
+⚠️ These are risky tools (or, for `start_emulator`, a risky option). They are off by default. Until you turn on **Settings → AI assistants (MCP) → Allow risky tools**, calling one returns a message that explains how to enable it.
 
 Where the data comes from:
 
@@ -183,7 +189,7 @@ Where the data comes from:
 - Each request must send `Authorization: Bearer <token>`. The app creates a random 256-bit token on first run and stores it in `mcp.json`. Only your user account can read that file (permissions 0600). You can regenerate the token in Settings.
 - The server rejects requests whose `Host` header isn't `127.0.0.1:<port>` or `localhost:<port>`. This blocks DNS rebinding.
 - The server rejects requests with an `Origin` other than the server itself. This stops web pages in your browser from calling it.
-- Tools that can change or delete data (`run_shell`, `install_app`, `uninstall_app`, `clear_app_data`) stay off until you allow them. Turn them off again when you're done.
+- Tools that can change or delete data (`run_shell`, `install_app`, `uninstall_app`, `clear_app_data`, `delete_emulator`, and `start_emulator` with `wipeData`) stay off until you allow them. Turn them off again when you're done.
 - To stop all access, turn off **Local MCP server** in Settings.
 - The server has no sessions. Every request is handled on its own, and nothing is kept between requests except the data the app already collects.
 
