@@ -1635,5 +1635,11 @@ app.on('before-quit', (event) => {
       mcpController?.stop() ?? Promise.resolve(),
     ]),
     cleanupTimeout,
-  ]).finally(() => app.quit());
+  ])
+    // Quit from a fresh task. When cleanup settles within this handler's
+    // microtask checkpoint, a nested app.quit() runs inside Electron's first
+    // Browser::Quit(), which then overwrites is_quitting_ with this handler's
+    // preventDefault: the windows close as a non-quit and on macOS the app
+    // keeps running without a window.
+    .finally(() => setImmediate(() => app.quit()));
 });
