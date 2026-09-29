@@ -46,6 +46,7 @@ pnpm publish:packages  # Publish SDK and UI packages to npm
 - **Renderer** (`src/renderer/App.tsx`): React frontend with tabbed interface
 - **ADB service** (`src/main/adb.ts`): Device communication, command execution
 - **Logcat parser** (`src/main/logcat-parser.ts`): Parses SDK messages from logcat stream
+- **MCP server** (`src/main/mcp-*.ts`): Local Streamable HTTP MCP server on 127.0.0.1 (bearer token, Host/Origin checks) whose tools reuse AdbService; `mcp-store.ts` keeps bounded copies of the streams sent to the renderer; `mcp-bridge.ts` is the standalone stdio bridge shipped in `Resources/mcp/`. User docs: `docs/mcp.md`
 
 Key contexts in renderer: LogsContext, SDKContext, UpdateContext, CrashContext
 

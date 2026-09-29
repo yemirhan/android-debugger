@@ -11,8 +11,12 @@ import { isMonitorKind, parseMonitorStart, type MonitorStartRequest } from './mo
  * adb probe in flight per kind. Each sample is tagged with the session the
  * renderer started it with, letting the renderer drop stale samples after a
  * target switch.
+ *
+ * `onSample` taps every sample (MCP keeps a bounded copy in main).
  */
-export function registerMonitorIpc(adb: AdbService): void {
+export type MonitorSampleTap = (kind: MonitorKind, deviceId: string, packageName: string, payload: unknown) => void;
+
+export function registerMonitorIpc(adb: AdbService, onSample?: MonitorSampleTap): void {
   ipcMain.on('monitor:start', (event, kind, deviceId, packageName, interval, session) => {
     const request = parseMonitorStart(kind, deviceId, packageName, interval, session);
     if (!request) {
@@ -21,6 +25,8 @@ export function registerMonitorIpc(adb: AdbService): void {
     }
     const sender = event.sender;
     const emit = (payload: unknown) => {
+      // Also kept in main (see mcp-store.ts) so MCP tools can read recent samples.
+      onSample?.(request.kind, request.deviceId, request.packageName, payload);
       if (!sender.isDestroyed()) sender.send('monitor:sample', request.kind, request.session, payload);
     };
     try {

@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { deflateSync } from 'zlib';
 import type { UpdateSettings, UpdateInfo, UpdateProgress, UpdateCheckResult, BundleAnalysisResult } from '@android-debugger/shared';
 import { analyzeBundle, extractBundleEntry } from './bundle-analyzer';
-import { registerRnDevtoolsIpc, guardDevtoolsWebviews } from './rn-devtools';
+import { registerRnDevtoolsIpc, guardDevtoolsWebviews, sendMetroCommand, openDevMenuViaAdb } from './rn-devtools';
 
 interface AdbInfo {
   path: string;
@@ -140,7 +140,17 @@ import type { LogHistoryRequest, LogStreamRequest } from './logcat-format';
 import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
 import { registerMonitorIpc } from './monitor-hub';
-import { registerCommandIpc } from './command-ipc';
+import {
+  captureScreenshotToCaptures,
+  getCapturesDir,
+  registerCommandIpc,
+  startRecordingToCaptures,
+} from './command-ipc';
+import { McpDataStore } from './mcp-store';
+import { McpController, registerMcpIpc, type McpSetupInfo } from './mcp-server';
+import { mcpConfigPath } from './mcp-config';
+import type { McpSelection, McpToolHost } from './mcp-tools';
+import type { AppSection, AppTabId } from './app-tabs';
 import { registerMirrorIpcHandlers, stopAllMirrorSessions } from './scrcpy-mirror';
 import type {
   Device,
@@ -256,6 +266,146 @@ let selectedDeviceId: string | null = null;
 let trayUpdateInterval: NodeJS.Timeout | null = null;
 let isRecording = false;
 let recordingDeviceId: string | null = null;
+
+// ==================== MCP (AI assistants) ====================
+
+/** Bounded copies of the streams sent to the renderer, for MCP tools. */
+const mcpStore = new McpDataStore();
+let mcpController: McpController | null = null;
+
+/** The device/app the UI shows, as last reported by the renderer (or set over MCP). */
+let selection: McpSelection = { deviceId: null, packageName: '' };
+/** Set over MCP while no page was ready to receive it; the renderer takes it on mount. */
+let pendingRendererSelection: { deviceId: string; packageName?: string } | null = null;
+const selectionWaiters = new Set<{ matches: (value: McpSelection) => boolean; resolve: (ok: boolean) => void }>();
+
+function reportSelection(next: McpSelection): void {
+  selection = next;
+  for (const waiter of [...selectionWaiters]) {
+    if (waiter.matches(next)) {
+      selectionWaiters.delete(waiter);
+      waiter.resolve(true);
+    }
+  }
+}
+
+function waitForSelection(matches: (value: McpSelection) => boolean, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const waiter = {
+      matches,
+      resolve: (ok: boolean) => {
+        clearTimeout(timer);
+        resolve(ok);
+      },
+    };
+    const timer = setTimeout(() => {
+      selectionWaiters.delete(waiter);
+      resolve(false);
+    }, timeoutMs);
+    selectionWaiters.add(waiter);
+  });
+}
+
+function sendWhenLoaded(window: BrowserWindow, channel: string, ...args: unknown[]): void {
+  if (window.webContents.isLoading()) {
+    window.webContents.once('did-finish-load', () => window.webContents.send(channel, ...args));
+  } else {
+    window.webContents.send(channel, ...args);
+  }
+}
+
+async function selectTargetFromMcp(target: { deviceId: string; packageName?: string }) {
+  const packageName =
+    target.packageName ?? (target.deviceId === selection.deviceId ? selection.packageName : '');
+  const expected = (value: McpSelection) =>
+    value.deviceId === target.deviceId && (target.packageName === undefined || value.packageName === target.packageName);
+  // Already showing it: the renderer won't report a change, so don't wait for one.
+  const alreadyShown = expected(selection) && !!mainWindow && !mainWindow.isDestroyed();
+  if (alreadyShown) return { ...selection, uiConfirmed: true };
+  selection = { deviceId: target.deviceId, packageName };
+  selectedDeviceId = target.deviceId;
+  updateTrayMenu();
+
+  const window = mainWindow;
+  const confirmed = waitForSelection(expected, 4000);
+  if (!window || window.isDestroyed() || window.webContents.isLoading()) {
+    // The page (once there is one) asks for it after mounting.
+    pendingRendererSelection = target;
+    if (!window || window.isDestroyed()) {
+      return { ...selection, uiConfirmed: false };
+    }
+  } else {
+    window.webContents.send('app:select-target', target);
+  }
+  const uiConfirmed = await confirmed;
+  return { ...selection, uiConfirmed };
+}
+
+function encodeImageForMcp(filePath: string, maxDimension: number) {
+  const image = nativeImage.createFromPath(filePath);
+  if (image.isEmpty()) throw new Error('Could not read the screenshot');
+  const { width: originalWidth, height: originalHeight } = image.getSize();
+  const scale = Math.min(1, maxDimension / Math.max(originalWidth, originalHeight));
+  const resized =
+    scale < 1
+      ? image.resize({ width: Math.round(originalWidth * scale), height: Math.round(originalHeight * scale), quality: 'good' })
+      : image;
+  const { width, height } = resized.getSize();
+  // JPEG keeps screenshots small in the assistant's context; the saved file stays a full PNG.
+  return { data: resized.toJPEG(85).toString('base64'), mimeType: 'image/jpeg', width, height, originalWidth, originalHeight };
+}
+
+function mcpSetupInfo(): McpSetupInfo {
+  const bridgePath = app.isPackaged
+    ? join(process.resourcesPath, 'mcp', 'android-debugger-mcp.js')
+    : join(__dirname, 'mcp-bridge.js');
+  const userData = app.getPath('userData');
+  return {
+    runtimePath: process.execPath,
+    bridgePath,
+    configPath: mcpConfigPath(userData),
+    configIsDefault: userData === join(app.getPath('appData'), 'Android Debugger'),
+    bridgeExists: fs.existsSync(bridgePath),
+  };
+}
+
+function createMcpHost(): McpToolHost {
+  return {
+    adb: adbService,
+    store: mcpStore,
+    appVersion: app.getVersion(),
+    getSelection: () => selection,
+    selectTarget: selectTargetFromMcp,
+    navigate: (tab: AppTabId, section?: AppSection) => navigateToTab(tab, section),
+    isRiskyAllowed: () => mcpController?.isRiskyAllowed() ?? false,
+    capturesDir: getCapturesDir,
+    captureScreenshot: (deviceId, label, savePath) =>
+      savePath ? adbService.captureScreenshotTo(deviceId, savePath) : captureScreenshotToCaptures(adbService, deviceId, label),
+    encodeImage: encodeImageForMcp,
+    startRecording: async (deviceId, label, savePath) => {
+      const result = savePath
+        ? await adbService.startScreenRecording(deviceId, savePath, handleRecordingState)
+        : await startRecordingToCaptures(adbService, deviceId, label, handleRecordingState);
+      if (!result.success) updateTrayMenu();
+      return result;
+    },
+    stopRecording: (deviceId) => handleStopRecording(deviceId),
+    sendMetroCommand: (port, method) => sendMetroCommand(port, method),
+    openDevMenuViaAdb: (deviceId) => openDevMenuViaAdb(deviceId),
+  };
+}
+
+function setupMcp(): void {
+  mcpController = new McpController({
+    configPath: mcpConfigPath(app.getPath('userData')),
+    host: createMcpHost(),
+    setup: mcpSetupInfo,
+  });
+  registerMcpIpc(mcpController, (state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('mcp:state', state);
+  });
+  void mcpController.start();
+}
 
 const trayIconPixels = [
   '....##....##....',
@@ -382,19 +532,12 @@ function getTrayDevice(): Device | null {
   return connected || trayDevices[0] || null;
 }
 
-function navigateToTab(tabId: string): void {
+function navigateToTab(tabId: string, section?: AppSection): void {
   const window = showMainWindow();
   if (!window) {
     return;
   }
-
-  if (window.webContents.isLoading()) {
-    window.webContents.once('did-finish-load', () => {
-      window.webContents.send('app:navigate', tabId);
-    });
-  } else {
-    window.webContents.send('app:navigate', tabId);
-  }
+  sendWhenLoaded(window, 'app:navigate', tabId, section);
 }
 
 function updateTrayMenu(): void {
@@ -647,11 +790,18 @@ function clampPollInterval(interval: unknown, fallback: number): number {
 
 function stopRendererSessions(): void {
   void adbService.stopAll(false);
+  // MCP keeps the data already collected but must not report these streams as live.
+  mcpStore.stopLogStream();
+  mcpStore.stopSdkStream();
+  mcpStore.setCrashStream(null);
 }
 
 function setupIpcHandlers(): void {
-  // Background monitors (memory, CPU, FPS, battery, network, threads, GC)
-  registerMonitorIpc(adbService);
+  // Background monitors (memory, CPU, FPS, battery, network, threads, GC);
+  // samples are also kept for MCP.
+  registerMonitorIpc(adbService, (kind, deviceId, packageName, payload) =>
+    mcpStore.addMonitorSample(kind, deviceId, packageName, payload)
+  );
 
   // Command panel actions (captures, uninstall, key events, clipboard)
   registerCommandIpc({ adbService, onRecordingState: handleRecordingState });
@@ -671,6 +821,20 @@ function setupIpcHandlers(): void {
   ipcMain.on('app:set-selected-device', (_, deviceId: string | null) => {
     selectedDeviceId = deviceId;
     updateTrayMenu();
+  });
+
+  ipcMain.handle('app:take-pending-selection', () => {
+    const target = pendingRendererSelection;
+    pendingRendererSelection = null;
+    return target;
+  });
+
+  // The renderer's current device + app (kept in sync with MCP's select_device / select_app).
+  ipcMain.on('app:set-selection', (_, deviceId: unknown, packageName: unknown) => {
+    reportSelection({
+      deviceId: typeof deviceId === 'string' && deviceId ? deviceId : null,
+      packageName: typeof packageName === 'string' ? packageName : '',
+    });
   });
 
   // Memory handlers
@@ -695,9 +859,16 @@ function setupIpcHandlers(): void {
 
   // Log handlers: the stream is batched and tagged with the renderer's session id.
   ipcMain.on('logs:start', (_, request: LogStreamRequest) => {
+    mcpStore.beginLogStream(request);
     void adbService.startLogStream(request, {
-      onBatch: (batch) => mainWindow?.webContents.send('logs:batch', batch),
-      onStatus: (status) => mainWindow?.webContents.send('logs:status', status),
+      onBatch: (batch) => {
+        mcpStore.receiveLogBatch(batch);
+        mainWindow?.webContents.send('logs:batch', batch);
+      },
+      onStatus: (status) => {
+        mcpStore.receiveLogStatus(status);
+        mainWindow?.webContents.send('logs:status', status);
+      },
     });
   });
 
@@ -720,9 +891,11 @@ function setupIpcHandlers(): void {
 
   ipcMain.on('adb:stop-logcat', () => {
     adbService.stopLogcat();
+    mcpStore.stopLogStream();
   });
 
   ipcMain.on('adb:start-sdk-logcat', (_, deviceId: string, packageName?: string) => {
+    if (typeof deviceId === 'string' && deviceId) mcpStore.setSdkTarget(deviceId, packageName || '');
     adbService.startSdkLogcat(deviceId, packageName || undefined).catch((error) => {
       console.error('Error starting SDK logcat:', error);
     });
@@ -730,6 +903,7 @@ function setupIpcHandlers(): void {
 
   ipcMain.on('adb:stop-sdk-logcat', () => {
     adbService.stopSdkLogcat();
+    mcpStore.stopSdkStream();
   });
 
   ipcMain.handle('adb:clear-logcat', async (_, deviceId: string) => {
@@ -796,6 +970,7 @@ function setupIpcHandlers(): void {
   // SDK message forwarding - SDK messages are now parsed from logcat
   // and forwarded to the renderer automatically when logcat is running
   adbService.on('sdk-messages', (messages: SdkMessage[]) => {
+    mcpStore.addSdkMessages(messages);
     mainWindow?.webContents.send('sdk-messages', messages);
   });
 
@@ -972,7 +1147,9 @@ function setupIpcHandlers(): void {
   // Crash logcat handlers
   ipcMain.on('adb:start-crash-logcat', (_, deviceId: string) => {
     try {
+      mcpStore.setCrashStream(deviceId || null);
       adbService.startCrashLogcat(deviceId, (entry: CrashEntry) => {
+        mcpStore.addCrash(deviceId, entry);
         mainWindow?.webContents.send('crash-entry', entry);
       });
     } catch (error) {
@@ -982,6 +1159,7 @@ function setupIpcHandlers(): void {
 
   ipcMain.on('adb:stop-crash-logcat', () => {
     adbService.stopCrashLogcat();
+    mcpStore.setCrashStream(null);
   });
 
   ipcMain.handle('adb:clear-crash-logcat', async (_, deviceId: string) => {
@@ -1395,6 +1573,7 @@ function setupAutoUpdaterEvents(): void {
 app.whenReady().then(() => {
   setupIpcHandlers();
   registerRnDevtoolsIpc();
+  setupMcp();
   setupAutoUpdaterEvents();
   createWindow();
   createTray();
@@ -1449,7 +1628,12 @@ app.on('before-quit', (event) => {
   // Cleanup is best-effort: a hung adb/scrcpy child must never keep the app from quitting.
   const cleanupTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
   void Promise.race([
-    Promise.allSettled([adbService.stopAll(true), scrcpyService.stopMirror(), stopAllMirrorSessions()]),
+    Promise.allSettled([
+      adbService.stopAll(true),
+      scrcpyService.stopMirror(),
+      stopAllMirrorSessions(),
+      mcpController?.stop() ?? Promise.resolve(),
+    ]),
     cleanupTimeout,
   ]).finally(() => app.quit());
 });

@@ -12,6 +12,8 @@
     "src/renderer/**/*",
     "src/preload/monitor-types.ts",
     "src/main/logcat-format.ts",
-    "src/main/rn-devtools-protocol.ts"
+    "src/main/rn-devtools-protocol.ts",
+    "src/main/app-tabs.ts",
+    "src/main/mcp-types.ts"
   ]
 }

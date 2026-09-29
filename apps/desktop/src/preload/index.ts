@@ -52,6 +52,8 @@ import type {
 } from '../main/logcat-format';
 import type { MetroAppCommand, MetroProbe } from '../main/rn-devtools-protocol';
 import type { MirrorServerStatus, MirrorStartOptions, MirrorStartResult } from '../renderer/lib/mirror/types';
+import type { McpPublicState, McpSettingsPatch } from '../main/mcp-types';
+import type { AppSection } from '../main/app-tabs';
 
 export type UnsubscribeFn = () => void;
 export type SocketTransportType = 'socket' | 'logcat' | 'none';
@@ -61,7 +63,13 @@ export interface ElectronAPI extends MonitorApi {
   getDevices: () => Promise<Device[]>;
   getDeviceInfo: (deviceId: string) => Promise<Device | null>;
   setSelectedDevice: (deviceId: string | null) => void;
-  onAppNavigate: (callback: (tabId: string) => void) => UnsubscribeFn;
+  /** Reports the UI's device + app to main (MCP tools default to it). */
+  setSelection: (deviceId: string | null, packageName: string) => void;
+  /** An MCP client chose a device (and maybe an app); `packageName` undefined = keep/restore as usual. */
+  onSelectTarget: (callback: (target: { deviceId: string; packageName?: string }) => void) => UnsubscribeFn;
+  /** A selection an MCP client made before this page could receive it (null when none). */
+  takePendingSelection: () => Promise<{ deviceId: string; packageName?: string } | null>;
+  onAppNavigate: (callback: (tabId: string, section?: AppSection) => void) => UnsubscribeFn;
 
   // Memory
   getMemInfo: (deviceId: string, packageName: string) => Promise<MemoryInfo | null>;
@@ -268,6 +276,17 @@ export interface ElectronAPI extends MonitorApi {
     onShortcut: (callback: (shortcut: 'command-palette') => void) => UnsubscribeFn;
   };
 
+  // Local MCP server for AI assistants (Settings → AI assistants)
+  mcp: {
+    getState: () => Promise<McpPublicState>;
+    getToken: () => Promise<string>;
+    update: (patch: McpSettingsPatch) => Promise<McpPublicState>;
+    regenerateToken: () => Promise<McpPublicState>;
+    /** Starts the server again after an error (e.g. the port was freed). */
+    retry: () => Promise<McpPublicState>;
+    onState: (callback: (state: McpPublicState) => void) => UnsubscribeFn;
+  };
+
   // In-app screen mirror. Video and input use a MessagePort delivered to the
   // page with window.postMessage({ source: 'adbg-mirror-port', sessionId }).
   getMirrorServerStatus: () => Promise<MirrorServerStatus>;
@@ -293,8 +312,15 @@ const electronAPI: ElectronAPI = {
   getDevices: () => ipcRenderer.invoke('adb:get-devices'),
   getDeviceInfo: (deviceId) => ipcRenderer.invoke('adb:get-device-info', deviceId),
   setSelectedDevice: (deviceId) => ipcRenderer.send('app:set-selected-device', deviceId),
+  setSelection: (deviceId, packageName) => ipcRenderer.send('app:set-selection', deviceId, packageName),
+  takePendingSelection: () => ipcRenderer.invoke('app:take-pending-selection'),
+  onSelectTarget: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, target: { deviceId: string; packageName?: string }) => callback(target);
+    ipcRenderer.on('app:select-target', listener);
+    return () => ipcRenderer.removeListener('app:select-target', listener);
+  },
   onAppNavigate: (callback) => {
-    const listener = (_: Electron.IpcRendererEvent, tabId: string) => callback(tabId);
+    const listener = (_: Electron.IpcRendererEvent, tabId: string, section?: AppSection) => callback(tabId, section);
     ipcRenderer.on('app:navigate', listener);
     return () => ipcRenderer.removeListener('app:navigate', listener);
   },
@@ -654,6 +680,20 @@ const electronAPI: ElectronAPI = {
       const listener = (_: Electron.IpcRendererEvent, shortcut: 'command-palette') => callback(shortcut);
       ipcRenderer.on('rn-devtools:shortcut', listener);
       return () => ipcRenderer.removeListener('rn-devtools:shortcut', listener);
+    },
+  },
+
+  // Local MCP server
+  mcp: {
+    getState: () => ipcRenderer.invoke('mcp:get-state'),
+    getToken: () => ipcRenderer.invoke('mcp:get-token'),
+    update: (patch) => ipcRenderer.invoke('mcp:update', patch),
+    regenerateToken: () => ipcRenderer.invoke('mcp:regenerate-token'),
+    retry: () => ipcRenderer.invoke('mcp:retry'),
+    onState: (callback) => {
+      const listener = (_: Electron.IpcRendererEvent, state: McpPublicState) => callback(state);
+      ipcRenderer.on('mcp:state', listener);
+      return () => ipcRenderer.removeListener('mcp:state', listener);
     },
   },
 

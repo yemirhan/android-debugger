@@ -10,6 +10,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
+          // Standalone stdio <-> HTTP MCP bridge; shipped via extraResources.
+          'mcp-bridge': resolve(__dirname, 'src/main/mcp-bridge.ts'),
         },
       },
     },

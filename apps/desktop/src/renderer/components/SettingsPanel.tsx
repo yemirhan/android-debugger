@@ -5,6 +5,8 @@ import { useAppSettings, updateAppSettings, SETTING_LIMITS, type AppSettings } f
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
 import { tabGuides } from '../data/tabGuides';
+import { NumberInput, SettingRow, Toggle } from './settings/controls';
+import { McpSettingsSection } from './settings/McpSettingsSection';
 
 interface AdbInfo {
   path: string;
@@ -231,6 +233,8 @@ export function SettingsPanel() {
         </div>
       </section>
 
+      <McpSettingsSection />
+
       {/* Updates */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
         <h3 className="text-xs font-medium text-text-muted mb-4">Updates</h3>
@@ -381,93 +385,5 @@ export function SettingsPanel() {
         </div>
       </section>
     </div>
-  );
-}
-
-interface SettingRowProps {
-  label: string;
-  description: string;
-  children: React.ReactNode;
-}
-
-function SettingRow({ label, description, children }: SettingRowProps) {
-  return (
-    <div className="flex items-center justify-between">
-      <div>
-        <p className="text-sm text-text-primary">{label}</p>
-        <p className="text-xs text-text-muted">{description}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-interface NumberInputProps {
-  value: number;
-  onChange: (value: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  suffix?: string;
-}
-
-function NumberInput({ value, onChange, min, max, step, suffix }: NumberInputProps) {
-  // Edit a local draft and commit on blur/Enter, so intermediate keystrokes
-  // (e.g. "5" on the way to "5000") are not clamped mid-typing.
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
-
-  const commit = () => {
-    const parsed = parseInt(draft, 10);
-    if (Number.isNaN(parsed)) {
-      setDraft(String(value));
-      return;
-    }
-    let next = parsed;
-    if (min !== undefined) next = Math.max(min, next);
-    if (max !== undefined) next = Math.min(max, next);
-    setDraft(String(next));
-    if (next !== value) onChange(next);
-  };
-
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="number"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur();
-        }}
-        min={min}
-        max={max}
-        step={step}
-        className="w-20 px-2.5 py-1.5 bg-background rounded-md border border-border-muted text-sm text-text-primary text-right font-mono outline-none focus:border-accent transition-colors"
-      />
-      {suffix && <span className="text-xs text-text-muted">{suffix}</span>}
-    </div>
-  );
-}
-
-interface ToggleProps {
-  value: boolean;
-  onChange: (value: boolean) => void;
-}
-
-function Toggle({ value, onChange }: ToggleProps) {
-  return (
-    <button
-      onClick={() => onChange(!value)}
-      className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${
-        value ? 'bg-accent' : 'bg-surface-hover border border-border-muted'
-      }`}
-    >
-      <div
-        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-          value ? 'translate-x-5' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
   );
 }

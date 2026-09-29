@@ -40,6 +40,8 @@ import { UpdateAvailableModal } from './components/UpdateAvailableModal';
 import { CommandCenter } from './components/CommandCenter';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { getNavItem } from './data/navigation';
+import { isAppTab, type AppTabId } from '../main/app-tabs';
+import { requestSettingsSection } from './lib/settings-section';
 
 const LAST_TARGET_KEY = 'android-debugger-last-target';
 
@@ -75,7 +77,7 @@ function saveLastTarget(target: LastTarget) {
   }
 }
 
-export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'bundle-analyzer' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace' | 'screen-mirror' | 'rn-devtools';
+export type TabId = AppTabId;
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -86,6 +88,13 @@ function AppContent() {
   const { setNavigateToSettings } = useUpdateContext();
   const { sidebarExpanded, toggleSidebar, isGroupExpanded, toggleGroup } = useNavigationState(activeTab);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Device (and maybe app) chosen by an MCP client, applied once the device list has it.
+  const [mcpTarget, setMcpTarget] = useState<{
+    deviceId: string;
+    packageName?: string;
+    /** Devices are re-listed once before giving up on an unknown serial. */
+    refresh?: 'pending' | 'done';
+  } | null>(null);
 
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
@@ -134,6 +143,7 @@ function AppContent() {
 
     const last = loadLastTarget();
     saveLastTarget({ ...last, deviceId });
+
     const remembered = last.packages[deviceId];
     if (!remembered) return;
 
@@ -150,14 +160,21 @@ function AppContent() {
   }, [selectedDevice?.id]);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.onAppNavigate((tabId) => {
-      setActiveTab(tabId as TabId);
+    const unsubscribe = window.electronAPI.onAppNavigate((tabId, section) => {
+      if (!isAppTab(tabId)) return;
+      if (section) requestSettingsSection(section);
+      setActiveTab(tabId);
     });
 
     return () => {
       unsubscribe();
     };
   }, []);
+
+  // Main (and MCP tools) always know what the UI has selected.
+  useEffect(() => {
+    window.electronAPI.setSelection(selectedDevice?.id ?? null, packageName);
+  }, [selectedDevice?.id, packageName]);
 
   const handleDeviceSelect = useCallback((device: Device) => {
     setSelectedDevice(device);
@@ -172,6 +189,38 @@ function AppContent() {
     else delete packages[selectedDevice.id];
     saveLastTarget({ deviceId: selectedDevice.id, packages });
   }, [selectedDevice]);
+  // select_device / select_app from an MCP client. Requests made while no
+  // window was open are picked up once this page has mounted.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onSelectTarget((target) => setMcpTarget(target));
+    window.electronAPI
+      .takePendingSelection()
+      .then((target) => target && setMcpTarget((current) => current ?? target))
+      .catch(() => {});
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!mcpTarget) return;
+    if (selectedDevice?.id !== mcpTarget.deviceId) {
+      const device = devices.find((candidate) => candidate.id === mcpTarget.deviceId);
+      if (device) {
+        setSelectedDevice(device);
+      } else if (!mcpTarget.refresh) {
+        setMcpTarget({ ...mcpTarget, refresh: 'pending' });
+        void refreshDevices().finally(() =>
+          setMcpTarget((current) => (current?.deviceId === mcpTarget.deviceId ? { ...current, refresh: 'done' } : current))
+        );
+      } else if (mcpTarget.refresh === 'done') {
+        setMcpTarget(null);
+      }
+      return;
+    }
+    // Runs after the device-change effect above in the same commit, so the
+    // requested app wins over the app remembered for this device.
+    if (mcpTarget.packageName !== undefined) handlePackageChange(mcpTarget.packageName);
+    setMcpTarget(null);
+  }, [mcpTarget, devices, selectedDevice, handlePackageChange, refreshDevices]);
 
   const renderPanel = () => {
     if (activeTab === 'dashboard' && activeDevice) {

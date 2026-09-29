@@ -5,6 +5,7 @@ import { describeError, toast, updateToast, type ToastAction } from '../lib/toas
 import * as actions from './actions';
 import * as icons from './icons';
 import { registerCommands } from './registry';
+import { requestSettingsSection } from '../lib/settings-section';
 import type { Availability, Command, CommandChoice, CommandContext } from './types';
 
 // ---------- helpers ----------
@@ -606,6 +607,19 @@ const windowCommands: Command[] = [
     icon: <icons.SettingsIcon />,
     shortcut: ['⌘', ','],
     run: (ctx) => ctx.navigate('settings'),
+  },
+  {
+    id: 'window.connect-ai-assistant',
+    kind: 'action',
+    title: 'Connect an AI assistant',
+    keywords: ['mcp', 'claude', 'claude code', 'codex', 'ai', 'agent', 'llm', 'model context protocol', 'automation'],
+    group: 'window',
+    icon: <icons.SparkleIcon />,
+    subtitle: () => 'Claude Code, Codex and other MCP clients',
+    run: (ctx) => {
+      requestSettingsSection('mcp');
+      ctx.navigate('settings');
+    },
   },
   {
     id: 'window.check-updates',

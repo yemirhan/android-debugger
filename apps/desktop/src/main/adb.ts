@@ -65,6 +65,7 @@ import {
 } from './logcat-format';
 import { parseCmdWifiStatus, parseDumpsysWifi } from './wifi-parser';
 import { parseAmStartError, parseResolvedActivity } from './launch-parsers';
+import { ANDROID_KEY_NAMES, androidKeyCode } from './android-keys';
 import { parseHprof, parseMethodTrace } from './profiler-parsers';
 import {
   shellQuote,
@@ -1002,6 +1003,92 @@ export class AdbService extends EventEmitter {
       throw new Error('Invalid key code');
     }
     await runAdb(deviceId, ['shell', 'input', 'keyevent', ...keyCodes.map(String)], { timeout: 10_000 });
+  }
+
+  /**
+   * Presses one key by code (e.g. 4) or name ("BACK" / "KEYCODE_BACK"; see
+   * android-keys.ts). `longPress` holds it (e.g. power menu).
+   */
+  async pressKey(deviceId: string, key: number | string, longPress = false): Promise<void> {
+    let code: number | null;
+    if (typeof key === 'number') {
+      code = Number.isInteger(key) && key >= 0 && key <= 400 ? key : null;
+      if (code === null) throw new Error('Invalid key code');
+    } else {
+      // "5" is the digit key; "66" is a raw key code.
+      code = /^\d{2,3}$/.test(key.trim()) ? Number(key.trim()) : androidKeyCode(key);
+      if (code === null || code > 400) {
+        throw new Error(`Unknown key "${key}". Use a name such as ${ANDROID_KEY_NAMES.slice(0, 12).join(', ')}, or a numeric key code.`);
+      }
+    }
+    await runAdb(
+      deviceId,
+      ['shell', 'input', 'keyevent', ...(longPress ? ['--longpress'] : []), String(code)],
+      { timeout: 10_000 }
+    );
+  }
+
+  async inputTap(deviceId: string, x: number, y: number): Promise<void> {
+    const coords = [x, y].map((value) => Math.round(value));
+    if (coords.some((value) => !Number.isFinite(value) || value < 0 || value > 100_000)) throw new Error('Invalid tap coordinates');
+    await runAdb(deviceId, ['shell', 'input', 'tap', ...coords.map(String)], { timeout: 10_000 });
+  }
+
+  async inputSwipe(deviceId: string, x1: number, y1: number, x2: number, y2: number, durationMs = 300): Promise<void> {
+    const coords = [x1, y1, x2, y2].map((value) => Math.round(value));
+    if (coords.some((value) => !Number.isFinite(value) || value < 0 || value > 100_000)) throw new Error('Invalid swipe coordinates');
+    const duration = Math.min(Math.max(Math.round(durationMs), 1), 10_000);
+    await runAdb(deviceId, ['shell', 'input', 'swipe', ...coords.map(String), String(duration)], {
+      timeout: 15_000 + duration,
+    });
+  }
+
+  /**
+   * Types text into the focused field. `input text` treats "%s" as a space and
+   * can't type raw spaces, so spaces are encoded; the whole string is
+   * single-quoted for the device shell.
+   */
+  async inputText(deviceId: string, text: string): Promise<void> {
+    if (!text) throw new Error('Text is empty');
+    if (/[\r\n]/.test(text)) throw new Error('Text cannot contain line breaks; send ENTER with press_key instead');
+    // Only printable ASCII is supported by `input text`.
+    if (/[^\x20-\x7e]/.test(text)) throw new Error('Only plain ASCII text can be typed through adb');
+    // Android's `input text` has no escape for a literal "%s"; everything else types as-is.
+    const encoded = text.replace(/ /g, '%s');
+    await runAdb(deviceId, ['shell', 'input', 'text', `'${encoded.replace(/'/g, `'\\''`)}'`], { timeout: 20_000 });
+  }
+
+  /**
+   * Runs a command in the device shell (`adb shell <command>`), returning its
+   * output and exit code instead of throwing on failure.
+   */
+  async runShell(
+    deviceId: string,
+    command: string,
+    timeoutMs = DEFAULT_ADB_TIMEOUT_MS
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
+    assertDeviceId(deviceId);
+    if (!command.trim()) throw new Error('Command is empty');
+    try {
+      const { stdout, stderr } = await runAdb(deviceId, ['shell', command], { timeout: timeoutMs });
+      return { stdout, stderr, exitCode: 0, timedOut: false };
+    } catch (error) {
+      const failure = error as { stdout?: string; stderr?: string; code?: number | string; killed?: boolean; signal?: string };
+      if (failure.stdout === undefined && failure.stderr === undefined) throw error;
+      return {
+        stdout: String(failure.stdout ?? ''),
+        stderr: String(failure.stderr ?? ''),
+        exitCode: typeof failure.code === 'number' ? failure.code : null,
+        timedOut: Boolean(failure.killed && failure.signal),
+      };
+    }
+  }
+
+  /** The last `maxLines` lines of the device's crash buffer (`logcat -b crash`). */
+  async dumpCrashBuffer(deviceId: string, maxLines = 400): Promise<string> {
+    const lines = Math.min(Math.max(Math.floor(maxLines), 1), 5000);
+    const { stdout } = await runAdb(deviceId, ['logcat', '-d', '-b', 'crash', '-v', 'time', '-t', String(lines)]);
+    return stdout;
   }
 
   /**

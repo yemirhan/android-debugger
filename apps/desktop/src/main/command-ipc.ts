@@ -27,18 +27,37 @@ function assertExistingFile(filePath: unknown): string {
   return filePath;
 }
 
-export function registerCommandIpc({ adbService, onRecordingState }: CommandIpcDeps): void {
-  ipcMain.handle('commands:capture-screenshot', async (_, deviceId: string, deviceLabel?: string) => {
-    const target = path.join(getCapturesDir(), captureFileName('screenshot', new Date(), deviceLabel));
-    return adbService.captureScreenshotTo(deviceId, target);
-  });
+/** Saves a PNG into the captures folder without a dialog (command panel, MCP). */
+export async function captureScreenshotToCaptures(
+  adbService: AdbService,
+  deviceId: string,
+  deviceLabel?: string
+): Promise<{ path: string; bytes: number }> {
+  const target = path.join(getCapturesDir(), captureFileName('screenshot', new Date(), deviceLabel));
+  return adbService.captureScreenshotTo(deviceId, target);
+}
 
-  ipcMain.handle('commands:start-recording', async (_, deviceId: string, deviceLabel?: string) => {
-    const dir = getCapturesDir();
-    await fs.promises.mkdir(dir, { recursive: true });
-    const target = path.join(dir, captureFileName('recording', new Date(), deviceLabel));
-    return adbService.startScreenRecording(deviceId, target, onRecordingState);
-  });
+/** Starts a screen recording that is saved into the captures folder when stopped. */
+export async function startRecordingToCaptures(
+  adbService: AdbService,
+  deviceId: string,
+  deviceLabel: string | undefined,
+  onRecordingState: (state: RecordingState) => void
+): Promise<{ success: boolean; path?: string }> {
+  const dir = getCapturesDir();
+  await fs.promises.mkdir(dir, { recursive: true });
+  const target = path.join(dir, captureFileName('recording', new Date(), deviceLabel));
+  return adbService.startScreenRecording(deviceId, target, onRecordingState);
+}
+
+export function registerCommandIpc({ adbService, onRecordingState }: CommandIpcDeps): void {
+  ipcMain.handle('commands:capture-screenshot', async (_, deviceId: string, deviceLabel?: string) =>
+    captureScreenshotToCaptures(adbService, deviceId, deviceLabel)
+  );
+
+  ipcMain.handle('commands:start-recording', async (_, deviceId: string, deviceLabel?: string) =>
+    startRecordingToCaptures(adbService, deviceId, deviceLabel, onRecordingState)
+  );
 
   ipcMain.handle('commands:uninstall-app', async (_, deviceId: string, packageName: string) => {
     await adbService.uninstallApp(deviceId, packageName);

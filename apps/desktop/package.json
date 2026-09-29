@@ -21,11 +21,13 @@
   },
   "dependencies": {
     "@android-debugger/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "dotenv": "^17.2.3",
     "electron-updater": "^6.1.7",
     "recharts": "^2.15.0",
     "uuid": "^11.0.5",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4"
   },
   "build": {
     "appId": "com.android-debugger.desktop",
@@ -40,6 +42,10 @@
       {
         "from": "resources/platform-tools",
         "to": "platform-tools"
+      },
+      {
+        "from": "out/main/mcp-bridge.js",
+        "to": "mcp/android-debugger-mcp.js"
       }
     ],
     "npmRebuild": false,
@@ -65,8 +71,6 @@
     }
   },
   "devDependencies": {
-    "@yemirhan/android-debugger-sdk": "workspace:*",
-    "@yemirhan/android-debugger-ui": "workspace:*",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.6",
@@ -74,6 +78,8 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
+    "@yemirhan/android-debugger-sdk": "workspace:*",
+    "@yemirhan/android-debugger-ui": "workspace:*",
     "autoprefixer": "^10.4.20",
     "dotenv-cli": "^11.0.0",
     "electron": "34.0.1",

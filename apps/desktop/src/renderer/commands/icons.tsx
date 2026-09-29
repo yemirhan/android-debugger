@@ -79,3 +79,6 @@ export const LogsIcon = () => <Icon d="M4 6h16M4 10h16M4 14h10M4 18h7" />;
 export const PauseIcon = () => <Icon d="M9 5v14M15 5v14" />;
 export const FilterIcon = () => <Icon d="M3 5h18l-7 8.5V19l-4 2v-7.5L3 5z" />;
 export const XCircleIcon = () => <Icon d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />;
+export const SparkleIcon = () => (
+  <Icon d="M12 3l1.8 4.9L18.7 9.7l-4.9 1.8L12 16.4l-1.8-4.9L5.3 9.7l4.9-1.8L12 3zM18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" />
+);
