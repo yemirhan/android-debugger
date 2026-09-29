@@ -43,6 +43,7 @@ import type {
   ScrcpyState,
   BundleAnalysisResult,
 } from '@android-debugger/shared';
+import type { MirrorServerStatus, MirrorStartOptions, MirrorStartResult } from '../renderer/lib/mirror/types';
 
 export type UnsubscribeFn = () => void;
 export type SocketTransportType = 'socket' | 'logcat' | 'none';
@@ -232,6 +233,12 @@ export interface ElectronAPI {
   onMirrorStarted: (callback: (state: ScrcpyState) => void) => UnsubscribeFn;
   onMirrorStopped: (callback: () => void) => UnsubscribeFn;
   onMirrorError: (callback: (error: string) => void) => UnsubscribeFn;
+
+  // In-app screen mirror. Video and input use a MessagePort delivered to the
+  // page with window.postMessage({ source: 'adbg-mirror-port', sessionId }).
+  getMirrorServerStatus: () => Promise<MirrorServerStatus>;
+  startInAppMirror: (deviceId: string, options: MirrorStartOptions) => Promise<MirrorStartResult>;
+  stopInAppMirror: (sessionId?: string) => Promise<{ success: boolean }>;
 }
 
 const socketStatusListeners = new Set<(status: { type: SocketTransportType }) => void>();
@@ -567,6 +574,20 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('scrcpy-mirror-error', listener);
     return () => ipcRenderer.removeListener('scrcpy-mirror-error', listener);
   },
+
+  // In-app screen mirror
+  getMirrorServerStatus: () => ipcRenderer.invoke('mirror:get-server-status'),
+  startInAppMirror: (deviceId, options) => ipcRenderer.invoke('mirror:start', deviceId, options),
+  stopInAppMirror: (sessionId) => ipcRenderer.invoke('mirror:stop', sessionId),
 };
+
+// MessagePorts cannot cross the context bridge; hand them to the page directly.
+// (The preload is type-checked without DOM libs, hence the narrow cast.)
+const pageWindow = globalThis as unknown as {
+  postMessage: (message: unknown, targetOrigin: string, transfer?: unknown[]) => void;
+};
+ipcRenderer.on('mirror:port', (event, payload: { sessionId: string }) => {
+  pageWindow.postMessage({ source: 'adbg-mirror-port', sessionId: payload.sessionId }, '*', event.ports);
+});
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

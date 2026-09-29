@@ -137,6 +137,7 @@ function getJavaInfo(): JavaInfo | null {
 
 import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
+import { registerMirrorIpcHandlers, stopAllMirrorSessions } from './scrcpy-mirror';
 import type {
   Device,
   LogEntry,
@@ -1354,6 +1355,9 @@ function setupIpcHandlers(): void {
   ipcMain.handle('scrcpy:is-mirroring', async (_, deviceId?: string) => {
     return scrcpyService.isMirroring(deviceId);
   });
+
+  // In-app mirroring (scrcpy server streamed into the renderer)
+  registerMirrorIpcHandlers();
 }
 
 function setupAutoUpdaterEvents(): void {
@@ -1428,6 +1432,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   stopRendererSessions();
   void scrcpyService.stopMirror();
+  void stopAllMirrorSessions();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -1453,5 +1458,6 @@ app.on('before-quit', (event) => {
   void Promise.all([
     adbService.stopAll(true),
     scrcpyService.stopMirror(),
+    stopAllMirrorSessions(),
   ]).finally(() => app.quit());
 });

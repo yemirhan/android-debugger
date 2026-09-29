@@ -29,6 +29,7 @@ import { GcMonitorPanel } from './components/GcMonitorPanel';
 import { HeapDumpPanel } from './components/HeapDumpPanel';
 import { MethodTracePanel } from './components/MethodTracePanel';
 import { ScreenMirrorPanel } from './components/ScreenMirrorPanel';
+import { MirrorPip } from './components/mirror/MirrorPip';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { useNavigationState } from './hooks/useNavigationState';
@@ -316,6 +317,11 @@ function AppContent() {
             onClose={() => setPaletteOpen(false)}
             onSelect={setActiveTab}
             hasPackage={!!packageName}
+          />
+          <MirrorPip
+            activeDeviceId={activeDevice?.id ?? null}
+            hidden={activeTab === 'screen-mirror'}
+            onOpenPanel={() => setActiveTab('screen-mirror')}
           />
         </CrashProvider>
       </LogsProvider>
