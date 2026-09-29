@@ -336,6 +336,74 @@ export function parseLockPid(text: string): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
+/**
+ * Whether a process's executable (`ps -o comm=`, or a Windows image name) is
+ * the emulator: the launcher execs into qemu-system-*, so the lock file's PID
+ * is qemu. Matches the file name only, so helpers that merely live in the
+ * SDK's emulator/ folder (crashpad_handler, netsimd) don't count.
+ */
+export function isEmulatorExecutable(command: string): boolean {
+  const base = command.trim().split(/[\\/]/).pop() ?? '';
+  return /^(qemu-system-[\w.-]+|emulator(64-[\w-]+)?)(\.exe)?$/i.test(base);
+}
+
+/** The AVD an emulator process runs, from its command line (`-avd <name>` or `@<name>`). */
+export function avdNameFromCommandLine(commandLine: string): string | null {
+  const name = /(?:^|\s)(?:-avd\s+|@)([A-Za-z0-9._-]+)(?=\s|$)/.exec(commandLine)?.[1] ?? null;
+  return name && isValidAvdName(name) ? name : null;
+}
+
+export function sameAvdName(a: string, b: string): boolean {
+  // AVD folders live on case-insensitive file systems on macOS and Windows.
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+interface PathApi {
+  isAbsolute(value: string): boolean;
+  relative(from: string, to: string): string;
+  basename(value: string): string;
+  resolve(...values: string[]): string;
+  sep: string;
+}
+
+function isInsideOrSame(parent: string, child: string, api: PathApi): boolean {
+  const relative = api.relative(parent, child);
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${api.sep}`) && !api.isAbsolute(relative));
+}
+
+/**
+ * Why an AVD folder must not be deleted or wiped, or null when it may be.
+ * `folder` comes from the AVD's .ini `path`, which can point anywhere, so it
+ * must look like an AVD folder (<something>.avd, absolute), must not contain
+ * the AVD home, and must not be (or overlap) another AVD's folder. Paths
+ * should already be resolved with realpath.
+ */
+export function avdFolderProblem(
+  folder: string,
+  avdHome: string,
+  otherAvdFolders: readonly string[],
+  options: { api: PathApi; caseInsensitive: boolean }
+): string | null {
+  const { api } = options;
+  const norm = (value: string) => {
+    const resolved = api.resolve(value);
+    return options.caseInsensitive ? resolved.toLowerCase() : resolved;
+  };
+  if (!api.isAbsolute(folder)) return `${folder} is not an absolute path`;
+  const target = norm(folder);
+  const base = api.basename(target);
+  if (!base.endsWith('.avd') || base.length <= 4) return `${folder} does not look like an emulator folder`;
+  if (isInsideOrSame(target, norm(avdHome), api)) return `${folder} contains the emulator home folder`;
+  for (const other of otherAvdFolders) {
+    if (!other) continue;
+    const normalized = norm(other);
+    if (isInsideOrSame(target, normalized, api) || isInsideOrSame(normalized, target, api)) {
+      return `${folder} is shared with another emulator (${other})`;
+    }
+  }
+  return null;
+}
+
 // ---------- names ----------
 
 const AVD_NAME = /^[A-Za-z0-9._-]+$/;

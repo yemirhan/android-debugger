@@ -5,7 +5,9 @@ import {
   SdkInstallOutputParser,
   androidVersionForApi,
   availableSystemImages,
+  avdFolderProblem,
   avdHomeFor,
+  avdNameFromCommandLine,
   buildCreateAvdArgs,
   buildEmulatorArgs,
   categorizeDevice,
@@ -15,6 +17,7 @@ import {
   extractEmulatorErrors,
   emulatorBootWarning,
   formatBytes,
+  isEmulatorExecutable,
   javaMajorVersion,
   orderCmdlineToolsDirs,
   parseAdbDevices,
@@ -32,6 +35,7 @@ import {
   isPreviewApi,
   sortDeviceProfiles,
   profileCategoriesForTag,
+  sameAvdName,
   sdkCandidates,
   sdkmanagerFailure,
   suggestAvdName,
@@ -471,4 +475,63 @@ test('SDK, AVD home, cmdline-tools and Java discovery rules', () => {
   assert.equal(parseJavaVersionOutput('java version "20.0.2" 2023-07-18'), '20.0.2');
   assert.equal(parseJavaVersionOutput('The operation couldn’t be completed. Unable to locate a Java Runtime.'), null);
   assert.equal(parseJavaReleaseFile('IMPLEMENTOR="JetBrains s.r.o."\nJAVA_VERSION="21.0.8"\n'), '21.0.8');
+});
+
+test('emulator processes are recognised by executable and AVD name, not by folder', () => {
+  // ps -o comm= / -o args= for an emulator started as `emulator -avd adbg_test -no-window` (macOS arm64).
+  const qemu = '/Users/me/Library/Android/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless';
+  assert.equal(isEmulatorExecutable(`${qemu}\n`), true);
+  assert.equal(isEmulatorExecutable('qemu-system-x86'), true, 'Linux truncates comm to 15 characters');
+  assert.equal(isEmulatorExecutable('qemu-system-x86_64.exe'), true);
+  assert.equal(isEmulatorExecutable('emulator.exe'), true);
+  assert.equal(isEmulatorExecutable('C:\\Android\\Sdk\\emulator\\emulator.exe'), true);
+  // Helpers in the SDK's emulator/ folder, and unrelated programs, are not the emulator.
+  assert.equal(isEmulatorExecutable('/Users/me/Library/Android/sdk/emulator/crashpad_handler'), false);
+  assert.equal(isEmulatorExecutable('/Users/me/Library/Android/sdk/emulator/netsimd'), false);
+  assert.equal(isEmulatorExecutable('/Users/me/Library/Android/sdk/emulator/emulator-check'), false);
+  assert.equal(isEmulatorExecutable('/Applications/Safari.app/Contents/MacOS/Safari'), false);
+  assert.equal(isEmulatorExecutable('/usr/bin/vim'), false);
+
+  assert.equal(avdNameFromCommandLine(`${qemu} -avd adbg_test -no-window -no-audio -no-snapshot -gpu swiftshader_indirect`), 'adbg_test');
+  assert.equal(avdNameFromCommandLine('/sdk/emulator/emulator @Pixel_8_API_36 -no-audio'), 'Pixel_8_API_36');
+  assert.equal(avdNameFromCommandLine('/sdk/emulator/emulator -netdelay none -avd Pixel_9 -qt-hide-window'), 'Pixel_9');
+  assert.equal(avdNameFromCommandLine(`${qemu} -no-window`), null);
+  assert.equal(avdNameFromCommandLine('/sdk/emulator/emulator -avd ../evil'), null);
+  assert.equal(sameAvdName('Pixel_8', 'pixel_8'), true);
+  assert.equal(sameAvdName('Pixel_8', 'Pixel_9'), false);
+});
+
+test('AVD folders are only deleted or wiped when they are clearly the AVD’s own', () => {
+  const posix = { api: path.posix, caseInsensitive: false };
+  const home = '/Users/me/.android/avd';
+  assert.equal(avdFolderProblem('/Users/me/.android/avd/adbg_rev.avd', home, ['/Users/me/.android/avd/adbg_test.avd'], posix), null);
+  assert.equal(avdFolderProblem('/Volumes/Big/avds/Pixel.avd', home, [], posix), null, 'custom locations are fine');
+  // .ini `path` pointing somewhere that isn't an AVD folder
+  assert.match(avdFolderProblem('/Users/me', home, [], posix)!, /does not look like/);
+  assert.match(avdFolderProblem('/Users/me/VMs', home, [], posix)!, /does not look like/);
+  assert.match(avdFolderProblem('/', home, [], posix)!, /does not look like/);
+  assert.match(avdFolderProblem('/Users/me/.android/avd/.avd', home, [], posix)!, /does not look like/);
+  assert.match(avdFolderProblem('relative/x.avd', home, [], posix)!, /absolute/);
+  // Traversal is resolved before checking
+  assert.match(avdFolderProblem('/Users/me/.android/avd/x.avd/..', home, [], posix)!, /does not look like/);
+  // Containing the AVD home, or overlapping another AVD
+  assert.match(avdFolderProblem('/Users/me/stuff.avd', '/Users/me/stuff.avd/avd', [], posix)!, /home folder/);
+  assert.match(avdFolderProblem('/Users/me/.android/avd/adbg_test.avd', home, ['/Users/me/.android/avd/adbg_test.avd'], posix)!, /shared/);
+  assert.match(avdFolderProblem('/Users/me/all.avd', home, ['/Users/me/all.avd/inner.avd'], posix)!, /shared/);
+  assert.match(avdFolderProblem('/Users/me/all.avd/inner.avd', home, ['/Users/me/all.avd'], posix)!, /shared/);
+  assert.equal(avdFolderProblem('/Users/me/.android/avd/a.avd', home, ['/Users/me/.android/avd/a.avd2', '/Users/me/.android/avd/..a.avd'], posix), null);
+  // Case-insensitive file systems
+  assert.equal(avdFolderProblem('/Users/me/.android/avd/Test.avd', home, ['/Users/me/.android/avd/test.avd'], posix), null);
+  assert.match(
+    avdFolderProblem('/Users/me/.android/avd/Test.avd', home, ['/Users/me/.android/avd/test.avd'], { api: path.posix, caseInsensitive: true })!,
+    /shared/
+  );
+  // Windows paths
+  const win = { api: path.win32, caseInsensitive: true };
+  assert.equal(avdFolderProblem('C:\\Users\\me\\.android\\avd\\P.avd', 'C:\\Users\\me\\.android\\avd', [], win), null);
+  assert.match(avdFolderProblem('C:\\Users\\me', 'C:\\Users\\me\\.android\\avd', [], win)!, /does not look like/);
+  assert.match(
+    avdFolderProblem('C:\\Users\\me\\.android\\avd\\P.avd', 'C:\\Users\\me\\.android\\avd', ['c:\\users\\me\\.android\\avd\\p.avd'], win)!,
+    /shared/
+  );
 });

@@ -32,7 +32,9 @@ import {
   MIN_JAVA_MAJOR,
   SdkInstallOutputParser,
   availableSystemImages,
+  avdFolderProblem,
   avdHomeFor,
+  avdNameFromCommandLine,
   buildCreateAvdArgs,
   buildEmulatorArgs,
   compareSystemImages,
@@ -41,6 +43,7 @@ import {
   extractEmulatorErrors,
   emulatorBootWarning,
   hostAbiFor,
+  isEmulatorExecutable,
   isEmulatorSerial,
   isValidAvdName,
   isValidSystemImageId,
@@ -56,6 +59,7 @@ import {
   parseLockPid,
   parseSdkmanagerList,
   parseSystemImageId,
+  sameAvdName,
   sdkCandidates,
   sdkmanagerFailure,
   sortDeviceProfiles,
@@ -201,6 +205,11 @@ interface RunningEmulator {
   booted: boolean;
 }
 
+interface EmulatorProcess {
+  /** From its command line; null when it can't be read (Windows). */
+  avdName: string | null;
+}
+
 interface AvdEntry {
   name: string;
   iniPath: string;
@@ -220,7 +229,9 @@ export class EmulatorService extends EventEmitter {
   private bootedSerials = new Set<string>();
   private listAvdsCache: { names: string[]; at: number } | null = null;
   private sizeCache = new Map<string, { bytes: number; at: number }>();
-  private emulatorPidCache = new Map<number, { value: boolean; at: number }>();
+  private emulatorPidCache = new Map<number, { value: EmulatorProcess | null; at: number }>();
+  /** One start/stop/delete/wipe/rename/create per AVD at a time (keyed by lower-cased name). */
+  private operations = new Map<string, string>();
   private profilesCache: DeviceProfile[] | null = null;
   private availableCache: AvailableImagesResult | null = null;
   private jobs = new Map<string, InstallJobInternal>();
@@ -397,14 +408,27 @@ export class EmulatorService extends EventEmitter {
       }
     }
 
-    // `java` on PATH. On macOS /usr/bin/java is a stub that fails without a JDK.
-    const version = await this.javaVersion('java');
-    if (version) {
-      const runtime: JavaRuntime = { path: 'java', home: null, version, major: javaMajorVersion(version), source: 'path' };
+    // `java` on PATH (e.g. SDKMAN). On macOS /usr/bin/java is only a stub for
+    // the JDK java_home reports (checked above); running it without a JDK
+    // fails and can ask the user to install one, so it is skipped.
+    const onPath = await this.javaOnPath(exe);
+    const version = onPath ? await this.javaVersion(onPath) : null;
+    if (onPath && version) {
+      const runtime: JavaRuntime = { path: onPath, home: null, version, major: javaMajorVersion(version), source: 'path' };
       if (runtime.major === null || runtime.major >= MIN_JAVA_MAJOR) return runtime;
       found.push(runtime);
     }
     return found[0] ?? null;
+  }
+
+  private async javaOnPath(exe: string): Promise<string | null> {
+    for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+      if (!dir || !path.isAbsolute(dir)) continue;
+      const candidate = path.join(dir, exe);
+      if (process.platform === 'darwin' && candidate === '/usr/bin/java') continue;
+      if (await exists(candidate)) return candidate;
+    }
+    return null;
   }
 
   private async javaVersion(javaPath: string): Promise<string | null> {
@@ -506,7 +530,9 @@ export class EmulatorService extends EventEmitter {
           if (!isValidAvdName(name)) return null;
           const iniPath = path.join(avdHome, entry.name);
           const topIni = parseIni((await readText(iniPath)) ?? '');
-          let avdPath = topIni.path && (await exists(topIni.path)) ? topIni.path : path.join(avdHome, `${name}.avd`);
+          // A relative `path` would resolve against our cwd; only trust absolute ones.
+          let avdPath =
+            topIni.path && path.isAbsolute(topIni.path) && (await exists(topIni.path)) ? topIni.path : path.join(avdHome, `${name}.avd`);
           if (!(await exists(avdPath)) && topIni['path.rel']) {
             const relative = path.join(path.dirname(avdHome), topIni['path.rel']);
             if (await exists(relative)) avdPath = relative;
@@ -590,8 +616,12 @@ export class EmulatorService extends EventEmitter {
     return running;
   }
 
-  /** PID from the emulator's lock file, when that process is alive and is an emulator. */
-  private async lockedPid(avdPath: string): Promise<number | null> {
+  /**
+   * PID from the AVD's lock file, when that process is alive, is an emulator
+   * and (where its command line is readable) runs this AVD. A stale lock whose
+   * PID was reused by another program, or by another AVD's emulator, is ignored.
+   */
+  private async lockedPid(name: string, avdPath: string, fresh = false): Promise<number | null> {
     const lock = path.join(avdPath, 'hardware-qemu.ini.lock');
     let text: string | null = null;
     try {
@@ -602,21 +632,78 @@ export class EmulatorService extends EventEmitter {
     }
     const pid = text ? parseLockPid(text) : null;
     if (!pid || !pidAlive(pid)) return null;
-    return (await this.isEmulatorProcess(pid)) ? pid : null;
+    return (await this.isEmulatorProcessFor(pid, name, fresh)) ? pid : null;
+  }
+
+  /** Whether `pid` is an emulator running `name` (or an emulator whose AVD can't be read, on Windows). */
+  private async isEmulatorProcessFor(pid: number, name: string, fresh = false): Promise<boolean> {
+    const info = await this.emulatorProcess(pid, fresh);
+    return !!info && (info.avdName === null || sameAvdName(info.avdName, name));
   }
 
   /** Guards against stale lock files whose PID now belongs to another program. */
-  private async isEmulatorProcess(pid: number, fresh = false): Promise<boolean> {
+  private async emulatorProcess(pid: number, fresh = false): Promise<EmulatorProcess | null> {
     const cached = this.emulatorPidCache.get(pid);
     if (!fresh && cached && Date.now() - cached.at < PID_CHECK_CACHE_MS) return cached.value;
-    let value = true;
-    if (!IS_WINDOWS) {
-      const ps = await exec('ps', ['-p', String(pid), '-o', 'comm='], 5_000);
-      value = ps.code === 0 && /qemu|emulator/i.test(ps.stdout);
+    let value: EmulatorProcess | null = null;
+    if (IS_WINDOWS) {
+      // Image name only; the AVD name is not available without WMI.
+      const list = await exec('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], 5_000);
+      const image = /^"([^"]+)","(\d+)"/m.exec(list.stdout);
+      if (list.code === 0 && image && Number(image[2]) === pid && isEmulatorExecutable(image[1])) value = { avdName: null };
+    } else {
+      const [comm, args] = await Promise.all([
+        exec('ps', ['-p', String(pid), '-o', 'comm='], 5_000),
+        exec('ps', ['-p', String(pid), '-o', 'args='], 5_000),
+      ]);
+      if (comm.code === 0 && isEmulatorExecutable(comm.stdout)) {
+        value = { avdName: args.code === 0 ? avdNameFromCommandLine(args.stdout.trim()) : null };
+      }
     }
     this.emulatorPidCache.set(pid, { value, at: Date.now() });
     if (this.emulatorPidCache.size > 64) this.emulatorPidCache.delete(this.emulatorPidCache.keys().next().value!);
     return value;
+  }
+
+  /** The AVD a running emulator reports over its console, asked fresh (no cache). */
+  private async consoleAvdName(serial: string): Promise<string | null> {
+    return parseEmuAvdName((await adbEmulator(serial, ['emu', 'avd', 'name'], 5_000)).stdout);
+  }
+
+  /** Runs `fn` unless another start/stop/delete/wipe/rename/create of the same AVD is under way. */
+  private async exclusive<T>(names: readonly string[], action: string, fn: () => Promise<T>): Promise<T> {
+    const keys = names.map((name) => name.toLowerCase());
+    for (const [index, key] of keys.entries()) {
+      const busy = this.operations.get(key);
+      if (busy) throw new EmulatorError(`${names[index]} is busy (${busy}). Try again when that has finished.`);
+    }
+    for (const key of keys) this.operations.set(key, action);
+    try {
+      return await fn();
+    } finally {
+      for (const key of keys) this.operations.delete(key);
+    }
+  }
+
+  /**
+   * Refuses to delete or wipe a folder that isn't clearly this AVD's own:
+   * the .ini `path` can point anywhere, including another AVD's folder.
+   */
+  private async assertOwnAvdFolder(setup: EmulatorSetup, entry: AvdEntry): Promise<void> {
+    const real = async (value: string) => fs.promises.realpath(value).catch(() => path.resolve(value));
+    const others = (await this.readAvdEntries(setup.avdHome)).filter((other) => other.name !== entry.name);
+    const problem = avdFolderProblem(
+      await real(entry.avdPath),
+      await real(setup.avdHome),
+      await Promise.all(others.map((other) => real(other.avdPath))),
+      { api: path, caseInsensitive: process.platform === 'darwin' || IS_WINDOWS }
+    );
+    if (problem) throw new EmulatorError(`${problem}, so it was left alone`);
+    // A half-created AVD in its default place may lack config.ini; anywhere else it must have one.
+    const isDefaultFolder = (await real(entry.avdPath)) === (await real(path.join(setup.avdHome, `${entry.name}.avd`)));
+    if (!isDefaultFolder && !(await exists(path.join(entry.avdPath, 'config.ini')))) {
+      throw new EmulatorError(`${entry.avdPath} has no config.ini, so it does not look like an emulator folder and was left alone`);
+    }
   }
 
   private async sizeOf(avdPath: string): Promise<number> {
@@ -651,7 +738,7 @@ export class EmulatorService extends EventEmitter {
         ]);
         const live = running.get(entry.name);
         const tracker = this.boots.get(entry.name);
-        const lockPid = live ? null : await this.lockedPid(entry.avdPath);
+        const lockPid = live ? null : await this.lockedPid(entry.name, entry.avdPath);
         let state: AvdInfo['state'] = 'stopped';
         if (this.stopping.has(entry.name)) state = 'stopping';
         else if (live) state = live.booted ? 'running' : 'booting';
@@ -662,7 +749,9 @@ export class EmulatorService extends EventEmitter {
           sizeOnDiskBytes,
           snapshots: snapshotEntries.filter((item) => item.isDirectory()).map((item) => item.name).sort(),
           state,
-          serial: live?.serial ?? tracker?.progress.serial ?? null,
+          // Only a serial adb shows for this AVD now: a remembered one may
+          // already belong to another emulator.
+          serial: live?.serial ?? null,
           boot: tracker ? { ...tracker.progress } : null,
         };
       })
@@ -700,13 +789,19 @@ export class EmulatorService extends EventEmitter {
   }
 
   async startAvd(name: string, options: StartAvdOptions = {}): Promise<BootProgress> {
+    // Two quick starts (double click, UI + MCP) must not both pass the checks below.
+    return this.exclusive([name], 'starting', () => this.launchAvd(name, options));
+  }
+
+  private async launchAvd(name: string, options: StartAvdOptions): Promise<BootProgress> {
     const { setup, entry } = await this.findEntry(name);
+    if (this.stopping.has(name)) throw new EmulatorError(`${name} is stopping. Start it again once it has stopped.`);
     if (!setup.emulatorPath) throw new EmulatorError('Android Emulator is not installed. Install it from Android Studio › SDK Manager › SDK Tools.');
     if (!entry.config) throw new EmulatorError(`${name} has no config.ini, so it cannot start`);
     const active = this.boots.get(name);
     if (active && !active.finishedAt) throw new EmulatorError(`${name} is already starting`);
     const running = await this.runningEmulators();
-    if (running.has(name) || (await this.lockedPid(entry.avdPath))) throw new EmulatorError(`${name} is already running`);
+    if (running.has(name) || (await this.lockedPid(name, entry.avdPath))) throw new EmulatorError(`${name} is already running`);
     const described = describeAvd({ name, topIni: entry.topIni, config: entry.config, path: entry.avdPath });
     if (described.systemImage && setup.sdkPath) {
       const parts = parseSystemImageId(described.systemImage);
@@ -872,63 +967,85 @@ export class EmulatorService extends EventEmitter {
   async stopAvd(name: string): Promise<void> {
     const { entry } = await this.findEntry(name);
     if (this.stopping.has(name)) return;
-    this.stopping.add(name);
-    this.emit('changed');
-    try {
-      const tracker = this.boots.get(name);
-      const live = (await this.runningEmulators()).get(name);
-      const serial = live?.serial ?? tracker?.progress.serial ?? null;
-      let lockPid = await this.lockedPid(entry.avdPath);
-      if (!serial && !lockPid && !(tracker && !tracker.finishedAt && tracker.child?.pid)) {
-        throw new EmulatorError(`${name} is not running`);
+    await this.exclusive([name], 'stopping', async () => {
+      this.stopping.add(name);
+      this.emit('changed');
+      try {
+        await this.stopEmulatorProcess(name, entry);
+      } finally {
+        this.stopping.delete(name);
+        this.sizeCache.delete(entry.avdPath);
+        this.emit('changed');
       }
-      if (serial) await adbEmulator(serial, ['emu', 'kill'], 5_000);
-      const gone = async () => !(await this.runningEmulators()).has(name) && !(await this.lockedPid(entry.avdPath));
-      const deadline = Date.now() + (serial ? STOP_WAIT_MS : 0);
-      while (Date.now() < deadline) {
-        if (await gone()) break;
-        await delay(750);
+    });
+  }
+
+  private async stopEmulatorProcess(name: string, entry: AvdEntry): Promise<void> {
+    const tracker = this.boots.get(name);
+    const live = (await this.runningEmulators()).get(name);
+    // Ask the console which AVD it runs right before killing it: the cached
+    // serial → name mapping (or a boot's remembered serial) can be stale once
+    // another emulator took over the port.
+    let serial: string | null = null;
+    for (const candidate of new Set([live?.serial, tracker?.progress.serial])) {
+      if (!candidate) continue;
+      const current = await this.consoleAvdName(candidate);
+      if (current && sameAvdName(current, name)) {
+        serial = candidate;
+        break;
       }
-      if (!(await gone())) {
-        // The console did not answer: end the process directly.
-        lockPid = lockPid ?? (await this.lockedPid(entry.avdPath));
-        const childPid = tracker && tracker.exitCode === undefined ? tracker.child?.pid ?? null : null;
-        const pid = lockPid ?? childPid;
-        // Re-check right before signalling: never kill a PID that is no longer an emulator.
-        if (pid && pidAlive(pid) && (await this.isEmulatorProcess(pid, true))) {
+      if (current) this.serialNames.delete(candidate);
+    }
+    let lockPid = await this.lockedPid(name, entry.avdPath, true);
+    const launching = !!tracker && !tracker.finishedAt && tracker.exitCode === undefined && !!tracker.child?.pid;
+    if (!serial && !live && !lockPid && !launching) throw new EmulatorError(`${name} is not running`);
+    if (serial) await adbEmulator(serial, ['emu', 'kill'], 5_000);
+    const gone = async () => !(await this.runningEmulators()).has(name) && !(await this.lockedPid(name, entry.avdPath));
+    const deadline = Date.now() + (serial ? STOP_WAIT_MS : 0);
+    while (Date.now() < deadline) {
+      if (await gone()) break;
+      await delay(750);
+    }
+    if (!(await gone())) {
+      // The console did not answer: end the process directly, but only a
+      // process that is verifiably this AVD's emulator.
+      lockPid = lockPid ?? (await this.lockedPid(name, entry.avdPath, true));
+      const childPid = tracker && tracker.exitCode === undefined ? tracker.child?.pid ?? null : null;
+      const pid = lockPid ?? childPid;
+      const stillOurs = async () => !!pid && pidAlive(pid) && (await this.isEmulatorProcessFor(pid, name, true));
+      if (pid && (await stillOurs())) {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          // Already gone
+        }
+        const killDeadline = Date.now() + 5_000;
+        while (Date.now() < killDeadline && pidAlive(pid)) await delay(250);
+        // Re-check before escalating: the PID may have been reused meanwhile.
+        if (await stillOurs()) {
           try {
-            process.kill(pid, 'SIGTERM');
+            process.kill(pid, 'SIGKILL');
           } catch {
             // Already gone
           }
-          const killDeadline = Date.now() + 5_000;
-          while (Date.now() < killDeadline && pidAlive(pid)) await delay(250);
-          if (pidAlive(pid)) {
-            try {
-              process.kill(pid, 'SIGKILL');
-            } catch {
-              // Already gone
-            }
-          }
         }
+      } else if (live && !serial) {
+        throw new EmulatorError(`${name} did not answer on its console and its process could not be identified, so it was left running`);
       }
-      if (tracker && !tracker.finishedAt) this.finishBoot(tracker, 'failed', 'Stopped before it finished booting', 'Stopped');
-      this.boots.delete(name);
-      if (serial) {
-        this.serialNames.delete(serial);
-        this.bootedSerials.delete(serial);
-      }
-    } finally {
-      this.stopping.delete(name);
-      this.sizeCache.delete(entry.avdPath);
-      this.emit('changed');
+    }
+    if (tracker && !tracker.finishedAt) this.finishBoot(tracker, 'failed', 'Stopped before it finished booting', 'Stopped');
+    this.boots.delete(name);
+    for (const candidate of [serial, live?.serial]) {
+      if (!candidate) continue;
+      this.serialNames.delete(candidate);
+      this.bootedSerials.delete(candidate);
     }
   }
 
   private async assertStopped(name: string, avdPath: string, action: string): Promise<void> {
     const tracker = this.boots.get(name);
     if (this.stopping.has(name) || (tracker && !tracker.finishedAt)) throw new EmulatorError(`Stop ${name} before you ${action} it`);
-    if ((await this.runningEmulators()).has(name) || (await this.lockedPid(avdPath))) {
+    if ((await this.runningEmulators()).has(name) || (await this.lockedPid(name, avdPath, true))) {
       throw new EmulatorError(`Stop ${name} before you ${action} it`);
     }
   }
@@ -952,9 +1069,13 @@ export class EmulatorService extends EventEmitter {
   }
 
   async createAvd(request: CreateAvdRequest): Promise<AvdInfo> {
+    const name = String(request?.name ?? '').trim();
+    return this.exclusive([name], 'being created', () => this.createNewAvd(name, request));
+  }
+
+  private async createNewAvd(name: string, request: CreateAvdRequest): Promise<AvdInfo> {
     const setup = await this.getSetup(true);
     if (!setup.avdmanagerPath || !setup.canCreate || !setup.sdkPath) throw new EmulatorError(this.createUnavailableReason(setup));
-    const name = String(request?.name ?? '').trim();
     const existing = (await this.readAvdEntries(setup.avdHome)).map((entry) => entry.name);
     const nameProblem = validateAvdName(name, existing);
     if (nameProblem) throw new EmulatorError(nameProblem);
@@ -994,34 +1115,44 @@ export class EmulatorService extends EventEmitter {
   }
 
   async deleteAvd(name: string): Promise<void> {
-    const { entry } = await this.findEntry(name);
-    await this.assertStopped(name, entry.avdPath, 'delete');
-    // Only remove what is recognisably an AVD folder.
-    const looksLikeAvd = entry.avdPath.endsWith('.avd') && (await exists(path.join(entry.avdPath, 'config.ini')));
-    if (looksLikeAvd) await fs.promises.rm(entry.avdPath, { recursive: true, force: true });
-    else if (await exists(entry.avdPath)) throw new EmulatorError(`${entry.avdPath} does not look like an emulator folder, so it was left alone`);
-    await fs.promises.rm(entry.iniPath, { force: true });
-    await fs.promises.rm(path.join(this.logDir, `${name}.log`), { force: true });
-    this.boots.delete(name);
-    this.sizeCache.delete(entry.avdPath);
-    this.listAvdsCache = null;
-    this.emit('changed');
+    await this.exclusive([name], 'deleting', async () => {
+      const { setup, entry } = await this.findEntry(name);
+      await this.assertStopped(name, entry.avdPath, 'delete');
+      // Only remove what is recognisably this AVD's own folder.
+      if (await exists(entry.avdPath)) {
+        await this.assertOwnAvdFolder(setup, entry);
+        await fs.promises.rm(entry.avdPath, { recursive: true, force: true });
+      }
+      await fs.promises.rm(entry.iniPath, { force: true });
+      await fs.promises.rm(path.join(this.logDir, `${name}.log`), { force: true });
+      this.boots.delete(name);
+      this.sizeCache.delete(entry.avdPath);
+      this.listAvdsCache = null;
+      this.emit('changed');
+    });
   }
 
   async wipeAvd(name: string): Promise<void> {
-    const { entry } = await this.findEntry(name);
-    await this.assertStopped(name, entry.avdPath, 'wipe');
-    const targets = wipeTargets((await readDir(entry.avdPath)).map((item) => item.name));
-    for (const target of targets) await fs.promises.rm(path.join(entry.avdPath, target), { recursive: true, force: true });
-    this.sizeCache.delete(entry.avdPath);
-    this.emit('changed');
+    await this.exclusive([name], 'wiping', async () => {
+      const { setup, entry } = await this.findEntry(name);
+      await this.assertStopped(name, entry.avdPath, 'wipe');
+      await this.assertOwnAvdFolder(setup, entry);
+      const targets = wipeTargets((await readDir(entry.avdPath)).map((item) => item.name));
+      for (const target of targets) await fs.promises.rm(path.join(entry.avdPath, target), { recursive: true, force: true });
+      this.sizeCache.delete(entry.avdPath);
+      this.emit('changed');
+    });
   }
 
   async renameAvd(name: string, newName: string): Promise<void> {
+    const next = String(newName ?? '').trim();
+    await this.exclusive(sameAvdName(name, next) ? [name] : [name, next], 'renaming', () => this.renameStoppedAvd(name, next));
+  }
+
+  private async renameStoppedAvd(name: string, next: string): Promise<void> {
     const { setup, entry } = await this.findEntry(name);
     if (!setup.avdmanagerPath || !setup.canCreate) throw new EmulatorError(this.createUnavailableReason(setup));
     await this.assertStopped(name, entry.avdPath, 'rename');
-    const next = String(newName ?? '').trim();
     const existing = (await this.readAvdEntries(setup.avdHome)).map((item) => item.name).filter((item) => item !== name);
     const problem = next === name ? 'Enter a different name' : validateAvdName(next, existing);
     if (problem) throw new EmulatorError(problem);
@@ -1038,11 +1169,14 @@ export class EmulatorService extends EventEmitter {
 
   async deleteSnapshot(name: string, snapshot: string): Promise<void> {
     if (!/^[A-Za-z0-9._-]+$/.test(snapshot) || snapshot.startsWith('.')) throw new EmulatorError('Invalid snapshot name');
-    const { entry } = await this.findEntry(name);
-    await this.assertStopped(name, entry.avdPath, 'change the snapshots of');
-    await fs.promises.rm(path.join(entry.avdPath, 'snapshots', snapshot), { recursive: true, force: true });
-    this.sizeCache.delete(entry.avdPath);
-    this.emit('changed');
+    await this.exclusive([name], 'deleting a snapshot', async () => {
+      const { setup, entry } = await this.findEntry(name);
+      await this.assertStopped(name, entry.avdPath, 'change the snapshots of');
+      await this.assertOwnAvdFolder(setup, entry);
+      await fs.promises.rm(path.join(entry.avdPath, 'snapshots', snapshot), { recursive: true, force: true });
+      this.sizeCache.delete(entry.avdPath);
+      this.emit('changed');
+    });
   }
 
   async avdPath(name: string): Promise<string> {
