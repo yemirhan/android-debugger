@@ -8,5 +8,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "outDir": "./out"
   },
-  "include": ["src/renderer/**/*", "src/preload/monitor-types.ts"]
+  "include": ["src/renderer/**/*", "src/preload/monitor-types.ts", "src/main/logcat-format.ts"]
 }
