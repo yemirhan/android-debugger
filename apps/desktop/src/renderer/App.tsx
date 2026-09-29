@@ -29,6 +29,7 @@ import { GcMonitorPanel } from './components/GcMonitorPanel';
 import { HeapDumpPanel } from './components/HeapDumpPanel';
 import { MethodTracePanel } from './components/MethodTracePanel';
 import { ScreenMirrorPanel } from './components/ScreenMirrorPanel';
+import { RnDevtoolsHost } from './components/rn-devtools/RnDevtoolsPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { useNavigationState } from './hooks/useNavigationState';
@@ -72,7 +73,7 @@ function saveLastTarget(target: LastTarget) {
   }
 }
 
-export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'bundle-analyzer' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace' | 'screen-mirror';
+export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'bundle-analyzer' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace' | 'screen-mirror' | 'rn-devtools';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -201,6 +202,12 @@ function AppContent() {
       return <BundleAnalyzerPanel />;
     }
 
+    // Talks to Metro, not the device; RnDevtoolsHost below renders it and
+    // keeps it mounted across tab switches so the debugger session survives.
+    if (activeTab === 'rn-devtools') {
+      return null;
+    }
+
     if (!activeDevice) {
       return (
         <DeviceNotReady
@@ -301,12 +308,13 @@ function AppContent() {
                 toggleGroup={toggleGroup}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
               />
-              <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+              <main className="flex-1 min-w-0 flex flex-col overflow-hidden relative">
                 <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
                   <ErrorBoundary label={getNavItem(activeTab)?.label}>
                     {renderPanel()}
                   </ErrorBoundary>
                 </div>
+                <RnDevtoolsHost active={activeTab === 'rn-devtools'} device={activeDevice} packageName={packageName} />
               </main>
             </div>
           </div>

@@ -8,5 +8,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "outDir": "./out"
   },
-  "include": ["src/renderer/**/*"]
+  "include": ["src/renderer/**/*", "src/main/rn-devtools-protocol.ts"]
 }
