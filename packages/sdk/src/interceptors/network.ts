@@ -22,6 +22,14 @@ let isInsideFetch = false;
 
 let requestId = 0;
 
+// React Native's own dev tooling (LogBox symbolication, "open in editor") posts
+// to Metro. That traffic isn't the app's and would bury its real requests.
+const DEV_TOOLING_PATH = /^[a-z]+:\/\/[^/]+\/(symbolicate|open-stack-frame)(\?|$)/i;
+
+function isDevToolingRequest(url: string): boolean {
+  return DEV_TOOLING_PATH.test(url);
+}
+
 function generateRequestId(): string {
   return `req-${Date.now()}-${++requestId}`;
 }
@@ -212,14 +220,16 @@ export function interceptNetwork(send: SendFn): () => void {
   // Intercept fetch
   originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const id = generateRequestId();
-    const startTime = Date.now();
     const inputRequest = typeof Request !== 'undefined' && input instanceof Request ? input : null;
     const url = typeof input === 'string'
       ? input
       : inputRequest
         ? inputRequest.url
         : input.toString();
+    if (isDevToolingRequest(url)) return originalFetch!(input, init);
+
+    const id = generateRequestId();
+    const startTime = Date.now();
     const method = init?.method ?? inputRequest?.method ?? 'GET';
     const headers: Record<string, string> = {};
 
@@ -350,7 +360,7 @@ export function interceptNetwork(send: SendFn): () => void {
     (this as any).__debugger_url = url.toString();
     (this as any).__debugger_start = 0;
     (this as any).__debugger_headers = {};
-    (this as any).__debugger_skip = isInsideFetch;
+    (this as any).__debugger_skip = isInsideFetch || isDevToolingRequest(url.toString());
 
     const originalSetRequestHeader = this.setRequestHeader;
     this.setRequestHeader = function (name: string, value: string): void {

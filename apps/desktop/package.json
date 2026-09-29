@@ -50,6 +50,7 @@
     ],
     "npmRebuild": false,
     "mac": {
+      "icon": "resources/icon.icns",
       "target": [
         "dmg",
         "zip"

@@ -1,4 +1,6 @@
 import type { SdkMessage, SdkMessageType } from '@android-debugger/shared';
+import { safeStringify, sdkNotice } from '../serialize';
+import type { Transport } from './types';
 
 const MAX_CHUNK_SIZE = 3500; // Safe limit for logcat line length
 const COMPRESSION_THRESHOLD = 1500; // Compress payloads larger than this
@@ -66,24 +68,6 @@ function simpleCompress(str: string): string {
   return base64Encode(str);
 }
 
-// JSON.stringify that tolerates circular references and BigInt values
-// (both of which make the plain JSON.stringify throw).
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    const seen = new WeakSet<object>();
-    return JSON.stringify(value, (_key, val) => {
-      if (typeof val === 'bigint') return `${val}n`;
-      if (typeof val === 'object' && val !== null) {
-        if (seen.has(val)) return '[Circular]';
-        seen.add(val);
-      }
-      return val;
-    });
-  }
-}
-
 interface ChunkInfo {
   index: number;
   total: number;
@@ -95,7 +79,13 @@ interface ChunkInfo {
 // This is captured at module load time, before interceptors are set up
 const originalConsoleLog = console.log.bind(console);
 
-export class LogcatTransport {
+/**
+ * Legacy transport (SDK 1.x): writes messages to logcat through console.log,
+ * where the desktop app picks them up. They also show up in Metro, React
+ * Native DevTools and `adb logcat`, which is why WebSocketTransport is the
+ * default. Only useful when `adb reverse` isn't available.
+ */
+export class LogcatTransport implements Transport {
   private sequenceNumber = 0;
   private readonly prefix = 'SDKMSG';
   private readonly sourceId = Math.random().toString(36).slice(2, 10).padEnd(8, '0');
@@ -109,17 +99,7 @@ export class LogcatTransport {
 
       if (!chunks) {
         // Too large for the desktop parser to reassemble; send a small notice instead.
-        const notice: SdkMessage = {
-          type: 'console',
-          timestamp: Date.now(),
-          payload: {
-            level: 'warn',
-            args: [
-              `[AndroidDebugger] Dropped ${message.type} message: payload too large (${jsonStr.length} characters)`,
-            ],
-            timestamp: Date.now(),
-          },
-        };
+        const notice = sdkNotice('warn', `Dropped ${message.type} message: payload too large (${jsonStr.length} characters)`);
         chunks = this.chunkMessage(safeStringify(notice));
         if (!chunks) return;
         message = notice;
@@ -139,6 +119,17 @@ export class LogcatTransport {
       // Ignore - debugging must never break the host app
     }
   }
+
+  isConnected(): boolean {
+    // Logcat is fire-and-forget; there's no way to know whether anyone reads it.
+    return false;
+  }
+
+  onConnectionChange(): () => void {
+    return () => {};
+  }
+
+  destroy(): void {}
 
   private chunkMessage(jsonStr: string): ChunkInfo[] | null {
     // Even uncompressed, this would need more chunks than the desktop accepts.

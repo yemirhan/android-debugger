@@ -188,9 +188,15 @@ importers:
         specifier: '>=0.70.0'
         version: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
     devDependencies:
+      '@android-debugger/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@types/react':
         specifier: ^19.0.0
         version: 19.1.17
+      '@yemirhan/android-debugger-sdk':
+        specifier: workspace:*
+        version: link:../sdk
       tsup:
         specifier: ^8.3.5
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.2)

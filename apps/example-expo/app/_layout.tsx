@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Provider } from 'react-redux';
 import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
+import { DebuggerOverlay } from '@yemirhan/android-debugger-ui';
 import { createStore } from '@/store/redux';
 import { useCounterStore, useTodoStore } from '@/store/zustand';
 import { setupAxiosInterceptor } from '@/utils/api';
@@ -12,8 +13,8 @@ export default function RootLayout() {
 
   useEffect(() => {
     // Initialize the Android Debugger SDK
-    // No host/port configuration needed - messages are sent via logcat
-    // and captured by the desktop app through ADB
+    // No host/port configuration needed - the SDK connects to localhost and
+    // the desktop app forwards that port to itself with adb reverse
     AndroidDebugger.init({
       interceptConsole: true,
       interceptNetwork: true,
@@ -106,7 +107,21 @@ export default function RootLayout() {
             title: 'WebSocket',
           }}
         />
+        <Stack.Screen
+          name="inspector"
+          options={{
+            title: 'In-App Debugger',
+          }}
+        />
+        <Stack.Screen
+          name="components"
+          options={{
+            title: 'UI Components',
+          }}
+        />
       </Stack>
+      {/* Floating in-app debugger; tap the bug to open it */}
+      <DebuggerOverlay />
     </Provider>
   );
 }

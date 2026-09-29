@@ -199,4 +199,4 @@ Where the data comes from:
 - **"The MCP server is turned off"**: turn on **Local MCP server** in Settings.
 - **"Port … is already in use"**: another program is using the port. Pick a different one in Settings, then run your `claude mcp add` or `codex mcp add` command again. If you use the bridge, you don't need to change anything.
 - **401 "Missing or wrong bearer token"**: the token changed. Copy the new command from Settings, or switch to the bridge.
-- **SDK tools return nothing**: the app must call `AndroidDebugger.init()`, run as a debug build, and be the app selected in Android Debugger.
+- **SDK tools return nothing**: the app must call `AndroidDebugger.init()` and run on the device selected in Android Debugger. The tool output says whether an app is connected over the SDK socket; release builds need cleartext traffic to `localhost` allowed (see the [SDK README](../packages/sdk/README.md#release-builds)).

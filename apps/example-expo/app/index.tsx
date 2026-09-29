@@ -69,6 +69,20 @@ export default function HomeScreen() {
         href="/websocket"
       />
 
+      <FeatureCard
+        title="In-App Debugger"
+        description="DebuggerPanel embedded in a screen"
+        icon="bug"
+        href="/inspector"
+      />
+
+      <FeatureCard
+        title="UI Components"
+        description="Badges, JSON viewer, lists and inputs"
+        icon="color-palette"
+        href="/components"
+      />
+
       <View style={styles.crashSection}>
         <Text style={styles.crashLabel}>Crash testing</Text>
         <Pressable
@@ -88,8 +102,9 @@ export default function HomeScreen() {
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>
-          SDK messages are sent via logcat and captured by the desktop app through ADB.
-          No IP address or port configuration needed!
+          The SDK talks to the desktop app over ADB (adb reverse), so your logs stay clean.
+          No IP address or port configuration needed. Tap the bug button to inspect
+          captured data right on the device.
         </Text>
       </View>
     </ScrollView>

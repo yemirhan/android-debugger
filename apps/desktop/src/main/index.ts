@@ -154,12 +154,14 @@ import type { AppSection, AppTabId } from './app-tabs';
 import { registerMirrorIpcHandlers, stopAllMirrorSessions } from './scrcpy-mirror';
 import { emulatorService } from './emulator-service';
 import { registerEmulatorIpc } from './emulator-ipc';
+import { SdkBridge } from './sdk-bridge';
 import type {
   Device,
   MemoryInfo,
   CpuInfo,
   FpsInfo,
   SdkMessage,
+  SdkBridgeStatus,
   DeveloperOptions,
   IntentConfig,
   IntentHistoryEntry,
@@ -274,6 +276,9 @@ let recordingDeviceId: string | null = null;
 
 // ==================== MCP (AI assistants) ====================
 
+/** Receives SDK 2+ messages over `adb reverse` (SDK 1.x still arrives through logcat). */
+const sdkBridge = new SdkBridge();
+
 /** Bounded copies of the streams sent to the renderer, for MCP tools. */
 const mcpStore = new McpDataStore();
 let mcpController: McpController | null = null;
@@ -381,6 +386,7 @@ function createMcpHost(): McpToolHost {
     store: mcpStore,
     appVersion: app.getVersion(),
     getSelection: () => selection,
+    getSdkBridgeStatus: () => sdkBridge.getStatus(),
     selectTarget: selectTargetFromMcp,
     navigate: (tab: AppTabId, section?: AppSection) => navigateToTab(tab, section),
     isRiskyAllowed: () => mcpController?.isRiskyAllowed() ?? false,
@@ -800,6 +806,7 @@ function stopRendererSessions(): void {
   mcpStore.stopLogStream();
   mcpStore.stopSdkStream();
   mcpStore.setCrashStream(null);
+  void sdkBridge.detach();
 }
 
 function setupIpcHandlers(): void {
@@ -900,16 +907,27 @@ function setupIpcHandlers(): void {
     mcpStore.stopLogStream();
   });
 
+  // Starts both SDK transports for the device: the WebSocket bridge (SDK 2+)
+  // and the logcat stream (SDK 1.x).
   ipcMain.on('adb:start-sdk-logcat', (_, deviceId: string, packageName?: string) => {
     if (typeof deviceId === 'string' && deviceId) mcpStore.setSdkTarget(deviceId, packageName || '');
     adbService.startSdkLogcat(deviceId, packageName || undefined).catch((error) => {
       console.error('Error starting SDK logcat:', error);
     });
+    sdkBridge.attach(deviceId).catch((error) => {
+      console.error('Error starting SDK bridge:', error);
+    });
   });
 
   ipcMain.on('adb:stop-sdk-logcat', () => {
     adbService.stopSdkLogcat();
+    void sdkBridge.detach();
     mcpStore.stopSdkStream();
+  });
+
+  ipcMain.handle('sdk-bridge:get-status', () => sdkBridge.getStatus());
+  sdkBridge.on('status', (status: SdkBridgeStatus) => {
+    mainWindow?.webContents.send('sdk-bridge-status', status);
   });
 
   ipcMain.handle('adb:clear-logcat', async (_, deviceId: string) => {
@@ -973,12 +991,13 @@ function setupIpcHandlers(): void {
     return adbService.clearAppData(deviceId, packageName);
   });
 
-  // SDK message forwarding - SDK messages are now parsed from logcat
-  // and forwarded to the renderer automatically when logcat is running
-  adbService.on('sdk-messages', (messages: SdkMessage[]) => {
+  // SDK messages from either transport look the same to the renderer and MCP.
+  const forwardSdkMessages = (messages: SdkMessage[]) => {
     mcpStore.addSdkMessages(messages);
     mainWindow?.webContents.send('sdk-messages', messages);
-  });
+  };
+  adbService.on('sdk-messages', forwardSdkMessages);
+  sdkBridge.on('messages', forwardSdkMessages);
 
   // App Metadata handlers
   ipcMain.handle('adb:get-app-metadata', async (_, deviceId: string, packageName: string) => {
@@ -1582,6 +1601,10 @@ function setupAutoUpdaterEvents(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock?.setIcon(join(__dirname, '../../resources/icon.png'));
+  }
+
   setupIpcHandlers();
   registerRnDevtoolsIpc();
   setupMcp();
@@ -1641,6 +1664,7 @@ app.on('before-quit', (event) => {
   void Promise.race([
     Promise.allSettled([
       adbService.stopAll(true),
+      sdkBridge.detach(),
       // Kills avdmanager/sdkmanager; running emulators keep running.
       emulatorService.stopAll(),
       scrcpyService.stopMirror(),

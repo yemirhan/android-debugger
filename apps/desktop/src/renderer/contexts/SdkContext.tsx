@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
-import type { SdkMessage, ConsoleMessage, CustomEvent, StateSnapshot, NetworkRequest, ZustandStoreSnapshot, WebSocketConnection, WebSocketMessage, WebSocketEvent } from '@android-debugger/shared';
+import type { SdkMessage, SdkBridgeStatus, ConsoleMessage, CustomEvent, StateSnapshot, NetworkRequest, ZustandStoreSnapshot, WebSocketConnection, WebSocketMessage, WebSocketEvent } from '@android-debugger/shared';
 
 interface ConsoleLine {
   id: string;
@@ -13,6 +13,9 @@ interface WebSocketConnectionWithMessages extends WebSocketConnection {
 }
 
 interface SdkContextValue {
+  // Connection over the SDK 2+ WebSocket bridge (SDK 1.x apps use logcat and never show up here)
+  bridgeStatus: SdkBridgeStatus;
+
   // SDK data
   consoleLogs: ConsoleLine[];
   events: CustomEvent[];
@@ -62,7 +65,22 @@ const MAX_ZUSTAND_STORES = 200;
 const MAX_WEBSOCKET_CONNECTIONS = 200;
 const MAX_WEBSOCKET_EVENTS = 500;
 
+const IDLE_BRIDGE_STATUS: SdkBridgeStatus = { deviceId: null, state: 'idle', clients: [] };
+
 export function SdkProvider({ children, sessionKey }: SdkProviderProps) {
+  const [bridgeStatus, setBridgeStatus] = useState<SdkBridgeStatus>(IDLE_BRIDGE_STATUS);
+  useEffect(() => {
+    let current = true;
+    const unsubscribe = window.electronAPI.onSdkBridgeStatus((status) => {
+      current = false; // a pushed status is newer than the initial fetch
+      setBridgeStatus(status);
+    });
+    window.electronAPI.getSdkBridgeStatus().then((status) => {
+      if (current) setBridgeStatus(status);
+    }, () => {});
+    return unsubscribe;
+  }, []);
+
   // SDK data
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLine[]>([]);
   const [events, setEvents] = useState<CustomEvent[]>([]);
@@ -114,8 +132,8 @@ export function SdkProvider({ children, sessionKey }: SdkProviderProps) {
     setSelectedWsConnection(null);
   }, [sessionKey]);
 
-  // Listen for SDK messages from logcat
-  // SDK messages are automatically parsed from logcat when logcat is running
+  // SDK messages arrive while a device is selected (see useBackgroundLogcat),
+  // whichever transport the app's SDK uses.
   useEffect(() => {
     const unsubscribeMessage = window.electronAPI.onSdkMessage(({ message }: { message: SdkMessage }) => {
       switch (message.type) {
@@ -257,6 +275,7 @@ export function SdkProvider({ children, sessionKey }: SdkProviderProps) {
   }, []);
 
   const value: SdkContextValue = {
+    bridgeStatus,
     consoleLogs,
     events,
     states,

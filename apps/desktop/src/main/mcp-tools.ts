@@ -8,7 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as fs from 'fs';
 import { z } from 'zod';
-import type { Device, IntentConfig, LogLevel } from '@android-debugger/shared';
+import type { Device, IntentConfig, LogLevel, SdkBridgeStatus } from '@android-debugger/shared';
 import type { AdbService } from './adb';
 import type { EmulatorService } from './emulator-service';
 import type { AvdInfo } from './emulator-types';
@@ -38,6 +38,7 @@ export interface McpToolHost {
   store: McpDataStore;
   appVersion: string;
   getSelection: () => McpSelection;
+  getSdkBridgeStatus: () => SdkBridgeStatus;
   /** Selects in main and in the UI; resolves once the UI shows it (or after a short wait). */
   selectTarget: (target: { deviceId: string; packageName?: string }) => Promise<McpSelection & { uiConfirmed: boolean }>;
   /** Switches the desktop app's tab and brings its window to the front. */
@@ -731,12 +732,23 @@ export function registerMcpTools(server: McpServer, host: McpToolHost): void {
     if (!target) {
       return 'Android Debugger is not reading SDK messages yet (select a device and app in the app).';
     }
-    return `SDK stream ${active ? 'active' : 'stopped'} for ${target.packageName || 'all apps'} on ${target.deviceId}.`;
+    const bridge = host.getSdkBridgeStatus();
+    const apps = bridge.clients.map((client) => `SDK ${client.sdkVersion}`).join(', ');
+    const connection =
+      bridge.clients.length > 0
+        ? ` ${bridge.clients.length} app(s) connected (${apps}).`
+        : bridge.state === 'error'
+          ? ` No app connected: ${bridge.error}.`
+          : active
+            ? ' No app connected over the SDK socket right now (SDK 1.x apps report through logcat instead).'
+            : '';
+    return `SDK stream ${active ? 'active' : 'stopped'} for ${target.packageName || 'all apps'} on ${target.deviceId}.${connection}`;
   }
 
   const SDK_EMPTY_HINT =
-    'Nothing received yet. The app must include @yemirhan/android-debugger-sdk (AndroidDebugger.init() at startup), ' +
-    'run as a debug build, and be the app selected in Android Debugger.';
+    'Nothing received yet. The app must include @yemirhan/android-debugger-sdk (AndroidDebugger.init() at startup) ' +
+    'and run on the device selected in Android Debugger, which forwards the SDK port with adb reverse. ' +
+    'Release builds also need cleartext traffic to localhost allowed.';
 
   tool(
     'get_network_requests',

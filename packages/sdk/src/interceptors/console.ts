@@ -67,6 +67,7 @@ export function interceptConsole(send: SendFn): () => void {
   };
 }
 
+// Top-level values JSON can't represent; see safeStringify for nested ones.
 function serializeArg(arg: unknown): unknown {
   if (arg === null) return null;
   if (arg === undefined) return 'undefined';
@@ -79,38 +80,7 @@ function serializeArg(arg: unknown): unknown {
   if (typeof arg === 'bigint') return `${arg}n`;
   if (typeof arg === 'symbol') return arg.toString();
 
-  if (arg instanceof Error) {
-    return {
-      name: arg.name,
-      message: arg.message,
-      stack: arg.stack,
-    };
-  }
-
-  if (typeof arg === 'object') {
-    try {
-      // Handle circular references
-      const seen = new WeakSet();
-      return JSON.parse(
-        JSON.stringify(arg, (key, value) => {
-          if (typeof value === 'bigint') return `${value}n`;
-          if (value instanceof Error) {
-            // Error properties are non-enumerable and would serialize as {}
-            return { name: value.name, message: value.message, stack: value.stack };
-          }
-          if (typeof value === 'object' && value !== null) {
-            if (seen.has(value)) {
-              return '[Circular]';
-            }
-            seen.add(value);
-          }
-          return value;
-        })
-      );
-    } catch {
-      return String(arg);
-    }
-  }
-
+  // Objects (including nested Errors and cycles) are serialized by the
+  // transport right away, so they are captured as they are now.
   return arg;
 }

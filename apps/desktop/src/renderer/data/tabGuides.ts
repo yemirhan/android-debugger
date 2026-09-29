@@ -122,11 +122,16 @@ export const tabGuides: Record<string, TabGuide> = {
   },
 
   sdk: {
-    title: 'SDK',
-    description: 'Shows information about Android development tools.',
+    title: 'SDK Data',
+    description: 'Console output, custom events and state sent by the Android Debugger SDK in your React Native app.',
     features: [
-      'Bundletool version and status',
-      'SDK configuration',
+      'Console logs captured from console.log/info/warn/error/debug',
+      'Custom events from AndroidDebugger.trackEvent()',
+      'State snapshots from sendState(), Redux and Zustand',
+    ],
+    tips: [
+      'The SDK talks to Android Debugger over a local socket forwarded with adb reverse, so your Metro and logcat output stay clean',
+      'The badge shows whether an app is connected; data captured before that is delivered when it connects',
     ],
   },
 

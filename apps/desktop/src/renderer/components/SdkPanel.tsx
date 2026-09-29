@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { ConsoleMessage } from '@android-debugger/shared';
+import type { ConsoleMessage, SdkBridgeStatus } from '@android-debugger/shared';
 import { useSdkContext } from '../contexts/SdkContext';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
@@ -8,6 +8,7 @@ import { tabGuides } from '../data/tabGuides';
 export function SdkPanel() {
   const [showInfo, setShowInfo] = useState(false);
   const {
+    bridgeStatus,
     consoleLogs,
     events,
     states,
@@ -59,12 +60,7 @@ export function SdkPanel() {
           >
             <InfoIcon />
           </button>
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent/10">
-            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-            <span className="text-xs font-mono text-accent">
-              Listening via ADB
-            </span>
-          </div>
+          <BridgeStatusBadge status={bridgeStatus} />
         </div>
       </div>
 
@@ -75,7 +71,8 @@ export function SdkPanel() {
           <pre className="bg-background rounded-md p-3 text-xs font-mono text-text-secondary overflow-x-auto">
 {`import { AndroidDebugger } from '@yemirhan/android-debugger-sdk';
 
-// Initialize the SDK (no host/port needed!)
+// Initialize the SDK (no host/port needed: Android Debugger
+// forwards the SDK port with adb reverse)
 AndroidDebugger.init();
 
 // Optional: Track custom events
@@ -85,7 +82,8 @@ AndroidDebugger.trackEvent('user_action', { button: 'login' });
 AndroidDebugger.sendState('user', { name: 'John' });`}
           </pre>
           <p className="text-xs text-text-muted mt-3">
-            SDK messages are automatically captured from logcat. Make sure logcat is running in the Logs panel.
+            The SDK sends data over a local socket, so it stays out of Metro, React Native DevTools and logcat.
+            Messages from before Android Debugger connects are kept and delivered once it does.
           </p>
         </div>
       )}
@@ -234,6 +232,41 @@ AndroidDebugger.sendState('user', { name: 'John' });`}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function BridgeStatusBadge({ status }: { status: SdkBridgeStatus }) {
+  const { clients } = status;
+  let tone: string;
+  let dot: string;
+  let label: string;
+  let title: string;
+  if (clients.length > 0) {
+    tone = 'bg-emerald-500/15 text-emerald-400';
+    dot = 'bg-emerald-400';
+    label = clients.length === 1 ? 'App connected' : `${clients.length} apps connected`;
+    title = clients.map((client) => `SDK ${client.sdkVersion} (session ${client.sessionId})`).join('\n');
+  } else if (status.state === 'error') {
+    tone = 'bg-amber-500/15 text-amber-400';
+    dot = 'bg-amber-400';
+    label = 'SDK port not forwarded';
+    title = `${status.error ?? 'adb reverse failed'}. Retrying every few seconds.`;
+  } else if (status.state === 'idle') {
+    tone = 'bg-surface text-text-muted';
+    dot = 'bg-text-muted';
+    label = 'No device';
+    title = 'Select a device to receive SDK data';
+  } else {
+    tone = 'bg-accent/10 text-accent';
+    dot = 'bg-accent animate-pulse-dot';
+    label = 'Waiting for app';
+    title = 'Listening for apps using @yemirhan/android-debugger-sdk 2+. SDK 1.x apps report through logcat.';
+  }
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${tone}`} title={title}>
+      <div className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+      <span className="text-xs font-mono">{label}</span>
     </div>
   );
 }

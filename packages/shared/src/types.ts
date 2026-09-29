@@ -86,7 +86,53 @@ export interface SdkMessage {
   payload: unknown;
 }
 
-// Logcat transport chunk data
+// SDK bridge protocol (SDK 2+). The SDK opens a WebSocket to
+// ws://localhost:SDK_BRIDGE_DEVICE_PORT on the device; the desktop app maps that
+// port to itself with `adb reverse`, so nothing is written to the app's logs.
+
+/** SDK -> desktop: first frame on every connection. */
+export interface SdkHelloFrame {
+  type: 'hello';
+  protocol: number;
+  sdkVersion: string;
+  /** Random per JS runtime; changes when the app reloads. */
+  sessionId: string;
+  startedAt: number;
+}
+
+/** SDK -> desktop: messages in the order they happened. */
+export interface SdkBatchFrame {
+  type: 'batch';
+  messages: SdkMessage[];
+}
+
+export type SdkToDesktopFrame = SdkHelloFrame | SdkBatchFrame;
+
+/** Desktop -> SDK: reply to hello. The SDK sends nothing else until it arrives. */
+export interface DesktopWelcomeFrame {
+  type: 'welcome';
+  protocol: number;
+}
+
+export type DesktopToSdkFrame = DesktopWelcomeFrame;
+
+/** An app connected to the desktop over the SDK bridge. */
+export interface SdkBridgeClient {
+  id: string;
+  sessionId: string;
+  sdkVersion: string;
+  connectedAt: number;
+}
+
+export interface SdkBridgeStatus {
+  deviceId: string | null;
+  /** `listening` once `adb reverse` points the device port at the desktop. */
+  state: 'idle' | 'starting' | 'listening' | 'error';
+  error?: string;
+  clients: SdkBridgeClient[];
+}
+
+// Logcat transport chunk data (SDK 1.x)
 export interface ChunkData {
   sequenceId: string;
   index: number;

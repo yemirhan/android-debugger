@@ -2,9 +2,9 @@ import { useEffect } from 'react';
 import type { Device } from '@android-debugger/shared';
 
 /**
- * Hook that manages background logcat streaming.
- * This ensures logcat is always running when a device is selected,
- * so SDK messages are captured regardless of which panel is active.
+ * Keeps the SDK transports running while a device is selected (the WebSocket
+ * bridge for SDK 2+, logcat for SDK 1.x), so SDK messages are captured
+ * regardless of which panel is active.
  */
 export function useBackgroundLogcat(device: Device | null, packageName: string) {
   useEffect(() => {

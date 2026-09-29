@@ -1,7 +1,7 @@
 {
   "name": "@yemirhan/android-debugger-ui",
-  "version": "1.1.1",
-  "description": "Reusable UI components for Android Debugger apps",
+  "version": "2.0.0",
+  "description": "In-app debugger and UI components for React Native apps using Android Debugger",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -24,22 +24,29 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "test": "node --no-warnings --experimental-strip-types --test test/*.test.ts",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
+    "@android-debugger/shared": "workspace:*",
     "@types/react": "^19.0.0",
+    "@yemirhan/android-debugger-sdk": "workspace:*",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2"
   },
   "peerDependencies": {
     "@expo/vector-icons": ">=14.0.0",
+    "@yemirhan/android-debugger-sdk": ">=2.0.0",
     "expo-router": ">=4.0.0",
     "react": ">=18.0.0",
-    "react-native": ">=0.70.0"
+    "react-native": ">=0.71.0"
   },
   "peerDependenciesMeta": {
     "@expo/vector-icons": {
+      "optional": false
+    },
+    "@yemirhan/android-debugger-sdk": {
       "optional": false
     },
     "expo-router": {
@@ -61,7 +68,9 @@
     "expo",
     "android",
     "ui-components",
-    "debugging"
+    "debugging",
+    "network-inspector",
+    "devtools"
   ],
   "license": "MIT"
 }

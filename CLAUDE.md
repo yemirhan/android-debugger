@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Android Debugger is a React Native debugging tool with an Electron desktop app and reusable SDK/UI packages. The SDK communicates with the desktop app via ADB logcat - messages are written to Android logs with a special tag and captured by the desktop app running `adb logcat`.
+Android Debugger is a React Native debugging tool with an Electron desktop app and reusable SDK/UI packages. The SDK (2+) sends messages over a WebSocket to `localhost:8347` on the device, which the desktop app forwards to itself with `adb reverse`, so nothing lands in the app's logs. SDK 1.x wrote messages to logcat instead; the desktop still parses those for compatibility.
 
 ## Monorepo Structure
 
@@ -14,7 +14,7 @@ apps/
   example-expo/     # Example React Native app using the SDK
 packages/
   sdk/              # @yemirhan/android-debugger-sdk (npm published)
-  android-debugger-ui/  # @yemirhan/android-debugger-ui (npm published)
+  android-debugger-ui/  # @yemirhan/android-debugger-ui (npm published): in-app debugger + RN components
   shared/           # @android-debugger/shared (internal types)
 ```
 
@@ -45,7 +45,8 @@ pnpm publish:packages  # Publish SDK and UI packages to npm
 - **Main process** (`src/main/index.ts`): Electron main, IPC handlers for 40+ ADB operations
 - **Renderer** (`src/renderer/App.tsx`): React frontend with tabbed interface
 - **ADB service** (`src/main/adb.ts`): Device communication, command execution
-- **Logcat parser** (`src/main/logcat-parser.ts`): Parses SDK messages from logcat stream
+- **SDK bridge** (`src/main/sdk-bridge.ts`, `sdk-bridge-server.ts`): WebSocket server per selected device on an ephemeral 127.0.0.1 port, `adb reverse`d from the device's SDK port; hello/welcome handshake then batched messages
+- **Logcat parser** (`src/main/logcat-parser.ts`): Parses SDK 1.x messages from the logcat stream
 - **MCP server** (`src/main/mcp-*.ts`): Local Streamable HTTP MCP server on 127.0.0.1 (bearer token, Host/Origin checks) whose tools reuse AdbService; `mcp-store.ts` keeps bounded copies of the streams sent to the renderer; `mcp-bridge.ts` is the standalone stdio bridge shipped in `Resources/mcp/`. User docs: `docs/mcp.md`
 
 Key contexts in renderer: LogsContext, SDKContext, UpdateContext, CrashContext
@@ -53,8 +54,15 @@ Key contexts in renderer: LogsContext, SDKContext, UpdateContext, CrashContext
 ### SDK Package (packages/sdk)
 - Singleton `AndroidDebugger` class - call `AndroidDebugger.init()` once at app startup
 - Interceptors: console, fetch/XHR, axios, websocket, zustand
-- Transport via logcat (`src/transports/logcat.ts`)
+- Transport: `src/transports/websocket.ts` (default; queues while disconnected, reconnects with backoff, never logs) or the legacy `logcat.ts` (opt-in via `transport: 'logcat'`)
+- Tests: `pnpm test` builds and runs `test/*.test.mjs` against `dist`
 - Redux middleware via `AndroidDebugger.createReduxMiddleware()`
+
+### UI Package (packages/android-debugger-ui)
+- `DebuggerOverlay` (floating bug button) / `DebuggerPanel`: on-device Network, Console, Events and State tabs
+- Data comes from `AndroidDebugger.onMessage()` into `src/store.ts` (bounded, batched, immutable snapshots) and is read through `useSyncExternalStore` hooks
+- `src/store.ts` and `src/format.ts` are free of React Native imports so `pnpm test` can run them in Node; everything shares `src/theme.ts`
+- Peer-depends on the SDK (>= 2.0)
 
 ### IPC Pattern
 Desktop uses Electron IPC for main↔renderer communication. Handlers are registered in main process, invoked from renderer via `window.api.*` methods exposed through preload script.
@@ -77,7 +85,7 @@ Required secrets for CI: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APP
 
 ## Key Technical Details
 
-- SDK messages use logcat tag for identification - no network config needed
+- SDK bridge protocol lives in `packages/shared` (`SDK_BRIDGE_DEVICE_PORT`, `SDK_BRIDGE_PROTOCOL_VERSION`, frame types); bump the protocol version for incompatible changes
 - Desktop monitors: memory, CPU, FPS, battery, network stats
 - App installation supports APK and AAB (bundletool downloaded on-demand)
 - Auto-updates via electron-updater with macOS notarization

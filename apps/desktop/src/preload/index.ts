@@ -5,6 +5,7 @@ import type {
   CpuInfo,
   FpsInfo,
   SdkMessage,
+  SdkBridgeStatus,
   AppMetadata,
   DeveloperOptions,
   FileEntry,
@@ -68,7 +69,6 @@ import type {
 } from '../main/emulator-types';
 
 export type UnsubscribeFn = () => void;
-export type SocketTransportType = 'socket' | 'logcat' | 'none';
 
 export interface ElectronAPI extends MonitorApi {
   // Device
@@ -119,11 +119,10 @@ export interface ElectronAPI extends MonitorApi {
   killApp: (deviceId: string, packageName: string) => Promise<void>;
   clearAppData: (deviceId: string, packageName: string) => Promise<void>;
 
-  // SDK Messages (received via logcat when logcat is running)
+  // SDK messages (WebSocket bridge for SDK 2+, logcat for SDK 1.x)
   onSdkMessage: (callback: (data: { message: SdkMessage }) => void) => UnsubscribeFn;
-  socketConnect: (deviceId: string, packageName: string) => void;
-  socketDisconnect: () => void;
-  onSocketStatusChanged: (callback: (status: { type: SocketTransportType }) => void) => UnsubscribeFn;
+  getSdkBridgeStatus: () => Promise<SdkBridgeStatus>;
+  onSdkBridgeStatus: (callback: (status: SdkBridgeStatus) => void) => UnsubscribeFn;
 
   // App Metadata
   getAppMetadata: (deviceId: string, packageName: string) => Promise<AppMetadata | null>;
@@ -330,8 +329,6 @@ export interface ElectronAPI extends MonitorApi {
   stopInAppMirror: (sessionId?: string) => Promise<{ success: boolean }>;
 }
 
-const socketStatusListeners = new Set<(status: { type: SocketTransportType }) => void>();
-
 const electronAPI: ElectronAPI = {
   // Background monitors (see monitor-types.ts)
   startMonitor: (kind, deviceId, packageName, interval, session) =>
@@ -421,7 +418,7 @@ const electronAPI: ElectronAPI = {
   clearAppData: (deviceId, packageName) =>
     ipcRenderer.invoke('adb:clear-app-data', deviceId, packageName),
 
-  // SDK Messages (received via logcat)
+  // SDK messages (WebSocket bridge for SDK 2+, logcat for SDK 1.x)
   onSdkMessage: (callback) => {
     // Main batches SDK messages; delivering a batch in one task lets React
     // coalesce the resulting state updates into a single render.
@@ -431,19 +428,11 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('sdk-messages', listener);
     return () => ipcRenderer.removeListener('sdk-messages', listener);
   },
-  // Native socket transport is not available in this build. Keep the optional
-  // renderer hook honest by immediately selecting the supported logcat transport.
-  socketConnect: () => {
-    queueMicrotask(() => {
-      for (const listener of socketStatusListeners) listener({ type: 'logcat' });
-    });
-  },
-  socketDisconnect: () => {
-    for (const listener of socketStatusListeners) listener({ type: 'none' });
-  },
-  onSocketStatusChanged: (callback) => {
-    socketStatusListeners.add(callback);
-    return () => socketStatusListeners.delete(callback);
+  getSdkBridgeStatus: () => ipcRenderer.invoke('sdk-bridge:get-status'),
+  onSdkBridgeStatus: (callback) => {
+    const listener = (_: Electron.IpcRendererEvent, status: SdkBridgeStatus) => callback(status);
+    ipcRenderer.on('sdk-bridge-status', listener);
+    return () => ipcRenderer.removeListener('sdk-bridge-status', listener);
   },
 
   // App Metadata

@@ -1,8 +1,9 @@
 import type { SdkMessage, CustomEvent, StateSnapshot, PerformanceMark } from '@android-debugger/shared';
-import { DebuggerClient } from './client';
+import { DebuggerClient, type DebuggerClientOptions } from './client';
 import { interceptConsole, interceptNetwork, interceptAxios, interceptZustandStore, interceptWebSocket } from './interceptors';
+import { safeStringify } from './serialize';
 
-export interface AndroidDebuggerOptions {
+export interface AndroidDebuggerOptions extends DebuggerClientOptions {
   interceptConsole?: boolean;
   interceptNetwork?: boolean;
   interceptWebSocket?: boolean;
@@ -25,12 +26,17 @@ class AndroidDebuggerSDK {
   private zustandRestoreFns: (() => void)[] = [];
   private performanceMarks: Map<string, number> = new Map();
   private isInitialized = false;
+  private connectionListeners = new Set<(connected: boolean) => void>();
+  private messageListeners = new Set<(message: SdkMessage) => void>();
+  private dispatchingMessage = false;
+  private unsubscribeClient: (() => void) | null = null;
 
   /**
    * Initialize the Android Debugger SDK
    *
-   * No host/port configuration needed - messages are sent via logcat
-   * and captured by the desktop app through ADB.
+   * No host/port configuration needed: the SDK connects to localhost and the
+   * desktop app forwards that port to itself with `adb reverse`. Messages
+   * captured before the desktop app connects are kept (up to `maxQueueSize`).
    */
   init(options: AndroidDebuggerOptions = {}): void {
     if (this.isInitialized) {
@@ -42,9 +48,19 @@ class AndroidDebuggerSDK {
       interceptConsole: shouldInterceptConsole = true,
       interceptNetwork: shouldInterceptNetwork = true,
       interceptWebSocket: shouldInterceptWebSocket = false,
+      ...clientOptions
     } = options;
 
-    this.client = new DebuggerClient();
+    this.client = new DebuggerClient(clientOptions);
+    this.unsubscribeClient = this.client.onConnectionChange((connected) => {
+      for (const listener of [...this.connectionListeners]) {
+        try {
+          listener(connected);
+        } catch {
+          // A faulty listener must not break the others
+        }
+      }
+    });
 
     // Setup interceptors
     if (shouldInterceptConsole) {
@@ -60,7 +76,6 @@ class AndroidDebuggerSDK {
     }
 
     this.isInitialized = true;
-    console.log('[AndroidDebugger] SDK initialized - messages will be sent via logcat');
   }
 
   /**
@@ -136,6 +151,10 @@ class AndroidDebuggerSDK {
     this.restoreWebSocket = null;
     this.axiosRestoreFns = [];
     this.zustandRestoreFns = [];
+    // Destroying the client reports the disconnect to listeners first.
+    this.client?.destroy();
+    this.unsubscribeClient?.();
+    this.unsubscribeClient = null;
     this.client = null;
     this.isInitialized = false;
     this.performanceMarks.clear();
@@ -146,6 +165,39 @@ class AndroidDebuggerSDK {
    */
   isReady(): boolean {
     return this.isInitialized;
+  }
+
+  /**
+   * Check if the desktop app is connected and receiving messages.
+   * Always false with the `logcat` transport, which can't tell.
+   */
+  isConnected(): boolean {
+    return this.client?.isConnected() ?? false;
+  }
+
+  /**
+   * Listen for the desktop app connecting or disconnecting. Listeners survive
+   * destroy() and init(). Returns a function that removes the listener.
+   */
+  onConnectionChange(listener: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(listener);
+    return () => {
+      this.connectionListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Observe every message the SDK captures, in the app itself (this is what
+   * @yemirhan/android-debugger-ui's in-app debugger uses). Listeners get a
+   * JSON snapshot taken when the message was captured, whether or not the
+   * desktop app is connected. Listeners survive destroy() and init().
+   * Returns a function that removes the listener.
+   */
+  onMessage(listener: (message: SdkMessage) => void): () => void {
+    this.messageListeners.add(listener);
+    return () => {
+      this.messageListeners.delete(listener);
+    };
   }
 
   /**
@@ -235,8 +287,26 @@ class AndroidDebuggerSDK {
   }
 
   private send(message: SdkMessage): void {
-    if (this.client) {
-      this.client.send(message);
+    if (!this.client) return;
+    this.client.send(message);
+
+    // Messages captured while a listener runs (e.g. it calls console.log)
+    // still go to the desktop app but aren't dispatched again, which would loop.
+    if (this.messageListeners.size === 0 || this.dispatchingMessage) return;
+    this.dispatchingMessage = true;
+    try {
+      const snapshot = JSON.parse(safeStringify(message)) as SdkMessage;
+      for (const listener of [...this.messageListeners]) {
+        try {
+          listener(snapshot);
+        } catch {
+          // A faulty listener must not break the others or the host app
+        }
+      }
+    } catch {
+      // Ignore - debugging must never break the host app
+    } finally {
+      this.dispatchingMessage = false;
     }
   }
 }
@@ -244,8 +314,10 @@ class AndroidDebuggerSDK {
 // Export singleton instance
 export const AndroidDebugger = new AndroidDebuggerSDK();
 
-// Re-export client
-export { DebuggerClient } from './client';
+// Re-export client and transports
+export { DebuggerClient, type DebuggerClientOptions, type TransportKind } from './client';
+export { WebSocketTransport, LogcatTransport, type Transport, type WebSocketTransportOptions } from './transports';
+export { SDK_VERSION } from './version';
 
 // Re-export interceptors for advanced usage
 export { interceptAxios, interceptNetwork, interceptConsole, interceptZustandStore, interceptWebSocket } from './interceptors';

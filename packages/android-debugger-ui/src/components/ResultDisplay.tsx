@@ -1,7 +1,8 @@
 import React from 'react';
 import { StyleSheet, Text, View, ScrollView } from 'react-native';
+import { theme } from '../theme';
 
-interface ResultDisplayProps {
+export interface ResultDisplayProps {
   title: string;
   results: string[];
   maxHeight?: number;
@@ -28,17 +29,17 @@ export function ResultDisplay({ title, results, maxHeight = 200 }: ResultDisplay
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#111827',
+    backgroundColor: theme.colors.surface,
     borderRadius: 8,
     padding: 12,
     marginTop: 16,
     borderWidth: 1,
-    borderColor: '#1f2937',
+    borderColor: theme.colors.borderMuted,
   },
   title: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#9ca3af',
+    color: theme.colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 8,
@@ -48,8 +49,8 @@ const styles = StyleSheet.create({
   },
   resultText: {
     fontSize: 13,
-    color: '#d1d5db',
-    fontFamily: 'monospace',
+    color: theme.colors.textSecondary,
+    fontFamily: theme.fonts.mono,
     marginBottom: 4,
     lineHeight: 18,
   },

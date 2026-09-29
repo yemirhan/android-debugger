@@ -44,6 +44,11 @@ export const MAX_BATTERY_DATA_POINTS = 60; // 5 minutes at 5s interval
 export const MAX_NETWORK_STATS_DATA_POINTS = 60;
 export const MAX_CRASH_ENTRIES = 100;
 
+// SDK bridge: the SDK connects to ws://localhost:<port> on the device, which
+// the desktop app forwards to itself with `adb reverse`.
+export const SDK_BRIDGE_DEVICE_PORT = 8347;
+export const SDK_BRIDGE_PROTOCOL_VERSION = 1;
+
 // App info
 export const APP_NAME = 'Android Debugger';
 export const APP_VERSION = '1.0.0';
