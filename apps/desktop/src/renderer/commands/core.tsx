@@ -385,8 +385,8 @@ const captureCommands: Command[] = [
   {
     id: 'capture.mirror-start',
     kind: 'action',
-    title: 'Start screen mirror',
-    keywords: ['scrcpy', 'mirror', 'cast', 'control', 'window'],
+    title: 'Open screen mirror in a separate window',
+    keywords: ['scrcpy', 'mirror', 'cast', 'control', 'window', 'pop out', 'start'],
     group: 'capture',
     icon: <icons.MirrorIcon />,
     hidden: (ctx) => ctx.isMirroring,
@@ -395,7 +395,7 @@ const captureCommands: Command[] = [
       const id = toast.loading('Starting screen mirror…');
       try {
         await actions.startMirror(ctx.device!.id);
-        updateToast(id, { kind: 'success', title: 'Screen mirror started', description: 'It opens in its own window.' });
+        updateToast(id, { kind: 'success', title: 'Screen mirror window opened', description: 'scrcpy shows the device in its own window.' });
       } catch (error) {
         if (error instanceof actions.ScrcpyMissingError) {
           ctx.navigate('screen-mirror');
@@ -409,12 +409,12 @@ const captureCommands: Command[] = [
   {
     id: 'capture.mirror-stop',
     kind: 'action',
-    title: 'Stop screen mirror',
-    keywords: ['scrcpy', 'close mirror'],
+    title: 'Close the separate mirror window',
+    keywords: ['scrcpy', 'close mirror', 'stop mirror'],
     group: 'capture',
     icon: <icons.StopIcon />,
     hidden: (ctx) => !ctx.isMirroring,
-    run: () => withToast('Stopping mirror…', () => actions.stopMirror(), () => ({ title: 'Screen mirror stopped' }), 'Could not stop the mirror'),
+    run: () => withToast('Closing mirror window…', () => actions.stopMirror(), () => ({ title: 'Mirror window closed' }), 'Could not stop the mirror'),
   },
   {
     id: 'capture.open-folder',

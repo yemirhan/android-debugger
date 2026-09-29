@@ -141,6 +141,7 @@ import { adbService } from './adb';
 import { scrcpyService } from './scrcpy-service';
 import { registerMonitorIpc } from './monitor-hub';
 import { registerCommandIpc } from './command-ipc';
+import { registerMirrorIpcHandlers, stopAllMirrorSessions } from './scrcpy-mirror';
 import type {
   Device,
   MemoryInfo,
@@ -1344,6 +1345,9 @@ function setupIpcHandlers(): void {
   ipcMain.handle('scrcpy:is-mirroring', async (_, deviceId?: string) => {
     return scrcpyService.isMirroring(deviceId);
   });
+
+  // In-app mirroring (scrcpy server streamed into the renderer)
+  registerMirrorIpcHandlers();
 }
 
 function setupAutoUpdaterEvents(): void {
@@ -1419,6 +1423,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   stopRendererSessions();
   void scrcpyService.stopMirror();
+  void stopAllMirrorSessions();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -1444,7 +1449,7 @@ app.on('before-quit', (event) => {
   // Cleanup is best-effort: a hung adb/scrcpy child must never keep the app from quitting.
   const cleanupTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
   void Promise.race([
-    Promise.allSettled([adbService.stopAll(true), scrcpyService.stopMirror()]),
+    Promise.allSettled([adbService.stopAll(true), scrcpyService.stopMirror(), stopAllMirrorSessions()]),
     cleanupTimeout,
   ]).finally(() => app.quit());
 });

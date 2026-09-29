@@ -5,6 +5,7 @@ import * as os from 'os';
 import { createHash } from 'crypto';
 import { promisify } from 'util';
 import type { ScrcpyConfig, ScrcpyState } from '@android-debugger/shared';
+import { parseScrcpyVersion } from './scrcpy-protocol';
 
 const execFileAsync = promisify(execFile);
 
@@ -51,13 +52,70 @@ class ScrcpyService {
     // This is checked synchronously for simplicity
     const pathDirs = (process.env.PATH || '').split(path.delimiter);
     for (const dir of pathDirs) {
+      if (!dir) continue;
       const scrcpyPath = path.join(dir, 'scrcpy');
       if (fs.existsSync(scrcpyPath)) {
         return scrcpyPath;
       }
     }
 
+    // Apps launched from Finder get a minimal PATH without Homebrew.
+    for (const candidate of ['/opt/homebrew/bin/scrcpy', '/usr/local/bin/scrcpy']) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
     return '';
+  }
+
+  /**
+   * Locate the scrcpy server jar used for in-app mirroring and the version it
+   * must be started with (the server refuses any other version).
+   *
+   * Order: SCRCPY_SERVER_PATH, next to the scrcpy binary (release archives,
+   * our on-demand download), the Homebrew/Linux share dirs relative to the
+   * binary's real path, then well-known prefixes.
+   */
+  async getServerInfo(): Promise<{ path: string; version: string | null } | null> {
+    const scrcpyPath = this.getScrcpyPath();
+    const candidates: string[] = [];
+    if (process.env.SCRCPY_SERVER_PATH) candidates.push(process.env.SCRCPY_SERVER_PATH);
+    if (scrcpyPath) {
+      const dirs = [path.dirname(scrcpyPath)];
+      try {
+        dirs.push(path.dirname(fs.realpathSync(scrcpyPath)));
+      } catch {
+        // Broken symlink: keep the unresolved dir only.
+      }
+      for (const dir of dirs) {
+        candidates.push(path.join(dir, 'scrcpy-server'));
+        candidates.push(path.join(dir, '..', 'share', 'scrcpy', 'scrcpy-server'));
+      }
+    }
+    candidates.push(
+      '/opt/homebrew/share/scrcpy/scrcpy-server',
+      '/usr/local/share/scrcpy/scrcpy-server',
+      '/usr/share/scrcpy/scrcpy-server'
+    );
+
+    const serverPath = candidates.find((candidate) => {
+      try {
+        return fs.statSync(candidate).isFile();
+      } catch {
+        return false;
+      }
+    });
+    if (!serverPath) return null;
+
+    let version: string | null = null;
+    if (process.env.SCRCPY_SERVER_VERSION) {
+      version = process.env.SCRCPY_SERVER_VERSION;
+    } else {
+      const info = await this.getScrcpyInfo();
+      version = info && info.version !== 'unknown' ? info.version : null;
+    }
+    return { path: path.resolve(serverPath), version };
   }
 
   /**
@@ -84,10 +142,9 @@ class ScrcpyService {
     }
 
     try {
-      const { stdout } = await execFileAsync(scrcpyPath, ['--version'], { encoding: 'utf8' });
+      const { stdout } = await execFileAsync(scrcpyPath, ['--version'], { encoding: 'utf8', timeout: 10_000 });
       // Extract version from output (e.g., "scrcpy 3.1")
-      const versionMatch = stdout.match(/scrcpy\s+([\d.]+)/);
-      const version = versionMatch ? versionMatch[1] : 'unknown';
+      const version = parseScrcpyVersion(stdout) ?? 'unknown';
       return { path: scrcpyPath, version };
     } catch {
       return { path: scrcpyPath, version: 'unknown' };

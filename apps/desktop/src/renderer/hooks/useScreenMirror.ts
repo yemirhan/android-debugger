@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Device, ScrcpyConfig, ScrcpyState } from '@android-debugger/shared';
+import type { MirrorServerStatus } from '../lib/mirror/types';
 
 interface ScrcpyDownloadProgress {
   percent: number;
@@ -7,123 +8,104 @@ interface ScrcpyDownloadProgress {
 }
 
 interface UseScreenMirrorReturn {
-  // State
-  isMirroring: boolean;
+  /** The separate scrcpy window is open for this device. */
+  isWindowOpen: boolean;
+  /** scrcpy binary found (needed for the separate window). */
   scrcpyAvailable: boolean | null;
+  /** Server jar found (needed for in-app mirroring). null while checking. */
+  serverStatus: MirrorServerStatus | null;
   needsDownload: boolean;
   isDownloading: boolean;
   downloadProgress: ScrcpyDownloadProgress | null;
-  error: string | null;
+  windowError: string | null;
   scrcpyInfo: { path: string; version: string } | null;
 
-  // Config
-  config: ScrcpyConfig;
-  setConfig: (config: ScrcpyConfig) => void;
-
-  // Actions
-  downloadScrcpy: () => Promise<void>;
-  startMirror: () => Promise<void>;
-  stopMirror: () => Promise<void>;
+  downloadScrcpy: () => Promise<boolean>;
+  openWindow: (config: ScrcpyConfig) => Promise<void>;
+  closeWindow: () => Promise<void>;
   checkEnvironment: () => Promise<void>;
 }
 
-const DEFAULT_CONFIG: ScrcpyConfig = {
-  showTouches: false,
-  stayAwake: true,
-  turnScreenOff: false,
-  alwaysOnTop: false,
-};
-
+/**
+ * scrcpy installation state and the "open in a separate window" mode. The
+ * in-app mirror session lives in lib/mirror/mirror-client (it can outlive
+ * the panel when pinned).
+ */
 export function useScreenMirror(device: Device | null): UseScreenMirrorReturn {
-  // State
-  const [isMirroring, setIsMirroring] = useState(false);
+  const [isWindowOpen, setIsWindowOpen] = useState(false);
   const [scrcpyAvailable, setScrcpyAvailable] = useState<boolean | null>(null);
+  const [serverStatus, setServerStatus] = useState<MirrorServerStatus | null>(null);
   const [needsDownload, setNeedsDownload] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<ScrcpyDownloadProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
   const [scrcpyInfo, setScrcpyInfo] = useState<{ path: string; version: string } | null>(null);
 
-  // Config
-  const [config, setConfig] = useState<ScrcpyConfig>(DEFAULT_CONFIG);
-
-  // Check environment (scrcpy availability)
   const checkEnvironment = useCallback(async () => {
     try {
-      const [available, needs, info, state] = await Promise.all([
+      const [available, needs, info, state, server] = await Promise.all([
         window.electronAPI.checkScrcpy(),
         window.electronAPI.needsScrcpyDownload(),
         window.electronAPI.getScrcpyInfo(),
         window.electronAPI.getScrcpyState(),
+        window.electronAPI.getMirrorServerStatus(),
       ]);
       setScrcpyAvailable(available);
-      setNeedsDownload(needs);
+      setNeedsDownload(needs && !server.available);
       setScrcpyInfo(info);
-      setIsMirroring(state.isRunning && state.deviceId === device?.id);
+      setServerStatus(server);
+      setIsWindowOpen(state.isRunning && state.deviceId === device?.id);
     } catch (err) {
       console.error('Error checking scrcpy environment:', err);
+      setServerStatus({ available: false, version: null, path: null });
     }
   }, [device?.id]);
 
-  // Download scrcpy
   const downloadScrcpy = useCallback(async () => {
     setIsDownloading(true);
-    setDownloadProgress({ percent: 0, message: 'Starting download...' });
-    setError(null);
-
+    setDownloadProgress({ percent: 0, message: 'Starting download…' });
+    setWindowError(null);
     try {
       const result = await window.electronAPI.downloadScrcpy();
       if (result.success) {
-        setScrcpyAvailable(true);
-        setNeedsDownload(false);
-        setDownloadProgress({ percent: 100, message: 'Download complete!' });
-        // Refresh info
-        const info = await window.electronAPI.getScrcpyInfo();
-        setScrcpyInfo(info);
-      } else {
-        setError(result.error || 'Download failed');
-        setDownloadProgress({ percent: 0, message: result.error || 'Download failed' });
+        setDownloadProgress({ percent: 100, message: 'Download complete' });
+        await checkEnvironment();
+        return true;
       }
+      setWindowError(result.error || 'Download failed');
+      setDownloadProgress(null);
+      return false;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setError(message);
-      setDownloadProgress({ percent: 0, message });
+      setWindowError(err instanceof Error ? err.message : 'Download failed');
+      setDownloadProgress(null);
+      return false;
     } finally {
       setIsDownloading(false);
     }
-  }, []);
+  }, [checkEnvironment]);
 
-  // Start mirroring
-  const startMirror = useCallback(async () => {
-    if (!device) {
-      setError('No device selected');
-      return;
-    }
-
-    setError(null);
-
-    try {
-      const result = await window.electronAPI.startMirror(device.id, config);
-      if (!result.success) {
-        setError(result.error || 'Failed to start mirroring');
+  const openWindow = useCallback(
+    async (config: ScrcpyConfig) => {
+      if (!device) return;
+      setWindowError(null);
+      try {
+        const result = await window.electronAPI.startMirror(device.id, config);
+        if (!result.success) setWindowError(result.error || 'Could not open the scrcpy window');
+      } catch (err) {
+        setWindowError(err instanceof Error ? err.message : 'Could not open the scrcpy window');
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setError(message);
-    }
-  }, [device, config]);
+    },
+    [device]
+  );
 
-  // Stop mirroring
-  const stopMirror = useCallback(async () => {
+  const closeWindow = useCallback(async () => {
     try {
       await window.electronAPI.stopMirror();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setError(message);
+      setWindowError(err instanceof Error ? err.message : 'Could not close the scrcpy window');
     }
   }, []);
 
-  // Listen for download progress
   useEffect(() => {
     const unsubscribe = window.electronAPI.onScrcpyDownloadProgress((progress) => {
       setDownloadProgress(progress);
@@ -131,24 +113,18 @@ export function useScreenMirror(device: Device | null): UseScreenMirrorReturn {
     return () => unsubscribe();
   }, []);
 
-  // Listen for mirror state changes
   useEffect(() => {
     const unsubscribeStarted = window.electronAPI.onMirrorStarted((state: ScrcpyState) => {
       if (state.deviceId === device?.id) {
-        setIsMirroring(true);
-        setError(null);
+        setIsWindowOpen(true);
+        setWindowError(null);
       }
     });
-
-    const unsubscribeStopped = window.electronAPI.onMirrorStopped(() => {
-      setIsMirroring(false);
-    });
-
+    const unsubscribeStopped = window.electronAPI.onMirrorStopped(() => setIsWindowOpen(false));
     const unsubscribeError = window.electronAPI.onMirrorError((errorMsg: string) => {
-      setIsMirroring(false);
-      setError(errorMsg);
+      setIsWindowOpen(false);
+      setWindowError(errorMsg);
     });
-
     return () => {
       unsubscribeStarted();
       unsubscribeStopped();
@@ -156,34 +132,23 @@ export function useScreenMirror(device: Device | null): UseScreenMirrorReturn {
     };
   }, [device?.id]);
 
-  // Check environment when device changes
   useEffect(() => {
-    checkEnvironment();
-  }, [device?.id]);
-
-  // Reset state when device changes
-  useEffect(() => {
-    setError(null);
-  }, [device?.id]);
+    setWindowError(null);
+    void checkEnvironment();
+  }, [checkEnvironment]);
 
   return {
-    // State
-    isMirroring,
+    isWindowOpen,
     scrcpyAvailable,
+    serverStatus,
     needsDownload,
     isDownloading,
     downloadProgress,
-    error,
+    windowError,
     scrcpyInfo,
-
-    // Config
-    config,
-    setConfig,
-
-    // Actions
     downloadScrcpy,
-    startMirror,
-    stopMirror,
+    openWindow,
+    closeWindow,
     checkEnvironment,
   };
 }

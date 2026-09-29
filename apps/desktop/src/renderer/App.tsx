@@ -30,6 +30,7 @@ import { HeapDumpPanel } from './components/HeapDumpPanel';
 import { MethodTracePanel } from './components/MethodTracePanel';
 import { ScreenMirrorPanel } from './components/ScreenMirrorPanel';
 import { RnDevtoolsHost } from './components/rn-devtools/RnDevtoolsPanel';
+import { MirrorPip } from './components/mirror/MirrorPip';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { useBackgroundMonitoring } from './lib/monitoring/monitors';
@@ -325,6 +326,11 @@ function AppContent() {
             onSelectPackage={handlePackageChange}
             onRefreshDevices={refreshDevices}
             onToggleSidebar={toggleSidebar}
+          />
+          <MirrorPip
+            activeDeviceId={activeDevice?.id ?? null}
+            hidden={activeTab === 'screen-mirror'}
+            onOpenPanel={() => setActiveTab('screen-mirror')}
           />
         </CrashProvider>
       </LogsProvider>
