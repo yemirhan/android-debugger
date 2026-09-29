@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import type { Device, LogLevel } from '@android-debugger/shared';
 import { LOG_LEVEL_COLORS } from '@android-debugger/shared';
 import { useLogs } from '../hooks/useLogs';
@@ -12,6 +12,8 @@ interface LogsPanelProps {
 }
 
 const LOG_LEVELS: LogLevel[] = ['V', 'D', 'I', 'W', 'E', 'F'];
+
+const MAX_RENDERED_LOGS = 2000;
 
 const LOG_LEVEL_NAMES: Record<LogLevel, string> = {
   V: 'Verbose',
@@ -40,6 +42,8 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
     filter,
     clearLogs,
     togglePause,
+    startStreaming,
+    stopStreaming,
     setLogMode,
     updateFilter,
     toggleLevel,
@@ -48,29 +52,14 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
   const guide = tabGuides['logs'];
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const isAtTopRef = useRef(true);
-  const prevLogsLengthRef = useRef(0);
 
-  // Keep scroll position stable when new logs are added at top
-  useEffect(() => {
-    if (!containerRef.current || isPaused) return;
+  // Note: scroll position stability when new logs are prepended is handled by
+  // Chromium's native scroll anchoring (overflow-anchor: auto). It keeps the
+  // viewport pinned when scrolled down and lets new rows show when at the top.
+  // Manually adjusting scrollTop here would double-shift the view.
 
-    const container = containerRef.current;
-    const newLogsCount = logs.length - prevLogsLengthRef.current;
-
-    if (newLogsCount > 0 && !isAtTopRef.current) {
-      const rowHeight = 28;
-      container.scrollTop += newLogsCount * rowHeight;
-    }
-
-    prevLogsLengthRef.current = logs.length;
-  }, [logs, isPaused]);
-
-  const handleScroll = useCallback(() => {
-    if (containerRef.current) {
-      isAtTopRef.current = containerRef.current.scrollTop < 10;
-    }
-  }, []);
+  // Cap rendered rows to keep the DOM responsive (logs are newest-first).
+  const visibleLogs = logs.length > MAX_RENDERED_LOGS ? logs.slice(0, MAX_RENDERED_LOGS) : logs;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
@@ -201,8 +190,12 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
           </button>
         </div>
 
-        {/* Streaming status */}
-        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-surface border border-border-muted">
+        {/* Streaming status (click to start/stop the stream) */}
+        <button
+          onClick={isStreaming ? stopStreaming : startStreaming}
+          title={isStreaming ? 'Stop streaming logs' : 'Start streaming logs'}
+          className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-surface border border-border-muted hover:bg-surface-hover transition-colors"
+        >
           <div
             className={`w-1.5 h-1.5 rounded-full ${
               isStreaming ? 'bg-accent animate-pulse-dot' : 'bg-red-500'
@@ -211,7 +204,7 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
           <span className="text-xs text-text-muted">
             {isStreaming ? 'Live' : 'Stopped'}
           </span>
-        </div>
+        </button>
       </div>
 
       {/* Logs list or package required message */}
@@ -222,12 +215,11 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
             </svg>
           </div>
-          <p className="text-sm">Select a package to view all app logs</p>
+          <p className="text-sm">Choose an app in the toolbar to view all app logs</p>
         </div>
       ) : (
         <div
           ref={containerRef}
-          onScroll={handleScroll}
           className="flex-1 bg-surface rounded-lg border border-border-muted overflow-y-auto"
         >
           <table className="w-full">
@@ -240,7 +232,7 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
               </tr>
             </thead>
             <tbody className="font-mono text-xs">
-              {logs.map((log) => (
+              {visibleLogs.map((log) => (
                 <tr
                   key={log.id}
                   className={`log-${log.level} hover:bg-surface-hover/50 border-b border-border-muted/50 transition-colors`}
@@ -262,6 +254,12 @@ export function LogsPanel({ device, packageName }: LogsPanelProps) {
               ))}
             </tbody>
           </table>
+
+          {logs.length > visibleLogs.length && (
+            <div className="px-3 py-2 text-xs text-text-muted text-center">
+              Showing newest {visibleLogs.length.toLocaleString()} of {logs.length.toLocaleString()} logs. Refine filters or export to see all.
+            </div>
+          )}
 
           {logs.length === 0 && (
             <div className="flex flex-col items-center justify-center h-64 text-text-muted">

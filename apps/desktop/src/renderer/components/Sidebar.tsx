@@ -1,40 +1,7 @@
 import React from 'react';
 import type { TabId } from '../App';
-import type { NavGroup, NavItem } from '../types/navigation';
 import { SidebarGroup, SidebarItem } from './layout';
-import {
-  DashboardIcon,
-  PerformanceIcon,
-  MemoryIcon,
-  CpuIcon,
-  BatteryIcon,
-  NetworkStatsIcon,
-  ThreadsIcon,
-  GcIcon,
-  HeapIcon,
-  FlameIcon,
-  DebuggingIcon,
-  LogsIcon,
-  CrashIcon,
-  NetworkIcon,
-  WebSocketIcon,
-  SdkIcon,
-  AppStateIcon,
-  ActivityStackIcon,
-  JobsIcon,
-  AlarmsIcon,
-  ServicesIcon,
-  FileInspectorIcon,
-  ToolsIcon,
-  IntentIcon,
-  ScreenCaptureIcon,
-  DevOptionsIcon,
-  AppInfoIcon,
-  InstallAppIcon,
-  BundleAnalyzerIcon,
-  ScreenMirrorIcon,
-  SettingsIcon,
-} from './icons';
+import { dashboardItem, navigationGroups, settingsItem } from '../data/navigation';
 
 interface SidebarProps {
   activeTab: TabId;
@@ -42,113 +9,88 @@ interface SidebarProps {
   sidebarExpanded: boolean;
   isGroupExpanded: (groupId: string) => boolean;
   toggleGroup: (groupId: string) => void;
+  onOpenCommandPalette: () => void;
 }
 
-// Navigation structure with groups
-const navigationGroups: NavGroup[] = [
-  {
-    id: 'performance',
-    label: 'Performance',
-    icon: <PerformanceIcon />,
-    items: [
-      { id: 'memory', label: 'Memory', icon: <MemoryIcon /> },
-      { id: 'cpu-fps', label: 'CPU / FPS', icon: <CpuIcon /> },
-      { id: 'battery', label: 'Battery', icon: <BatteryIcon /> },
-      { id: 'network-stats', label: 'Network Stats', icon: <NetworkStatsIcon /> },
-      { id: 'thread-monitor', label: 'Threads', icon: <ThreadsIcon /> },
-      { id: 'gc-monitor', label: 'GC Monitor', icon: <GcIcon /> },
-      { id: 'heap-dump', label: 'Heap Dump', icon: <HeapIcon /> },
-      { id: 'method-trace', label: 'Method Trace', icon: <FlameIcon /> },
-    ],
-  },
-  {
-    id: 'debugging',
-    label: 'Debugging',
-    icon: <DebuggingIcon />,
-    items: [
-      { id: 'logs', label: 'Logs', icon: <LogsIcon /> },
-      { id: 'crashes', label: 'Crashes', icon: <CrashIcon /> },
-      { id: 'network', label: 'Network', icon: <NetworkIcon /> },
-      { id: 'websocket', label: 'WebSocket', icon: <WebSocketIcon /> },
-      { id: 'sdk', label: 'SDK', icon: <SdkIcon /> },
-    ],
-  },
-  {
-    id: 'app-state',
-    label: 'App State',
-    icon: <AppStateIcon />,
-    items: [
-      { id: 'activity-stack', label: 'Activity Stack', icon: <ActivityStackIcon /> },
-      { id: 'jobs', label: 'Jobs', icon: <JobsIcon /> },
-      { id: 'alarms', label: 'Alarms', icon: <AlarmsIcon /> },
-      { id: 'services', label: 'Services', icon: <ServicesIcon /> },
-      { id: 'file-inspector', label: 'File Inspector', icon: <FileInspectorIcon /> },
-    ],
-  },
-  {
-    id: 'tools',
-    label: 'Tools',
-    icon: <ToolsIcon />,
-    items: [
-      { id: 'install-app', label: 'Install App', icon: <InstallAppIcon /> },
-      { id: 'bundle-analyzer', label: 'Bundle Analyzer', icon: <BundleAnalyzerIcon /> },
-      { id: 'screen-mirror', label: 'Screen Mirror', icon: <ScreenMirrorIcon /> },
-      { id: 'intent-tester', label: 'Intent Tester', icon: <IntentIcon /> },
-      { id: 'screen-capture', label: 'Screen Capture', icon: <ScreenCaptureIcon /> },
-      { id: 'dev-options', label: 'Dev Options', icon: <DevOptionsIcon /> },
-      { id: 'app-info', label: 'App Info', icon: <AppInfoIcon /> },
-    ],
-  },
-];
+const SearchIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+  </svg>
+);
 
-export function Sidebar({ activeTab, onTabChange, sidebarExpanded, isGroupExpanded, toggleGroup }: SidebarProps) {
+export function Sidebar({
+  activeTab,
+  onTabChange,
+  sidebarExpanded,
+  isGroupExpanded,
+  toggleGroup,
+  onOpenCommandPalette,
+}: SidebarProps) {
   return (
     <aside
       className={`
-        bg-surface border-r border-border flex flex-col transition-all duration-200 ease-out
-        ${sidebarExpanded ? 'w-[200px]' : 'w-14'}
+        bg-surface border-r border-border-muted flex flex-col transition-[width] duration-200 ease-out flex-shrink-0
+        ${sidebarExpanded ? 'w-[216px]' : 'w-14'}
       `}
     >
-      {/* Dashboard */}
-      <div className="p-2 border-b border-border-muted">
-        <SidebarItem
-          id="dashboard"
-          label="Dashboard"
-          icon={<DashboardIcon />}
-          isActive={activeTab === 'dashboard'}
-          isExpanded={sidebarExpanded}
-          onClick={onTabChange}
-        />
+      <div className="p-2 space-y-px">
+        <button
+          onClick={onOpenCommandPalette}
+          title="Jump to a tool (⌘K)"
+          aria-label="Jump to a tool"
+          className={`w-full flex items-center gap-2.5 h-8 rounded-md border border-border-muted bg-background/60 text-text-muted hover:text-text-secondary hover:border-border transition-colors ${
+            sidebarExpanded ? 'px-2.5' : 'justify-center'
+          }`}
+        >
+          <SearchIcon />
+          {sidebarExpanded && (
+            <>
+              <span className="flex-1 text-left text-[13px]">Jump to…</span>
+              <span className="kbd">⌘K</span>
+            </>
+          )}
+        </button>
+        <div className="pt-1.5">
+          <SidebarItem
+            id={dashboardItem.id}
+            label={dashboardItem.label}
+            icon={dashboardItem.icon}
+            isActive={activeTab === dashboardItem.id}
+            isExpanded={sidebarExpanded}
+            isNested
+            onClick={onTabChange}
+          />
+        </div>
       </div>
 
-      {/* Navigation Groups */}
-      <nav className={`flex-1 py-2 px-2 ${sidebarExpanded ? 'overflow-y-auto hide-scrollbar' : 'overflow-visible'}`}>
-        <div className="space-y-1">
-          {navigationGroups.map((group) => (
-            <SidebarGroup
-              key={group.id}
-              id={group.id}
-              label={group.label}
-              icon={group.icon}
-              items={group.items}
-              isExpanded={isGroupExpanded(group.id)}
-              isSidebarExpanded={sidebarExpanded}
-              activeTab={activeTab}
-              onToggle={toggleGroup}
-              onTabChange={onTabChange}
-            />
-          ))}
-        </div>
+      <nav
+        aria-label="Tools"
+        className={`flex-1 min-h-0 px-2 pb-2 ${sidebarExpanded ? 'overflow-y-auto space-y-3' : 'overflow-visible space-y-1'}`}
+      >
+        {navigationGroups.map((group) => (
+          <SidebarGroup
+            key={group.id}
+            id={group.id}
+            label={group.label}
+            icon={group.icon}
+            items={group.items}
+            isExpanded={isGroupExpanded(group.id)}
+            isSidebarExpanded={sidebarExpanded}
+            activeTab={activeTab}
+            onToggle={toggleGroup}
+            onTabChange={onTabChange}
+          />
+        ))}
       </nav>
 
-      {/* Settings */}
       <div className="border-t border-border-muted p-2">
         <SidebarItem
-          id="settings"
-          label="Settings"
-          icon={<SettingsIcon />}
-          isActive={activeTab === 'settings'}
+          id={settingsItem.id}
+          label={settingsItem.label}
+          icon={settingsItem.icon}
+          isActive={activeTab === settingsItem.id}
           isExpanded={sidebarExpanded}
+          isNested
           onClick={onTabChange}
         />
       </div>

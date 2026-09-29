@@ -81,7 +81,7 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
         <div className="flex-1 overflow-auto space-y-4">
           {/* Drawing Section */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
+            <h3 className="text-xs font-medium text-text-muted mb-4">
               Drawing
             </h3>
             <div className="space-y-4">
@@ -116,7 +116,7 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
 
           {/* Input Section */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
+            <h3 className="text-xs font-medium text-text-muted mb-4">
               Input
             </h3>
             <div className="space-y-4">
@@ -142,7 +142,7 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
 
           {/* Animation Section */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
+            <h3 className="text-xs font-medium text-text-muted mb-4">
               Animation Scales
             </h3>
             <div className="space-y-4">
@@ -179,8 +179,8 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
               <div className="flex gap-2">
                 <button
                   onClick={async () => {
-                    await setAnimationScale(0, 'window');
-                    await setAnimationScale(0, 'transition');
+                    if (!(await setAnimationScale(0, 'window'))) return;
+                    if (!(await setAnimationScale(0, 'transition'))) return;
                     await setAnimationScale(0, 'animator');
                   }}
                   disabled={updating}
@@ -190,8 +190,8 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
                 </button>
                 <button
                   onClick={async () => {
-                    await setAnimationScale(1.0, 'window');
-                    await setAnimationScale(1.0, 'transition');
+                    if (!(await setAnimationScale(1.0, 'window'))) return;
+                    if (!(await setAnimationScale(1.0, 'transition'))) return;
                     await setAnimationScale(1.0, 'animator');
                   }}
                   disabled={updating}
@@ -205,7 +205,7 @@ export function DevOptionsPanel({ device }: DevOptionsPanelProps) {
 
           {/* Info */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-medium text-text-muted mb-3">
               Note
             </h3>
             <p className="text-sm text-text-secondary">
@@ -260,6 +260,9 @@ interface ScaleOptionProps {
 }
 
 function ScaleOption({ label, value, options, onChange, disabled }: ScaleOptionProps) {
+  // The device may report a scale that isn't one of the presets (e.g. 0.75x); include
+  // it so the select reflects the real value instead of silently showing the first option.
+  const allOptions = options.includes(value) ? options : [...options, value].sort((a, b) => a - b);
   return (
     <div className="flex items-center justify-between">
       <p className="text-sm font-medium text-text-primary">{label}</p>
@@ -269,7 +272,7 @@ function ScaleOption({ label, value, options, onChange, disabled }: ScaleOptionP
         disabled={disabled}
         className="px-3 py-1.5 text-sm bg-surface-hover border border-border-muted rounded-md text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50"
       >
-        {options.map((scale) => (
+        {allOptions.map((scale) => (
           <option key={scale} value={scale}>
             {scale === 0 ? 'Animation off' : `${scale}x`}
           </option>

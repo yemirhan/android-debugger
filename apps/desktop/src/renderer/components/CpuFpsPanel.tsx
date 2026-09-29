@@ -22,8 +22,11 @@ interface CpuFpsPanelProps {
 
 export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const { data: cpuData, current: currentCpu, clearData: clearCpu } = useCpu(device, packageName);
-  const { data: fpsData, current: currentFps, clearData: clearFps } = useFps(device, packageName);
+  const cpu = useCpu(device, packageName);
+  const fps = useFps(device, packageName);
+  const { data: cpuData, current: currentCpu, clearData: clearCpu } = cpu;
+  const { data: fpsData, current: currentFps, clearData: clearFps } = fps;
+  const isMonitoring = cpu.isMonitoring || fps.isMonitoring;
   const guide = tabGuides['cpu-fps'];
 
   // Format data for charts
@@ -43,9 +46,19 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
     clearFps();
   };
 
+  const toggleMonitoring = () => {
+    if (isMonitoring) {
+      cpu.stopMonitoring();
+      fps.stopMonitoring();
+    } else {
+      cpu.startMonitoring();
+      fps.startMonitoring();
+    }
+  };
+
   const chartTooltipStyle = {
-    backgroundColor: '#18181b',
-    border: '1px solid #3f3f46',
+    backgroundColor: '#20242a',
+    border: '1px solid #333842',
     borderRadius: '8px',
     fontSize: '12px',
     fontFamily: 'var(--font-mono)',
@@ -75,12 +88,25 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
             <InfoIcon />
           </button>
         </div>
-        <button
-          onClick={clearAll}
-          className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
-        >
-          Clear
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={clearAll}
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+          >
+            Clear
+          </button>
+          <button
+            onClick={toggleMonitoring}
+            disabled={!packageName}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press disabled:opacity-50 disabled:cursor-not-allowed ${
+              isMonitoring
+                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+            }`}
+          >
+            {isMonitoring ? 'Stop' : 'Start'}
+          </button>
+        </div>
       </div>
 
       {/* Current stats */}
@@ -111,21 +137,21 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
       <div className="flex-1 grid grid-cols-2 gap-4">
         {/* CPU Chart */}
         <div className="bg-surface rounded-lg p-4 border border-border-muted flex flex-col">
-          <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">CPU Usage</h3>
+          <h3 className="text-xs font-medium text-text-muted mb-3">CPU Usage</h3>
           {packageName ? (
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={cpuChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#262a31" vertical={false} />
                   <XAxis
                     dataKey="time"
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
                   />
                   <YAxis
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
@@ -135,13 +161,13 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
                   />
                   <Tooltip
                     contentStyle={chartTooltipStyle}
-                    labelStyle={{ color: '#a1a1aa' }}
+                    labelStyle={{ color: '#a4abb7' }}
                   />
                   <Line
                     type="monotone"
                     dataKey="cpu"
                     name="CPU %"
-                    stroke="#ef4444"
+                    stroke="#f26d6d"
                     strokeWidth={2}
                     dot={false}
                     activeDot={{ r: 4, strokeWidth: 0 }}
@@ -156,43 +182,43 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
               </div>
-              <p className="text-xs">Select a package</p>
+              <p className="text-xs">Choose an app in the toolbar</p>
             </div>
           )}
         </div>
 
         {/* FPS Chart */}
         <div className="bg-surface rounded-lg p-4 border border-border-muted flex flex-col">
-          <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">Frame Rate</h3>
+          <h3 className="text-xs font-medium text-text-muted mb-3">Frame Rate</h3>
           {packageName ? (
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={fpsChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#262a31" vertical={false} />
                   <XAxis
                     dataKey="time"
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
                   />
                   <YAxis
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
-                    domain={[0, 60]}
+                    domain={[0, (dataMax: number) => Math.max(60, Math.ceil(dataMax))]}
                     width={30}
                   />
                   <Tooltip
                     contentStyle={chartTooltipStyle}
-                    labelStyle={{ color: '#a1a1aa' }}
+                    labelStyle={{ color: '#a4abb7' }}
                   />
                   <Line
                     type="monotone"
                     dataKey="fps"
                     name="FPS"
-                    stroke="#06b6d4"
+                    stroke="#3cc8d8"
                     strokeWidth={2}
                     dot={false}
                     activeDot={{ r: 4, strokeWidth: 0 }}
@@ -207,7 +233,7 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </div>
-              <p className="text-xs">Select a package</p>
+              <p className="text-xs">Choose an app in the toolbar</p>
             </div>
           )}
         </div>
@@ -216,7 +242,7 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
       {/* Frame timing details */}
       {currentFps && (
         <div className="bg-surface rounded-lg p-4 border border-border-muted">
-          <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">Frame Timing Analysis</h3>
+          <h3 className="text-xs font-medium text-text-muted mb-3">Frame Timing Analysis</h3>
           <div className="grid grid-cols-5 gap-4">
             <div>
               <p className="text-xs text-text-muted mb-0.5">Total Frames</p>
@@ -253,12 +279,12 @@ interface StatCardProps {
 
 function StatCard({ label, value, color }: StatCardProps) {
   const colors = {
-    violet: 'border-violet-500/20 bg-violet-500/5',
-    blue: 'border-blue-500/20 bg-blue-500/5',
-    green: 'border-green-500/20 bg-green-500/5',
-    amber: 'border-amber-500/20 bg-amber-500/5',
-    red: 'border-red-500/20 bg-red-500/5',
-    cyan: 'border-cyan-500/20 bg-cyan-500/5',
+    violet: 'border-border-muted bg-surface',
+    blue: 'border-border-muted bg-surface',
+    green: 'border-border-muted bg-surface',
+    amber: 'border-border-muted bg-surface',
+    red: 'border-border-muted bg-surface',
+    cyan: 'border-border-muted bg-surface',
   };
 
   const textColors = {

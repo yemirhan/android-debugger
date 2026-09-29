@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MEMORY_POLL_INTERVAL, CPU_POLL_INTERVAL, FPS_POLL_INTERVAL } from '@android-debugger/shared';
-import type { UpdateInfo, UpdateProgress, UpdateSettings } from '@android-debugger/shared';
+import type { UpdateSettings } from '@android-debugger/shared';
+import { useUpdateContext } from '../contexts/UpdateContext';
+import { useAppSettings, updateAppSettings, SETTING_LIMITS, type AppSettings } from '../lib/app-settings';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
 import { tabGuides } from '../data/tabGuides';
@@ -21,8 +22,6 @@ interface JavaInfo {
   version: string;
 }
 
-type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
-
 export function SettingsPanel() {
   const [showInfo, setShowInfo] = useState(false);
   const [adbInfo, setAdbInfo] = useState<AdbInfo | null>(null);
@@ -33,94 +32,47 @@ export function SettingsPanel() {
     autoCheckOnStartup: true,
     autoDownload: false,
   });
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
-  const [updateError, setUpdateError] = useState<string | null>(null);
-  const [settings, setSettings] = useState({
-    memoryInterval: MEMORY_POLL_INTERVAL,
-    cpuInterval: CPU_POLL_INTERVAL,
-    fpsInterval: FPS_POLL_INTERVAL,
-    memoryWarningThreshold: 300,
-    memoryCriticalThreshold: 500,
-    maxLogEntries: 10000,
-    autoStartLogcat: true,
-    autoStartMonitoring: true,
-  });
+  // Update state lives in UpdateContext so this panel reflects checks/downloads
+  // that happened before it mounted (e.g. arriving via "View in Settings").
+  const {
+    updateStatus,
+    updateInfo,
+    updateProgress,
+    updateError,
+    checkForUpdates,
+    downloadUpdate,
+    installUpdate,
+  } = useUpdateContext();
+  // Persisted to localStorage and read by the monitor hooks and LogsContext.
+  const settings = useAppSettings();
 
-  const updateSetting = (key: keyof typeof settings, value: number | boolean) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+  const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    updateAppSettings({ [key]: value } as Partial<AppSettings>);
   };
 
   useEffect(() => {
-    window.electronAPI.getAdbInfo().then(setAdbInfo);
-    window.electronAPI.getBundletoolInfo().then(setBundletoolInfo);
-    window.electronAPI.getJavaInfo().then(setJavaInfo);
-    window.electronAPI.getAppVersion().then(setAppVersion);
-    window.electronAPI.getUpdateSettings().then(setUpdateSettings);
+    const logError = (label: string) => (error: unknown) => console.error(`Failed to load ${label}:`, error);
+    window.electronAPI.getAdbInfo().then(setAdbInfo).catch(logError('ADB info'));
+    window.electronAPI.getBundletoolInfo().then(setBundletoolInfo).catch(logError('bundletool info'));
+    window.electronAPI.getJavaInfo().then(setJavaInfo).catch(logError('Java info'));
+    window.electronAPI.getAppVersion().then(setAppVersion).catch(logError('app version'));
+    window.electronAPI.getUpdateSettings().then(setUpdateSettings).catch(logError('update settings'));
   }, []);
 
-  // Set up update event listeners
-  useEffect(() => {
-    const unsubChecking = window.electronAPI.onUpdateChecking(() => {
-      setUpdateStatus('checking');
-      setUpdateError(null);
-    });
-
-    const unsubAvailable = window.electronAPI.onUpdateAvailable((info) => {
-      setUpdateStatus('available');
-      setUpdateInfo(info);
-    });
-
-    const unsubNotAvailable = window.electronAPI.onUpdateNotAvailable(() => {
-      setUpdateStatus('idle');
-      setUpdateInfo(null);
-    });
-
-    const unsubProgress = window.electronAPI.onUpdateProgress((progress) => {
-      setUpdateStatus('downloading');
-      setUpdateProgress(progress);
-    });
-
-    const unsubDownloaded = window.electronAPI.onUpdateDownloaded((info) => {
-      setUpdateStatus('downloaded');
-      setUpdateInfo(info);
-      setUpdateProgress(null);
-    });
-
-    const unsubError = window.electronAPI.onUpdateError((error) => {
-      setUpdateStatus('error');
-      setUpdateError(error);
-    });
-
-    return () => {
-      unsubChecking();
-      unsubAvailable();
-      unsubNotAvailable();
-      unsubProgress();
-      unsubDownloaded();
-      unsubError();
-    };
-  }, []);
-
-  const handleCheckForUpdates = useCallback(async () => {
-    setUpdateStatus('checking');
-    setUpdateError(null);
-    await window.electronAPI.checkForUpdates();
-  }, []);
-
-  const handleDownloadUpdate = useCallback(async () => {
-    await window.electronAPI.downloadUpdate();
-  }, []);
-
-  const handleInstallUpdate = useCallback(async () => {
-    await window.electronAPI.installUpdate();
-  }, []);
+  const handleCheckForUpdates = checkForUpdates;
+  const handleDownloadUpdate = downloadUpdate;
+  const handleInstallUpdate = installUpdate;
 
   const handleUpdateSettingsChange = useCallback(async (key: keyof UpdateSettings, value: boolean) => {
+    const previous = updateSettings;
     const newSettings = { ...updateSettings, [key]: value };
     setUpdateSettings(newSettings);
-    await window.electronAPI.setUpdateSettings(newSettings);
+    try {
+      await window.electronAPI.setUpdateSettings(newSettings);
+    } catch (error) {
+      console.error('Failed to save update settings:', error);
+      setUpdateSettings(previous);
+    }
   }, [updateSettings]);
 
   const guide = tabGuides['settings'];
@@ -149,7 +101,7 @@ export function SettingsPanel() {
 
       {/* Monitoring Intervals */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Monitoring Intervals</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-4">Monitoring Intervals</h3>
         <div className="space-y-4">
           <SettingRow
             label="Memory polling interval"
@@ -158,9 +110,9 @@ export function SettingsPanel() {
             <NumberInput
               value={settings.memoryInterval}
               onChange={(v) => updateSetting('memoryInterval', v)}
-              min={100}
-              max={10000}
-              step={100}
+              min={SETTING_LIMITS.memoryInterval.min}
+              max={SETTING_LIMITS.memoryInterval.max}
+              step={250}
               suffix="ms"
             />
           </SettingRow>
@@ -172,9 +124,9 @@ export function SettingsPanel() {
             <NumberInput
               value={settings.cpuInterval}
               onChange={(v) => updateSetting('cpuInterval', v)}
-              min={100}
-              max={10000}
-              step={100}
+              min={SETTING_LIMITS.cpuInterval.min}
+              max={SETTING_LIMITS.cpuInterval.max}
+              step={250}
               suffix="ms"
             />
           </SettingRow>
@@ -186,9 +138,9 @@ export function SettingsPanel() {
             <NumberInput
               value={settings.fpsInterval}
               onChange={(v) => updateSetting('fpsInterval', v)}
-              min={100}
-              max={10000}
-              step={100}
+              min={SETTING_LIMITS.fpsInterval.min}
+              max={SETTING_LIMITS.fpsInterval.max}
+              step={250}
               suffix="ms"
             />
           </SettingRow>
@@ -197,16 +149,17 @@ export function SettingsPanel() {
 
       {/* Memory Thresholds */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Memory Thresholds</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-4">Memory Thresholds</h3>
         <div className="space-y-4">
           <SettingRow
             label="Warning threshold"
-            description="Show warning when memory exceeds this value"
+            description="Memory panel shows a warning when total PSS exceeds this value"
           >
             <NumberInput
               value={settings.memoryWarningThreshold}
               onChange={(v) => updateSetting('memoryWarningThreshold', v)}
-              min={0}
+              min={SETTING_LIMITS.memoryWarningThreshold.min}
+              max={SETTING_LIMITS.memoryWarningThreshold.max}
               step={50}
               suffix="MB"
             />
@@ -214,22 +167,28 @@ export function SettingsPanel() {
 
           <SettingRow
             label="Critical threshold"
-            description="Show critical alert when memory exceeds this value"
+            description="Memory panel shows a critical alert when total PSS exceeds this value"
           >
             <NumberInput
               value={settings.memoryCriticalThreshold}
               onChange={(v) => updateSetting('memoryCriticalThreshold', v)}
-              min={0}
+              min={SETTING_LIMITS.memoryCriticalThreshold.min}
+              max={SETTING_LIMITS.memoryCriticalThreshold.max}
               step={50}
               suffix="MB"
             />
           </SettingRow>
+          {settings.memoryWarningThreshold >= settings.memoryCriticalThreshold && (
+            <p className="text-xs text-amber-400">
+              The warning threshold is not below the critical threshold, so only critical alerts will show.
+            </p>
+          )}
         </div>
       </section>
 
       {/* Log Settings */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Log Settings</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-4">Log Settings</h3>
         <div className="space-y-4">
           <SettingRow
             label="Maximum log entries"
@@ -238,8 +197,8 @@ export function SettingsPanel() {
             <NumberInput
               value={settings.maxLogEntries}
               onChange={(v) => updateSetting('maxLogEntries', v)}
-              min={100}
-              max={100000}
+              min={SETTING_LIMITS.maxLogEntries.min}
+              max={SETTING_LIMITS.maxLogEntries.max}
               step={1000}
             />
           </SettingRow>
@@ -248,11 +207,11 @@ export function SettingsPanel() {
 
       {/* Behavior */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Behavior</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-4">Behavior</h3>
         <div className="space-y-4">
           <SettingRow
             label="Auto-start logcat"
-            description="Start streaming logs when a device is selected"
+            description="Start streaming the Logs view when a device is selected"
           >
             <Toggle
               value={settings.autoStartLogcat}
@@ -262,7 +221,7 @@ export function SettingsPanel() {
 
           <SettingRow
             label="Auto-start monitoring"
-            description="Start memory/CPU monitoring when a package is selected"
+            description="Start memory, CPU, FPS, battery, network and thread monitors when their view opens"
           >
             <Toggle
               value={settings.autoStartMonitoring}
@@ -274,7 +233,7 @@ export function SettingsPanel() {
 
       {/* Updates */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Updates</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-4">Updates</h3>
         <div className="space-y-4">
           <SettingRow
             label="Check for updates on startup"
@@ -304,7 +263,7 @@ export function SettingsPanel() {
                   {updateStatus === 'idle' && 'No updates available'}
                   {updateStatus === 'checking' && 'Checking for updates...'}
                   {updateStatus === 'available' && `Update available: v${updateInfo?.version}`}
-                  {updateStatus === 'downloading' && `Downloading: ${updateProgress?.percent.toFixed(0)}%`}
+                  {updateStatus === 'downloading' && `Downloading: ${(updateProgress?.percent ?? 0).toFixed(0)}%`}
                   {updateStatus === 'downloaded' && `Ready to install: v${updateInfo?.version}`}
                   {updateStatus === 'error' && 'Update check failed'}
                 </p>
@@ -369,7 +328,7 @@ export function SettingsPanel() {
 
       {/* About */}
       <section className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">About</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-4">About</h3>
         <div className="space-y-2">
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">Version</span>
@@ -377,11 +336,11 @@ export function SettingsPanel() {
           </div>
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">Electron</span>
-            <span className="text-sm font-mono text-text-primary">34.0.1</span>
+            <span className="text-sm font-mono text-text-primary">{navigator.userAgent.match(/Electron\/([\d.]+)/)?.[1] ?? 'Unknown'}</span>
           </div>
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">React</span>
-            <span className="text-sm font-mono text-text-primary">19.0.0</span>
+            <span className="text-sm font-mono text-text-primary">{React.version}</span>
           </div>
           <div className="flex justify-between items-center py-1">
             <span className="text-sm text-text-secondary">ADB</span>
@@ -453,12 +412,34 @@ interface NumberInputProps {
 }
 
 function NumberInput({ value, onChange, min, max, step, suffix }: NumberInputProps) {
+  // Edit a local draft and commit on blur/Enter, so intermediate keystrokes
+  // (e.g. "5" on the way to "5000") are not clamped mid-typing.
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+
+  const commit = () => {
+    const parsed = parseInt(draft, 10);
+    if (Number.isNaN(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    let next = parsed;
+    if (min !== undefined) next = Math.max(min, next);
+    if (max !== undefined) next = Math.min(max, next);
+    setDraft(String(next));
+    if (next !== value) onChange(next);
+  };
+
   return (
     <div className="flex items-center gap-2">
       <input
         type="number"
-        value={value}
-        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+        }}
         min={min}
         max={max}
         step={step}

@@ -25,6 +25,12 @@ function formatDuration(ms: number): string {
 }
 
 export function MethodTracePanel({ device, packageName }: MethodTracePanelProps) {
+  // Remount on device/package change so traces and analysis from the previous
+  // target are discarded (the hook cancels any in-flight trace on unmount).
+  return <MethodTraceContent key={`${device.id}:${packageName}`} device={device} packageName={packageName} />;
+}
+
+function MethodTraceContent({ device, packageName }: MethodTracePanelProps) {
   const {
     traces,
     selectedTrace,
@@ -43,6 +49,18 @@ export function MethodTracePanel({ device, packageName }: MethodTracePanelProps)
   const [sortBy, setSortBy] = useState<'methodName' | 'inclusiveTime' | 'exclusiveTime' | 'callCount'>('exclusiveTime');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [searchTerm, setSearchTerm] = useState('');
+  // Prevent overlapping start/stop requests (e.g. starting a new trace while the
+  // previous one is still being pulled from the device).
+  const [pending, setPending] = useState(false);
+  const runExclusive = async (action: () => Promise<void>) => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await action();
+    } finally {
+      setPending(false);
+    }
+  };
 
   const sortedMethods = useMemo(() => {
     if (!analysis?.methods) return [];
@@ -97,7 +115,7 @@ export function MethodTracePanel({ device, packageName }: MethodTracePanelProps)
           <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
             <FlameIcon />
           </div>
-          <p className="text-sm">Select a package to record method traces</p>
+          <p className="text-sm">Choose an app in the toolbar to record method traces</p>
         </div>
       </div>
     );
@@ -129,17 +147,19 @@ export function MethodTracePanel({ device, packageName }: MethodTracePanelProps)
           </button>
           {isRecording ? (
             <button
-              onClick={stopRecording}
-              className="px-3 py-1.5 text-xs font-medium bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-150 btn-press"
+              onClick={() => void runExclusive(stopRecording)}
+              disabled={pending}
+              className="px-3 py-1.5 text-xs font-medium bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-150 btn-press disabled:opacity-50"
             >
               Stop Recording
             </button>
           ) : (
             <button
-              onClick={startRecording}
-              className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-md hover:bg-accent/90 transition-all duration-150 btn-press"
+              onClick={() => void runExclusive(startRecording)}
+              disabled={pending || isAnalyzing}
+              className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-md hover:bg-accent/90 transition-all duration-150 btn-press disabled:opacity-50"
             >
-              Start Recording
+              {pending ? 'Stopping...' : 'Start Recording'}
             </button>
           )}
         </div>
@@ -185,19 +205,19 @@ export function MethodTracePanel({ device, packageName }: MethodTracePanelProps)
         <div className="flex-1 flex flex-col gap-4 min-h-0">
           {/* Stats */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-lg p-3 border border-emerald-500/20 bg-emerald-500/5">
+            <div className="rounded-lg p-3 border border-border-muted bg-surface">
               <p className="text-xs text-text-muted">Total Methods</p>
               <p className="text-xl font-semibold font-mono text-emerald-400">
                 {analysis.methods.length.toLocaleString()}
               </p>
             </div>
-            <div className="rounded-lg p-3 border border-blue-500/20 bg-blue-500/5">
+            <div className="rounded-lg p-3 border border-border-muted bg-surface">
               <p className="text-xs text-text-muted">Total Time</p>
               <p className="text-xl font-semibold font-mono text-blue-400">
                 {formatTime(analysis.totalTime)}
               </p>
             </div>
-            <div className="rounded-lg p-3 border border-violet-500/20 bg-violet-500/5">
+            <div className="rounded-lg p-3 border border-border-muted bg-surface">
               <p className="text-xs text-text-muted">Trace Duration</p>
               <p className="text-xl font-semibold font-mono text-violet-400">
                 {selectedTrace ? formatDuration(selectedTrace.duration) : '-'}
@@ -256,25 +276,25 @@ export function MethodTracePanel({ device, packageName }: MethodTracePanelProps)
                 <thead className="sticky top-0 bg-surface border-b border-border-muted">
                   <tr>
                     <th
-                      className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                      className="text-left px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                       onClick={() => handleSort('methodName')}
                     >
                       Method {sortBy === 'methodName' && (sortDir === 'asc' ? '↑' : '↓')}
                     </th>
                     <th
-                      className="text-right px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                      className="text-right px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                       onClick={() => handleSort('inclusiveTime')}
                     >
                       Inclusive {sortBy === 'inclusiveTime' && (sortDir === 'asc' ? '↑' : '↓')}
                     </th>
                     <th
-                      className="text-right px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                      className="text-right px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                       onClick={() => handleSort('exclusiveTime')}
                     >
                       Exclusive {sortBy === 'exclusiveTime' && (sortDir === 'asc' ? '↑' : '↓')}
                     </th>
                     <th
-                      className="text-right px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                      className="text-right px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                       onClick={() => handleSort('callCount')}
                     >
                       Calls {sortBy === 'callCount' && (sortDir === 'asc' ? '↑' : '↓')}

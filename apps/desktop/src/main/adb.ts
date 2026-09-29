@@ -25,14 +25,9 @@ import type {
   CrashEntry,
   ServiceInfo,
   AppNetworkStats,
-  NetworkStats,
   ActivityStackInfo,
-  ActivityInfo,
-  TaskStack,
   JobSchedulerInfo,
-  ScheduledJob,
   AlarmMonitorInfo,
-  ScheduledAlarm,
   InstallOptions,
   InstallResult,
   DeviceSpec,
@@ -51,6 +46,21 @@ import type {
 import { v4 as uuidv4 } from 'uuid';
 import { LogcatMessageParser } from './logcat-parser';
 import { parseHprof, parseMethodTrace } from './profiler-parsers';
+import {
+  shellQuote,
+  parseTopCpuUsage,
+  parseFpsInfo,
+  parseBatteryInfo,
+  parseServicesInfo,
+  parseActivityStack,
+  parseScheduledJobs,
+  parseScheduledAlarms,
+  parsePackageUid,
+  parseNetworkStats,
+  parseLsEntries,
+  parseSharedPrefsXml,
+  parseAppMetadata,
+} from './device-parsers';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,6 +114,14 @@ function assertPackageName(packageName: string): void {
   }
 }
 
+// A hung adb command (offline device, wedged adb server) would otherwise
+// block its caller forever, e.g. freezing a monitor's polling loop. execFile
+// kills the child when the timeout elapses and rejects the promise.
+const DEFAULT_ADB_TIMEOUT_MS = 30_000;
+// For transfers and installs whose duration scales with file size and link
+// speed (e.g. Wi-Fi adb); these must never be cut short. 0 disables the timeout.
+const NO_TIMEOUT = 0;
+
 async function runAdb(
   deviceId: string | null,
   args: readonly string[],
@@ -114,7 +132,7 @@ async function runAdb(
     assertDeviceId(deviceId);
     adbArgs.unshift('-s', deviceId);
   }
-  return runCommand('adb', adbArgs, options);
+  return runCommand('adb', adbArgs, { timeout: DEFAULT_ADB_TIMEOUT_MS, ...options });
 }
 
 async function runAdbBuffer(
@@ -123,7 +141,7 @@ async function runAdbBuffer(
   options: ExecFileOptions = {}
 ): Promise<{ stdout: Buffer; stderr: Buffer }> {
   assertDeviceId(deviceId);
-  return runCommandBuffer('adb', ['-s', deviceId, ...args], options);
+  return runCommandBuffer('adb', ['-s', deviceId, ...args], { timeout: DEFAULT_ADB_TIMEOUT_MS, ...options });
 }
 
 type LogCallback = (entry: LogEntry) => void;
@@ -433,11 +451,31 @@ export class AdbService extends EventEmitter {
     }
   }
 
+  /**
+   * Get the Linux UID of an installed package. Unlike the PID, it survives app
+   * restarts, so it's the better logcat filter.
+   */
+  async getUid(deviceId: string, packageName: string): Promise<number | null> {
+    try {
+      assertPackageName(packageName);
+      const { stdout } = await runAdb(deviceId, ['shell', 'cmd', 'package', 'list', 'packages', '-U', packageName]);
+      for (const line of stdout.split(/\r?\n/)) {
+        const match = line.trim().match(/^package:(\S+)\s+uid:(\d+)/);
+        if (match && match[1] === packageName) return parseInt(match[2], 10);
+      }
+      return null;
+    } catch (error) {
+      console.log(`[AdbService] Could not get UID for ${packageName}:`, error);
+      return null;
+    }
+  }
+
   startLogcat(
     deviceId: string,
     callback: LogCallback,
     filters?: string[],
-    pid?: number
+    pid?: number,
+    uid?: number
   ): void {
     this.stopLogcat();
 
@@ -449,22 +487,26 @@ export class AdbService extends EventEmitter {
     const defaultFilters = ['*:S', 'ReactNative:V', 'ReactNativeJS:V'];
     const logFilters = filters || defaultFilters;
 
-    // Build args - use --pid if provided, otherwise use filters
+    // Build args - prefer --uid (stable across app restarts), then --pid, otherwise use filters
     const args = ['-s', deviceId, 'logcat', '-v', 'time'];
-    if (pid) {
+    if (uid) {
+      args.push(`--uid=${uid}`);
+    } else if (pid) {
       args.push('--pid', pid.toString());
     } else {
       args.push(...logFilters);
     }
     const process = spawn('adb', args);
     this.logcatProcess = process;
+    // Decode as a stream so multi-byte UTF-8 characters split across chunks survive.
+    process.stdout?.setEncoding('utf8');
 
     let buffer = '';
 
-    process.stdout?.on('data', (data: Buffer) => {
+    process.stdout?.on('data', (data: string) => {
       if (this.logcatProcess !== process) return;
-      buffer += data.toString();
-      const lines = buffer.split('\n');
+      buffer += data;
+      const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
 
       for (const line of lines) {
@@ -545,12 +587,14 @@ export class AdbService extends EventEmitter {
 
     const process = spawn('adb', args);
     this.sdkLogcatProcess = process;
+    // Decode as a stream so multi-byte UTF-8 characters split across chunks survive.
+    process.stdout?.setEncoding('utf8');
     let buffer = '';
 
-    process.stdout?.on('data', (data: Buffer) => {
+    process.stdout?.on('data', (data: string) => {
       if (this.sdkLogcatProcess !== process) return;
-      buffer += data.toString();
-      const lines = buffer.split('\n');
+      buffer += data;
+      const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
       for (const line of lines) {
         const sdkMessage = this.logcatParser.parseLogLine(line);
@@ -597,29 +641,8 @@ export class AdbService extends EventEmitter {
     try {
       assertPackageName(packageName);
       const { stdout } = await runAdb(deviceId, ['shell', 'top', '-n', '1', '-b']);
-
-      const lines = stdout.trim().split('\n').filter((line) => line.includes(packageName));
-      if (lines.length === 0) return null;
-
-      // Parse CPU usage - format varies by Android version
-      // Typical format: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ ARGS
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length >= 9) {
-          // Find the CPU percentage column (usually index 8 or 9)
-          for (let i = 7; i < parts.length; i++) {
-            const value = parseFloat(parts[i]);
-            if (!isNaN(value) && value >= 0 && value <= 100) {
-              return {
-                timestamp: Date.now(),
-                usage: value,
-              };
-            }
-          }
-        }
-      }
-
-      return null;
+      const usage = parseTopCpuUsage(stdout, packageName);
+      return usage === null ? null : { timestamp: Date.now(), usage };
     } catch (error) {
       console.error('Error getting CPU info:', error);
       return null;
@@ -672,93 +695,9 @@ export class AdbService extends EventEmitter {
 
       const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'gfxinfo', packageName, 'framestats']);
 
-      return this.parseFpsInfo(stdout);
+      return parseFpsInfo(stdout);
     } catch (error) {
       console.error('Error getting FPS info:', error);
-      return null;
-    }
-  }
-
-  private parseFpsInfo(output: string): FpsInfo | null {
-    try {
-      const lines = output.split('\n');
-      let totalFrames = 0;
-      let jankyFrames = 0;
-      const frameTimes: number[] = [];
-      const intendedVsyncTimes: number[] = [];
-      let frameColumns: string[] | null = null;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Parse total frames
-        const totalMatch = trimmed.match(/Total frames rendered:\s*(\d+)/);
-        if (totalMatch) {
-          totalFrames = parseInt(totalMatch[1], 10);
-        }
-
-        // Parse janky frames
-        const jankyMatch = trimmed.match(/Janky frames:\s*(\d+)/);
-        if (jankyMatch) {
-          jankyFrames = parseInt(jankyMatch[1], 10);
-        }
-
-        if (trimmed.startsWith('Flags,IntendedVsync,')) {
-          frameColumns = trimmed.split(',');
-          continue;
-        }
-
-        // Parse frame times from the PROFILEDATA CSV. Column positions vary
-        // between Android releases, so resolve them by header name.
-        if (trimmed.match(/^\d+,\d+,/)) {
-          const parts = trimmed.split(',');
-          const columnIndex = (name: string, fallback: number): number => {
-            const index = frameColumns?.indexOf(name) ?? -1;
-            return index >= 0 ? index : fallback;
-          };
-          const flags = Number(parts[columnIndex('Flags', 0)]);
-          const intendedIndex = columnIndex('IntendedVsync', 1);
-          const completedIndex = columnIndex('FrameCompleted', 13);
-          const intendedVsync = Number(parts[intendedIndex]);
-          const frameCompleted = Number(parts[completedIndex]);
-
-          // Non-zero flags indicate an invalid/incomplete frame sample.
-          if (flags === 0 && Number.isFinite(intendedVsync) && Number.isFinite(frameCompleted)) {
-            const frameTime = (frameCompleted - intendedVsync) / 1_000_000;
-            if (!isNaN(frameTime) && frameTime > 0 && frameTime < 1000) {
-              frameTimes.push(frameTime);
-              intendedVsyncTimes.push(intendedVsync);
-            }
-          }
-        }
-      }
-
-      // Calculate percentiles
-      frameTimes.sort((a, b) => a - b);
-      const getPercentile = (arr: number[], p: number) => {
-        if (arr.length === 0) return 0;
-        const index = Math.ceil((p / 100) * arr.length) - 1;
-        return arr[Math.max(0, index)] || 0;
-      };
-
-      const fps = intendedVsyncTimes.length > 1
-        ? ((intendedVsyncTimes.length - 1) * 1_000_000_000) /
-          (intendedVsyncTimes[intendedVsyncTimes.length - 1] - intendedVsyncTimes[0])
-        : frameTimes.length === 1
-          ? 1000 / frameTimes[0]
-          : 0;
-
-      return {
-        timestamp: Date.now(),
-        fps: Number.isFinite(fps) ? Math.max(0, Math.round(fps)) : 0,
-        jankyFrames,
-        totalFrames,
-        percentile90: getPercentile(frameTimes, 90),
-        percentile95: getPercentile(frameTimes, 95),
-        percentile99: getPercentile(frameTimes, 99),
-      };
-    } catch (error) {
-      console.error('Error parsing FPS info:', error);
       return null;
     }
   }
@@ -863,14 +802,13 @@ export class AdbService extends EventEmitter {
     try {
       assertPackageName(packageName);
       const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'package', packageName]);
-      const metadata = this.parseAppMetadata(packageName, stdout);
-      if (!metadata) return null;
+      const metadata = parseAppMetadata(packageName, stdout);
 
       const codePath = stdout.match(/^\s*codePath=(.+)$/m)?.[1]?.trim();
       const parseDu = (value: string) => (parseInt(value.trim().split(/\s+/)[0], 10) || 0) * 1024;
       const [apk, data, cache] = await Promise.all([
         codePath
-          ? runAdb(deviceId, ['shell', 'du', '-sk', codePath]).then((result) => parseDu(result.stdout)).catch(() => 0)
+          ? runAdb(deviceId, ['shell', 'du', '-sk', shellQuote(codePath)]).then((result) => parseDu(result.stdout)).catch(() => 0)
           : Promise.resolve(0),
         runAdb(deviceId, ['shell', 'run-as', packageName, 'du', '-sk', `/data/data/${packageName}`])
           .then((result) => parseDu(result.stdout)).catch(() => 0),
@@ -880,102 +818,6 @@ export class AdbService extends EventEmitter {
       return { ...metadata, apkSize: apk, dataSize: data, cacheSize: cache };
     } catch (error) {
       console.error('Error getting app metadata:', error);
-      return null;
-    }
-  }
-
-  private parseAppMetadata(packageName: string, output: string): AppMetadata | null {
-    try {
-      const metadata: Partial<AppMetadata> = {
-        packageName,
-        permissions: [],
-        isDebuggable: false,
-        isSystem: false,
-      };
-
-      const lines = output.split('\n');
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Version info
-        const versionNameMatch = trimmed.match(/versionName=([^\s]+)/);
-        if (versionNameMatch) {
-          metadata.versionName = versionNameMatch[1];
-        }
-
-        const versionCodeMatch = trimmed.match(/versionCode=(\d+)/);
-        if (versionCodeMatch) {
-          metadata.versionCode = parseInt(versionCodeMatch[1], 10);
-        }
-
-        // SDK versions
-        const targetSdkMatch = trimmed.match(/targetSdk=(\d+)/);
-        if (targetSdkMatch) {
-          metadata.targetSdk = parseInt(targetSdkMatch[1], 10);
-        }
-
-        const minSdkMatch = trimmed.match(/minSdk=(\d+)/);
-        if (minSdkMatch) {
-          metadata.minSdk = parseInt(minSdkMatch[1], 10);
-        }
-
-        // Install times
-        const firstInstallMatch = trimmed.match(/firstInstallTime=(.+)$/);
-        if (firstInstallMatch) {
-          metadata.firstInstallTime = firstInstallMatch[1];
-        }
-
-        const lastUpdateMatch = trimmed.match(/lastUpdateTime=(.+)$/);
-        if (lastUpdateMatch) {
-          metadata.lastUpdateTime = lastUpdateMatch[1];
-        }
-
-        // Flags
-        if (trimmed.includes('DEBUGGABLE')) {
-          metadata.isDebuggable = true;
-        }
-        if (trimmed.includes('SYSTEM')) {
-          metadata.isSystem = true;
-        }
-
-        // Permissions
-        const permMatch = trimmed.match(/android\.permission\.([A-Z_]+)/);
-        if (permMatch && metadata.permissions) {
-          const perm = `android.permission.${permMatch[1]}`;
-          if (!metadata.permissions.includes(perm)) {
-            metadata.permissions.push(perm);
-          }
-        }
-      }
-
-      // Get app sizes from stat command
-      try {
-        // This is a simplified version - actual implementation would need to sum directory sizes
-        metadata.apkSize = 0;
-        metadata.dataSize = 0;
-        metadata.cacheSize = 0;
-      } catch {
-        // Ignore size errors
-      }
-
-      return {
-        packageName: metadata.packageName!,
-        versionName: metadata.versionName || 'Unknown',
-        versionCode: metadata.versionCode || 0,
-        targetSdk: metadata.targetSdk || 0,
-        minSdk: metadata.minSdk || 0,
-        firstInstallTime: metadata.firstInstallTime || 'Unknown',
-        lastUpdateTime: metadata.lastUpdateTime || 'Unknown',
-        apkSize: metadata.apkSize || 0,
-        dataSize: metadata.dataSize || 0,
-        cacheSize: metadata.cacheSize || 0,
-        permissions: metadata.permissions || [],
-        isDebuggable: metadata.isDebuggable || false,
-        isSystem: metadata.isSystem || false,
-      };
-    } catch (error) {
-      console.error('Error parsing app metadata:', error);
       return null;
     }
   }
@@ -1117,7 +959,7 @@ export class AdbService extends EventEmitter {
 
     try {
       if (deviceId && localPath) {
-        await runAdb(deviceId, ['pull', remotePath, localPath], { timeout: 120000 });
+        await runAdb(deviceId, ['pull', remotePath, localPath], { timeout: NO_TIMEOUT });
         await runAdb(deviceId, ['shell', 'rm', remotePath]).catch(() => undefined);
         result = { success: true, path: localPath };
       }
@@ -1158,12 +1000,19 @@ export class AdbService extends EventEmitter {
           runAdb(deviceId, ['shell', 'settings', 'get', 'system', 'pointer_location']).catch(() => ({ stdout: '0' } as CommandResult)),
         ]);
 
+      // 0 is a valid scale (animations off); only unset ("null") means default 1x.
+      const scale = (value: string) => {
+        const parsed = parseFloat(value.trim());
+        return Number.isFinite(parsed) ? parsed : 1.0;
+      };
+      const overdraw = gpuOverdraw.stdout.trim();
       return {
         layoutBounds: layoutBounds.stdout.trim() === 'true',
-        gpuOverdraw: (gpuOverdraw.stdout.trim() || 'off') as DeveloperOptions['gpuOverdraw'],
-        windowAnimationScale: parseFloat(windowAnim.stdout.trim()) || 1.0,
-        transitionAnimationScale: parseFloat(transitionAnim.stdout.trim()) || 1.0,
-        animatorDurationScale: parseFloat(animatorAnim.stdout.trim()) || 1.0,
+        // setGpuOverdraw('off') writes "false"; anything unrecognised is off.
+        gpuOverdraw: overdraw === 'show' || overdraw === 'show_deuteranomaly' ? overdraw : 'off',
+        windowAnimationScale: scale(windowAnim.stdout),
+        transitionAnimationScale: scale(transitionAnim.stdout),
+        animatorDurationScale: scale(animatorAnim.stdout),
         showTouches: showTouches.stdout.trim() === '1',
         pointerLocation: pointerLocation.stdout.trim() === '1',
       };
@@ -1187,7 +1036,7 @@ export class AdbService extends EventEmitter {
 
   async setGpuOverdraw(deviceId: string, mode: DeveloperOptions['gpuOverdraw']): Promise<boolean> {
     try {
-      const value = mode === 'off' ? 'false' : mode;
+      const value = mode === 'show' || mode === 'show_deuteranomaly' ? mode : 'false';
       await runAdb(deviceId, ['shell', 'setprop', 'debug.hwui.overdraw', value]);
       // Need to restart UI to take effect
       await runAdb(deviceId, ['shell', 'service', 'call', 'activity', '1599295570']);
@@ -1210,6 +1059,7 @@ export class AdbService extends EventEmitter {
         animator: 'animator_duration_scale',
       }[type];
 
+      if (!settingName || !Number.isFinite(scale) || scale < 0) return false;
       await runAdb(deviceId, ['shell', 'settings', 'put', 'global', settingName, String(scale)]);
       return true;
     } catch (error) {
@@ -1250,35 +1100,10 @@ export class AdbService extends EventEmitter {
       const fullPath = relativePath ? `${basePath}/${relativePath}` : basePath;
 
       const { stdout } = await runAdb(deviceId, [
-        'shell', 'run-as', packageName, 'ls', '-la', fullPath,
+        'shell', 'run-as', packageName, 'ls', '-la', shellQuote(fullPath),
       ]);
 
-      const entries: FileEntry[] = [];
-      const lines = stdout.trim().split('\n');
-
-      for (const line of lines) {
-        if (line.startsWith('total') || !line.trim()) continue;
-
-        // Parse ls -la output: drwxrwx--x 2 u0_a123 u0_a123 4096 2024-01-15 10:30 dirname
-        const match = line.match(
-          /^([drwx-]{10})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+)$/
-        );
-
-        if (match) {
-          const [, permissions, size, modified, name] = match;
-          if (name === '.' || name === '..') continue;
-
-          entries.push({
-            name,
-            path: relativePath ? `${relativePath}/${name}` : name,
-            type: permissions.startsWith('d') ? 'directory' : 'file',
-            size: parseInt(size, 10),
-            modified,
-            permissions,
-          });
-        }
-      }
-
+      const entries: FileEntry[] = parseLsEntries(stdout, relativePath);
       return entries;
     } catch (error) {
       console.error('Error listing app files:', error);
@@ -1296,7 +1121,7 @@ export class AdbService extends EventEmitter {
       const fullPath = `${basePath}/${relativePath}`;
 
       const { stdout } = await runAdb(deviceId, [
-        'shell', 'run-as', packageName, 'cat', fullPath,
+        'shell', 'run-as', packageName, 'cat', shellQuote(fullPath),
       ]);
 
       return stdout;
@@ -1316,7 +1141,7 @@ export class AdbService extends EventEmitter {
         if (file.type === 'file' && file.name.endsWith('.xml')) {
           const content = await this.readAppFile(deviceId, packageName, `shared_prefs/${file.name}`);
           if (content) {
-            const entries = this.parseSharedPrefsXml(content);
+            const entries = parseSharedPrefsXml(content);
             prefs.push({
               file: file.name,
               entries,
@@ -1330,42 +1155,6 @@ export class AdbService extends EventEmitter {
       console.error('Error reading shared preferences:', error);
       return [];
     }
-  }
-
-  private parseSharedPrefsXml(xml: string): Record<string, { type: string; value: unknown }> {
-    const entries: Record<string, { type: string; value: unknown }> = {};
-
-    // Parse string entries
-    const stringMatches = xml.matchAll(/<string name="([^"]+)"[^>]*>([^<]*)<\/string>/g);
-    for (const match of stringMatches) {
-      entries[match[1]] = { type: 'string', value: match[2] };
-    }
-
-    // Parse int entries
-    const intMatches = xml.matchAll(/<int name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
-    for (const match of intMatches) {
-      entries[match[1]] = { type: 'int', value: parseInt(match[2], 10) };
-    }
-
-    // Parse long entries
-    const longMatches = xml.matchAll(/<long name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
-    for (const match of longMatches) {
-      entries[match[1]] = { type: 'long', value: parseInt(match[2], 10) };
-    }
-
-    // Parse float entries
-    const floatMatches = xml.matchAll(/<float name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
-    for (const match of floatMatches) {
-      entries[match[1]] = { type: 'float', value: parseFloat(match[2]) };
-    }
-
-    // Parse boolean entries
-    const boolMatches = xml.matchAll(/<boolean name="([^"]+)" value="([^"]+)"[^/]*\/>/g);
-    for (const match of boolMatches) {
-      entries[match[1]] = { type: 'boolean', value: match[2] === 'true' };
-    }
-
-    return entries;
   }
 
   async listDatabases(deviceId: string, packageName: string): Promise<DatabaseInfo[]> {
@@ -1456,15 +1245,15 @@ export class AdbService extends EventEmitter {
 
     try {
       const database = await runAdbBuffer(deviceId, [
-        'exec-out', 'run-as', packageName, 'cat', remotePath,
-      ]);
+        'exec-out', 'run-as', packageName, 'cat', shellQuote(remotePath),
+      ], { timeout: NO_TIMEOUT });
       fs.writeFileSync(localPath, database.stdout);
 
       for (const suffix of ['-wal', '-shm']) {
         try {
           const sidecar = await runAdbBuffer(deviceId, [
-            'exec-out', 'run-as', packageName, 'cat', `${remotePath}${suffix}`,
-          ]);
+            'exec-out', 'run-as', packageName, 'cat', shellQuote(`${remotePath}${suffix}`),
+          ], { timeout: NO_TIMEOUT });
           if (sidecar.stdout.length > 0) {
             fs.writeFileSync(`${localPath}${suffix}`, sidecar.stdout);
           }
@@ -1487,32 +1276,32 @@ export class AdbService extends EventEmitter {
 
       // Action
       if (intent.action) {
-        args.push('-a', intent.action);
+        args.push('-a', shellQuote(intent.action));
       }
 
       // Data URI
       if (intent.data) {
-        args.push('-d', intent.data);
+        args.push('-d', shellQuote(intent.data));
       }
 
       // MIME type
       if (intent.type) {
-        args.push('-t', intent.type);
+        args.push('-t', shellQuote(intent.type));
       }
 
       // Category
       if (intent.category) {
-        args.push('-c', intent.category);
+        args.push('-c', shellQuote(intent.category));
       }
 
       // Component
       if (intent.component) {
-        args.push('-n', intent.component);
+        args.push('-n', shellQuote(intent.component));
       }
 
       // Flags
       for (const flag of intent.flags) {
-        args.push('-f', flag);
+        args.push('-f', shellQuote(flag));
       }
 
       // Extras
@@ -1526,7 +1315,8 @@ export class AdbService extends EventEmitter {
           uri: '--eu',
         }[extra.type];
 
-        args.push(typeFlag, extra.key, extra.value);
+        if (!typeFlag) continue;
+        args.push(typeFlag, shellQuote(extra.key), shellQuote(extra.value));
       }
 
       const { stdout, stderr } = await runAdb(deviceId, args);
@@ -1546,7 +1336,7 @@ export class AdbService extends EventEmitter {
   async fireDeepLink(deviceId: string, uri: string): Promise<{ success: boolean; error?: string }> {
     try {
       const { stdout, stderr } = await runAdb(deviceId, [
-        'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', uri,
+        'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', shellQuote(uri),
       ]);
       const output = `${stdout}\n${stderr}`;
 
@@ -1569,101 +1359,9 @@ export class AdbService extends EventEmitter {
     }
     try {
       const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'battery']);
-      return this.parseBatteryInfo(stdout);
+      return parseBatteryInfo(stdout);
     } catch (error) {
       console.error('Error getting battery info:', error);
-      return null;
-    }
-  }
-
-  private parseBatteryInfo(output: string): BatteryInfo | null {
-    try {
-      const info: Partial<BatteryInfo> = {
-        timestamp: Date.now(),
-      };
-
-      const lines = output.split('\n');
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Parse level
-        const levelMatch = trimmed.match(/level:\s*(\d+)/i);
-        if (levelMatch) {
-          info.level = parseInt(levelMatch[1], 10);
-        }
-
-        // Parse temperature (in tenths of a degree Celsius)
-        const tempMatch = trimmed.match(/temperature:\s*(\d+)/i);
-        if (tempMatch) {
-          info.temperature = parseInt(tempMatch[1], 10) / 10;
-        }
-
-        // Parse voltage (in millivolts)
-        const voltageMatch = trimmed.match(/voltage:\s*(\d+)/i);
-        if (voltageMatch) {
-          info.voltage = parseInt(voltageMatch[1], 10);
-        }
-
-        // Parse health
-        const healthMatch = trimmed.match(/health:\s*(\d+)/i);
-        if (healthMatch) {
-          const healthCode = parseInt(healthMatch[1], 10);
-          const healthMap: Record<number, BatteryInfo['health']> = {
-            1: 'unknown',
-            2: 'good',
-            3: 'overheat',
-            4: 'dead',
-            5: 'over_voltage',
-            6: 'unknown', // unspecified failure
-            7: 'cold',
-          };
-          info.health = healthMap[healthCode] || 'unknown';
-        }
-
-        // Parse status
-        const statusMatch = trimmed.match(/status:\s*(\d+)/i);
-        if (statusMatch) {
-          const statusCode = parseInt(statusMatch[1], 10);
-          const statusMap: Record<number, BatteryInfo['status']> = {
-            1: 'unknown',
-            2: 'charging',
-            3: 'discharging',
-            4: 'not_charging',
-            5: 'full',
-          };
-          info.status = statusMap[statusCode] || 'unknown';
-        }
-
-        // Parse plugged
-        const pluggedMatch = trimmed.match(/plugged:\s*(\d+)/i);
-        if (pluggedMatch) {
-          const pluggedCode = parseInt(pluggedMatch[1], 10);
-          const pluggedMap: Record<number, BatteryInfo['plugged']> = {
-            0: 'none',
-            1: 'ac',
-            2: 'usb',
-            4: 'wireless',
-          };
-          info.plugged = pluggedMap[pluggedCode] || 'none';
-        }
-      }
-
-      if (info.level === undefined) {
-        return null;
-      }
-
-      return {
-        timestamp: info.timestamp!,
-        level: info.level,
-        temperature: info.temperature || 0,
-        health: info.health || 'unknown',
-        status: info.status || 'unknown',
-        plugged: info.plugged || 'none',
-        voltage: info.voltage || 0,
-      };
-    } catch (error) {
-      console.error('Error parsing battery info:', error);
       return null;
     }
   }
@@ -1712,75 +1410,108 @@ export class AdbService extends EventEmitter {
     const args = ['-s', deviceId, 'logcat', '-b', 'crash', '-v', 'time'];
     const process = spawn('adb', args);
     this.crashLogcatProcess = process;
+    // Decode as a stream so multi-byte UTF-8 characters split across chunks survive.
+    process.stdout?.setEncoding('utf8');
 
     let buffer = '';
     let currentCrash: Partial<CrashEntry> | null = null;
+    let flushTimer: NodeJS.Timeout | null = null;
 
-    process.stdout?.on('data', (data: Buffer) => {
+    // A crash has no terminator line, so emit it once the stream goes quiet
+    // instead of holding it until the next crash (or process exit) arrives.
+    const flushCrash = () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (currentCrash && currentCrash.message && this.crashLogcatProcess === process) {
+        callback(this.finalizeCrashEntry(currentCrash));
+      }
+      currentCrash = null;
+    };
+
+    process.stdout?.on('data', (data: string) => {
       if (this.crashLogcatProcess !== process) return;
-      buffer += data.toString();
-      const lines = buffer.split('\n');
+      buffer += data;
+      const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
 
       for (const line of lines) {
+        if (!line.trim() || line.startsWith('--------- beginning of')) continue;
+        const content = this.parseLogLine(line)?.message ?? line;
+
         // Detect start of a crash (FATAL EXCEPTION or native signal)
-        const fatalMatch = line.match(/FATAL EXCEPTION:\s*(.+)/);
-        const nativeSignalMatch = line.match(/signal\s+(\d+)\s+\(([^)]+)\)/i);
+        const fatalMatch = content.match(/FATAL EXCEPTION:\s*(.+)/);
+        const nativeSignalMatch = content.match(/signal\s+(\d+)\s+\(([^)]+)\)/i);
         const timestampMatch = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})/);
+        // libc's "Fatal signal" line and the tombstone's "signal N (SIG...)"
+        // line describe the same native crash.
+        const continuesNativeCrash = !fatalMatch && nativeSignalMatch && currentCrash?.signal === nativeSignalMatch[2];
 
-        if (fatalMatch || nativeSignalMatch) {
-          // Save previous crash if exists
-          if (currentCrash && currentCrash.message) {
-            callback(this.finalizeCrashEntry(currentCrash));
-          }
+        if ((fatalMatch || nativeSignalMatch) && !continuesNativeCrash) {
+          flushCrash();
 
-          // Start new crash entry
           currentCrash = {
             id: uuidv4(),
             timestamp: timestampMatch?.[1] || new Date().toISOString(),
-            processName: fatalMatch?.[1]?.trim() || 'Unknown',
+            processName: 'Unknown',
             pid: 0,
             signal: nativeSignalMatch?.[2],
-            message: line,
+            message: content.trim(),
             stackTrace: [],
             raw: line,
           };
 
           // Extract PID from log line if present
-          const pidMatch = line.match(/\(\s*(\d+)\)/);
+          const pidMatch = line.match(/\(\s*(\d+)\):/);
           if (pidMatch) {
             currentCrash.pid = parseInt(pidMatch[1], 10);
+          }
+          const nativeProcess = content.match(/\bpid\s+(\d+)\s+\(([^)]+)\)/);
+          if (nativeProcess) {
+            currentCrash.pid = parseInt(nativeProcess[1], 10);
+            currentCrash.processName = nativeProcess[2];
           }
         } else if (currentCrash) {
           // Add to current crash stack trace
           currentCrash.raw += '\n' + line;
 
           // Check if this looks like a stack trace line
-          if (line.includes('\tat ') || line.includes('    at ') || line.match(/^\s+#\d+/)) {
-            currentCrash.stackTrace?.push(line.trim());
+          if (/^\s*at\s/.test(content) || /^\s*#\d+\s/.test(content) || /^\s*Caused by:/.test(content)) {
+            currentCrash.stackTrace?.push(content.trim());
+          } else if (currentCrash.message?.startsWith('FATAL EXCEPTION') && content.trim() && !/^\s*Process:/.test(content)) {
+            // First line after the header/process line is the exception itself.
+            currentCrash.message = content.trim();
           }
 
           // Check for process/thread info
-          const processMatch = line.match(/Process:\s*([^\s,]+)/);
+          const processMatch = content.match(/Process:\s*([^\s,]+)/) || content.match(/>>>\s*(\S+)\s*<<</);
           if (processMatch) {
             currentCrash.processName = processMatch[1];
           }
 
-          const pidLineMatch = line.match(/PID:\s*(\d+)/);
+          const pidLineMatch = content.match(/\bPID:\s*(\d+)/i);
           if (pidLineMatch) {
             currentCrash.pid = parseInt(pidLineMatch[1], 10);
           }
         }
       }
+
+      if (currentCrash) {
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = setTimeout(flushCrash, 750);
+      }
+    });
+
+    process.on('error', (error) => {
+      if (this.crashLogcatProcess !== process) return;
+      console.error('Crash logcat process error:', error);
     });
 
     process.on('close', () => {
-      if (this.crashLogcatProcess !== process) return;
       // Emit any remaining crash
-      if (currentCrash && currentCrash.message) {
-        callback(this.finalizeCrashEntry(currentCrash));
-      }
-      this.crashLogcatProcess = null;
+      flushCrash();
+      if (this.crashLogcatProcess === process) this.crashLogcatProcess = null;
     });
 
     process.stderr?.on('data', (data: Buffer) => {
@@ -1825,86 +1556,11 @@ export class AdbService extends EventEmitter {
       const args = ['shell', 'dumpsys', 'activity', 'services'];
       if (packageName) args.push(packageName);
       const { stdout } = await runAdb(deviceId, args);
-      return this.parseServicesInfo(stdout, packageName);
+      return parseServicesInfo(stdout, packageName);
     } catch (error) {
       console.error('Error getting running services:', error);
       return [];
     }
-  }
-
-  private parseServicesInfo(output: string, filterPackage?: string): ServiceInfo[] {
-    const services: ServiceInfo[] = [];
-    const lines = output.split('\n');
-
-    let currentService: Partial<ServiceInfo> | null = null;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // Match service record start: * ServiceRecord{...} or ServiceRecord{...}
-      const serviceMatch = trimmed.match(/\*?\s*ServiceRecord\{[^}]+\s+([^/]+)\/([^\s}]+)/);
-      if (serviceMatch) {
-        // Save previous service
-        if (currentService && currentService.name) {
-          services.push(this.finalizeServiceEntry(currentService));
-        }
-
-        currentService = {
-          packageName: serviceMatch[1],
-          name: serviceMatch[2],
-          pid: 0,
-          state: 'started',
-          foreground: false,
-          clientCount: 0,
-        };
-        continue;
-      }
-
-      if (currentService) {
-        // Parse app info with PID
-        const appMatch = trimmed.match(/app=ProcessRecord\{[^}]+\s+(\d+):/);
-        if (appMatch) {
-          currentService.pid = parseInt(appMatch[1], 10);
-        }
-
-        // Check for foreground
-        if (trimmed.includes('isForeground=true')) {
-          currentService.foreground = true;
-        }
-
-        // Check for connections/bindings count
-        const bindingsMatch = trimmed.match(/bindings=.*size=(\d+)/);
-        if (bindingsMatch) {
-          currentService.clientCount = parseInt(bindingsMatch[1], 10);
-          if (currentService.clientCount > 0) {
-            currentService.state = currentService.state === 'started' ? 'started+bound' : 'bound';
-          }
-        }
-      }
-    }
-
-    // Add final service
-    if (currentService && currentService.name) {
-      services.push(this.finalizeServiceEntry(currentService));
-    }
-
-    // Filter by package if specified
-    if (filterPackage) {
-      return services.filter(s => s.packageName === filterPackage);
-    }
-
-    return services;
-  }
-
-  private finalizeServiceEntry(partial: Partial<ServiceInfo>): ServiceInfo {
-    return {
-      name: partial.name || 'Unknown',
-      packageName: partial.packageName || 'Unknown',
-      pid: partial.pid || 0,
-      state: partial.state || 'started',
-      foreground: partial.foreground || false,
-      clientCount: partial.clientCount || 0,
-    };
   }
 
   // ==================== Network Stats ====================
@@ -1921,91 +1577,14 @@ export class AdbService extends EventEmitter {
         const { stdout: uidOutput } = await runAdb(deviceId, [
           'shell', 'dumpsys', 'package', packageName,
         ]);
-        const uidMatch = uidOutput.match(/userId=(\d+)/);
-        if (uidMatch) {
-          uid = parseInt(uidMatch[1], 10);
-        }
+        uid = parsePackageUid(uidOutput);
+        if (uid === null) return null;
       }
 
       const { stdout } = await runAdb(deviceId, ['shell', 'dumpsys', 'netstats', 'detail']);
-      return this.parseNetworkStats(stdout, packageName, uid);
+      return parseNetworkStats(stdout, packageName, uid);
     } catch (error) {
       console.error('Error getting network stats:', error);
-      return null;
-    }
-  }
-
-  private parseNetworkStats(output: string, packageName?: string, uid?: number | null): AppNetworkStats | null {
-    try {
-      const timestamp = Date.now();
-      const stats: AppNetworkStats = {
-        packageName: packageName || 'all',
-        wifi: {
-          timestamp,
-          rxBytes: 0,
-          txBytes: 0,
-          rxPackets: 0,
-          txPackets: 0,
-        },
-        mobile: {
-          timestamp,
-          rxBytes: 0,
-          txBytes: 0,
-          rxPackets: 0,
-          txPackets: 0,
-        },
-      };
-
-      const lines = output.split('\n');
-      let currentSection = '';
-      let inUidSection = false;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Detect section
-        if (trimmed.includes('iface=wlan') || trimmed.includes('type=WIFI')) {
-          currentSection = 'wifi';
-        } else if (trimmed.includes('iface=rmnet') || trimmed.includes('type=MOBILE')) {
-          currentSection = 'mobile';
-        }
-
-        // Check for UID section
-        if (uid !== null) {
-          if (trimmed.includes(`uid=${uid}`)) {
-            inUidSection = true;
-          } else if (trimmed.startsWith('uid=') && !trimmed.includes(`uid=${uid}`)) {
-            inUidSection = false;
-          }
-        } else {
-          // If no UID filter, count all traffic
-          inUidSection = true;
-        }
-
-        if (inUidSection && currentSection) {
-          // Parse byte counts: rxBytes=xxx txBytes=xxx
-          const rxBytesMatch = trimmed.match(/rxBytes=(\d+)/);
-          const txBytesMatch = trimmed.match(/txBytes=(\d+)/);
-          const rxPacketsMatch = trimmed.match(/rxPackets=(\d+)/);
-          const txPacketsMatch = trimmed.match(/txPackets=(\d+)/);
-
-          if (currentSection === 'wifi') {
-            if (rxBytesMatch) stats.wifi.rxBytes += parseInt(rxBytesMatch[1], 10);
-            if (txBytesMatch) stats.wifi.txBytes += parseInt(txBytesMatch[1], 10);
-            if (rxPacketsMatch) stats.wifi.rxPackets += parseInt(rxPacketsMatch[1], 10);
-            if (txPacketsMatch) stats.wifi.txPackets += parseInt(txPacketsMatch[1], 10);
-          } else if (currentSection === 'mobile') {
-            if (rxBytesMatch) stats.mobile.rxBytes += parseInt(rxBytesMatch[1], 10);
-            if (txBytesMatch) stats.mobile.txBytes += parseInt(txBytesMatch[1], 10);
-            if (rxPacketsMatch) stats.mobile.rxPackets += parseInt(rxPacketsMatch[1], 10);
-            if (txPacketsMatch) stats.mobile.txPackets += parseInt(txPacketsMatch[1], 10);
-          }
-        }
-      }
-
-      return stats;
-    } catch (error) {
-      console.error('Error parsing network stats:', error);
       return null;
     }
   }
@@ -2050,106 +1629,9 @@ export class AdbService extends EventEmitter {
       const { stdout } = await runAdb(deviceId, [
         'shell', 'dumpsys', 'activity', 'activities', packageName,
       ]);
-      return this.parseActivityStack(packageName, stdout);
+      return parseActivityStack(packageName, stdout);
     } catch (error) {
       console.error('Error getting activity stack:', error);
-      return null;
-    }
-  }
-
-  private parseActivityStack(packageName: string, output: string): ActivityStackInfo | null {
-    try {
-      const info: ActivityStackInfo = {
-        timestamp: Date.now(),
-        packageName,
-        tasks: [],
-      };
-
-      const lines = output.split('\n');
-      let currentTask: TaskStack | null = null;
-      let inTaskSection = false;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Parse focused activity
-        const focusedMatch = trimmed.match(/mFocusedActivity:\s*ActivityRecord\{[^}]+\s+([^\s}]+)/);
-        if (focusedMatch) {
-          info.focusedActivity = focusedMatch[1];
-        }
-
-        // Parse Task block: Task{xxx #123 ...} or Task #123
-        const taskMatch = trimmed.match(/Task(?:\{[^}]+)?\s*#(\d+)/);
-        if (taskMatch) {
-          if (currentTask && currentTask.activities.length > 0) {
-            info.tasks.push(currentTask);
-          }
-          currentTask = {
-            taskId: parseInt(taskMatch[1], 10),
-            rootActivity: '',
-            activities: [],
-            isVisible: trimmed.includes('visible=true') || trimmed.includes('isVisible=true'),
-          };
-          inTaskSection = true;
-        }
-
-        // Parse ActivityRecord: * ActivityRecord{xxx com.example/.MainActivity t123}
-        if (currentTask && inTaskSection) {
-          const activityMatch = trimmed.match(/ActivityRecord\{[^}]+\s+([^\s]+)\s+t(\d+)/);
-          if (activityMatch) {
-            const fullName = activityMatch[1];
-            const taskId = parseInt(activityMatch[2], 10);
-
-            // Parse activity name parts
-            let activityPackage = packageName;
-            let shortName = fullName;
-
-            if (fullName.includes('/')) {
-              const parts = fullName.split('/');
-              activityPackage = parts[0];
-              shortName = parts[1].startsWith('.')
-                ? parts[1].substring(1)
-                : parts[1];
-            }
-
-            // Parse state from the line
-            let state: ActivityInfo['state'] = 'stopped';
-            if (trimmed.includes('state=RESUMED') || trimmed.includes('RESUMED')) {
-              state = 'resumed';
-            } else if (trimmed.includes('state=PAUSED') || trimmed.includes('PAUSED')) {
-              state = 'paused';
-            } else if (trimmed.includes('state=STOPPED') || trimmed.includes('STOPPED')) {
-              state = 'stopped';
-            } else if (trimmed.includes('state=DESTROYED') || trimmed.includes('DESTROYED')) {
-              state = 'destroyed';
-            }
-
-            const activityInfo: ActivityInfo = {
-              name: fullName,
-              shortName,
-              packageName: activityPackage,
-              taskId,
-              state,
-              isTop: currentTask.activities.length === 0, // First activity is on top
-            };
-
-            currentTask.activities.push(activityInfo);
-
-            if (!currentTask.rootActivity) {
-              currentTask.rootActivity = fullName;
-            }
-          }
-        }
-      }
-
-      // Add last task
-      if (currentTask && currentTask.activities.length > 0) {
-        info.tasks.push(currentTask);
-      }
-
-      return info;
-    } catch (error) {
-      console.error('Error parsing activity stack:', error);
       return null;
     }
   }
@@ -2162,151 +1644,11 @@ export class AdbService extends EventEmitter {
       const args = ['shell', 'dumpsys', 'jobscheduler'];
       if (packageName) args.push(packageName);
       const { stdout } = await runAdb(deviceId, args);
-      return this.parseScheduledJobs(stdout, packageName);
+      return parseScheduledJobs(stdout, packageName);
     } catch (error) {
       console.error('Error getting scheduled jobs:', error);
       return null;
     }
-  }
-
-  private parseScheduledJobs(output: string, filterPackage?: string): JobSchedulerInfo | null {
-    try {
-      const info: JobSchedulerInfo = {
-        timestamp: Date.now(),
-        packageName: filterPackage,
-        jobs: [],
-      };
-
-      const lines = output.split('\n');
-      let currentJob: Partial<ScheduledJob> | null = null;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Parse JOB block: JOB #u0aXXX/ID: ...
-        const jobMatch = trimmed.match(/JOB\s+#([^/]+)\/(\d+)/);
-        if (jobMatch) {
-          // Save previous job
-          if (currentJob && currentJob.jobId !== undefined) {
-            info.jobs.push(this.finalizeJob(currentJob));
-          }
-
-          currentJob = {
-            packageName: '',
-            serviceName: '',
-            jobId: parseInt(jobMatch[2], 10),
-            state: 'pending',
-            constraints: {
-              requiresCharging: false,
-              requiresDeviceIdle: false,
-              requiresNetwork: 'none',
-              requiresBatteryNotLow: false,
-              requiresStorageNotLow: false,
-            },
-            timing: {},
-            isPersisted: false,
-          };
-        }
-
-        if (currentJob) {
-          // Parse service/package: Service: com.example/.JobService
-          const serviceMatch = trimmed.match(/Service:\s*([^\s]+)/);
-          if (serviceMatch) {
-            const fullService = serviceMatch[1];
-            if (fullService.includes('/')) {
-              const parts = fullService.split('/');
-              currentJob.packageName = parts[0];
-              currentJob.serviceName = parts[1].startsWith('.')
-                ? parts[1].substring(1)
-                : parts[1];
-            } else {
-              currentJob.serviceName = fullService;
-            }
-          }
-
-          // Parse state
-          if (trimmed.includes('state=active') || trimmed.includes('Active:')) {
-            currentJob.state = 'active';
-          } else if (trimmed.includes('state=ready') || trimmed.includes('Ready')) {
-            currentJob.state = 'ready';
-          } else if (trimmed.includes('state=waiting') || trimmed.includes('Waiting')) {
-            currentJob.state = 'waiting';
-          }
-
-          // Parse constraints
-          if (trimmed.includes('Requires: charging=true') || trimmed.includes('requiresCharging=true')) {
-            currentJob.constraints!.requiresCharging = true;
-          }
-          if (trimmed.includes('Requires: idle=true') || trimmed.includes('requiresDeviceIdle=true')) {
-            currentJob.constraints!.requiresDeviceIdle = true;
-          }
-          if (trimmed.includes('Requires: batteryNotLow=true') || trimmed.includes('requiresBatteryNotLow=true')) {
-            currentJob.constraints!.requiresBatteryNotLow = true;
-          }
-          if (trimmed.includes('Requires: storageNotLow=true') || trimmed.includes('requiresStorageNotLow=true')) {
-            currentJob.constraints!.requiresStorageNotLow = true;
-          }
-
-          // Parse network requirement
-          if (trimmed.includes('network=any') || trimmed.includes('Network type: any')) {
-            currentJob.constraints!.requiresNetwork = 'any';
-          } else if (trimmed.includes('network=unmetered') || trimmed.includes('Network type: unmetered')) {
-            currentJob.constraints!.requiresNetwork = 'unmetered';
-          } else if (trimmed.includes('network=cellular') || trimmed.includes('Network type: cellular')) {
-            currentJob.constraints!.requiresNetwork = 'cellular';
-          }
-
-          // Parse timing
-          const intervalMatch = trimmed.match(/Periodic:\s*interval=(\d+)/);
-          if (intervalMatch) {
-            currentJob.timing!.periodicInterval = parseInt(intervalMatch[1], 10);
-          }
-
-          const latencyMatch = trimmed.match(/Min latency:\s*(\d+)/);
-          if (latencyMatch) {
-            currentJob.timing!.minLatency = parseInt(latencyMatch[1], 10);
-          }
-
-          // Parse persisted
-          if (trimmed.includes('persisted=true') || trimmed.includes('Persisted: true')) {
-            currentJob.isPersisted = true;
-          }
-        }
-      }
-
-      // Add last job
-      if (currentJob && currentJob.jobId !== undefined) {
-        info.jobs.push(this.finalizeJob(currentJob));
-      }
-
-      // Filter by package if specified
-      if (filterPackage) {
-        info.jobs = info.jobs.filter(j => j.packageName === filterPackage);
-      }
-
-      return info;
-    } catch (error) {
-      console.error('Error parsing scheduled jobs:', error);
-      return null;
-    }
-  }
-
-  private finalizeJob(partial: Partial<ScheduledJob>): ScheduledJob {
-    return {
-      jobId: partial.jobId || 0,
-      packageName: partial.packageName || 'Unknown',
-      serviceName: partial.serviceName || 'Unknown',
-      state: partial.state || 'pending',
-      constraints: partial.constraints || {
-        requiresCharging: false,
-        requiresDeviceIdle: false,
-        requiresNetwork: 'none',
-        requiresBatteryNotLow: false,
-        requiresStorageNotLow: false,
-      },
-      timing: partial.timing || {},
-      isPersisted: partial.isPersisted || false,
-    };
   }
 
   // ==================== Alarm Monitor ====================
@@ -2317,147 +1659,11 @@ export class AdbService extends EventEmitter {
       const args = ['shell', 'dumpsys', 'alarm'];
       if (packageName) args.push(packageName);
       const { stdout } = await runAdb(deviceId, args);
-      return this.parseScheduledAlarms(stdout, packageName);
+      return parseScheduledAlarms(stdout, packageName);
     } catch (error) {
       console.error('Error getting scheduled alarms:', error);
       return null;
     }
-  }
-
-  private parseScheduledAlarms(output: string, filterPackage?: string): AlarmMonitorInfo | null {
-    try {
-      const info: AlarmMonitorInfo = {
-        timestamp: Date.now(),
-        packageName: filterPackage,
-        alarms: [],
-      };
-
-      const lines = output.split('\n');
-      let currentAlarm: Partial<ScheduledAlarm> | null = null;
-      let alarmIndex = 0;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Parse next alarm time
-        const nextAlarmMatch = trimmed.match(/Next\s+(?:non-wakeup\s+)?alarm:\s*(\d+)/);
-        if (nextAlarmMatch) {
-          info.nextAlarmTime = parseInt(nextAlarmMatch[1], 10);
-        }
-
-        // Parse Alarm block - various formats
-        // RTC_WAKEUP #0: Alarm{xxx type 0 ...}
-        // or Batch{...} containing alarms
-        const typeMatch = trimmed.match(/(RTC_WAKEUP|RTC|ELAPSED_REALTIME_WAKEUP|ELAPSED_REALTIME)/);
-        const alarmMatch = trimmed.match(/Alarm\{([^}]+)\}/);
-
-        if (typeMatch || alarmMatch) {
-          // Save previous alarm
-          if (currentAlarm && currentAlarm.packageName) {
-            info.alarms.push(this.finalizeAlarm(currentAlarm, alarmIndex++));
-          }
-
-          currentAlarm = {
-            packageName: '',
-            type: (typeMatch?.[1] as ScheduledAlarm['type']) || 'RTC',
-            triggerTime: 0,
-            operation: '',
-            isExact: false,
-            isRepeating: false,
-          };
-
-          // Check for exact alarm indicator
-          if (trimmed.includes('STANDALONE') || trimmed.includes('EXACT') || trimmed.includes('WAKEUP')) {
-            currentAlarm.isExact = true;
-          }
-        }
-
-        if (currentAlarm) {
-          // Parse package from operation: PendingIntent{xxx: PendingIntentRecord{xxx com.example ...}}
-          const packageMatch = trimmed.match(/PendingIntentRecord\{[^\s]+\s+([^\s]+)\s/);
-          if (packageMatch) {
-            currentAlarm.packageName = packageMatch[1];
-          }
-
-          // Alternative package parsing: operation=PendingIntent{...}
-          const opPackageMatch = trimmed.match(/operation=.*?([a-zA-Z][a-zA-Z0-9_.]+)\//);
-          if (opPackageMatch) {
-            currentAlarm.packageName = opPackageMatch[1];
-          }
-
-          // Parse when trigger time: when=+XXXms or triggerTime=XXXXXX
-          const whenMatch = trimmed.match(/when=([^\s,]+)/);
-          if (whenMatch) {
-            const whenStr = whenMatch[1];
-            if (whenStr.startsWith('+')) {
-              // Relative time, convert to absolute
-              const msMatch = whenStr.match(/\+(\d+)(?:ms)?/);
-              if (msMatch) {
-                currentAlarm.triggerTime = Date.now() + parseInt(msMatch[1], 10);
-              }
-            } else {
-              currentAlarm.triggerTime = parseInt(whenStr, 10);
-            }
-          }
-
-          const triggerMatch = trimmed.match(/triggerTime=(\d+)/);
-          if (triggerMatch) {
-            currentAlarm.triggerTime = parseInt(triggerMatch[1], 10);
-          }
-
-          // Parse repeat interval
-          const repeatMatch = trimmed.match(/repeatInterval=(\d+)/);
-          if (repeatMatch) {
-            const interval = parseInt(repeatMatch[1], 10);
-            if (interval > 0) {
-              currentAlarm.repeatInterval = interval;
-              currentAlarm.isRepeating = true;
-            }
-          }
-
-          // Parse operation/tag
-          const tagMatch = trimmed.match(/tag=([^\s,}]+)/);
-          if (tagMatch) {
-            currentAlarm.tag = tagMatch[1];
-          }
-
-          // Parse operation string
-          const operationMatch = trimmed.match(/operation=([^\s}]+)/);
-          if (operationMatch) {
-            currentAlarm.operation = operationMatch[1];
-          }
-        }
-      }
-
-      // Add last alarm
-      if (currentAlarm && currentAlarm.packageName) {
-        info.alarms.push(this.finalizeAlarm(currentAlarm, alarmIndex));
-      }
-
-      // Filter by package if specified
-      if (filterPackage) {
-        info.alarms = info.alarms.filter(a => a.packageName === filterPackage);
-      }
-
-      return info;
-    } catch (error) {
-      console.error('Error parsing scheduled alarms:', error);
-      return null;
-    }
-  }
-
-  private finalizeAlarm(partial: Partial<ScheduledAlarm>, index: number): ScheduledAlarm {
-    return {
-      id: `alarm-${index}-${Date.now()}`,
-      packageName: partial.packageName || 'Unknown',
-      type: partial.type || 'RTC',
-      triggerTime: partial.triggerTime || 0,
-      repeatInterval: partial.repeatInterval,
-      operation: partial.operation || '',
-      tag: partial.tag,
-      isExact: partial.isExact || false,
-      isRepeating: partial.isRepeating || false,
-    };
   }
 
   // ==================== App Installation ====================
@@ -2487,7 +1693,7 @@ export class AdbService extends EventEmitter {
 
       onProgress?.({ stage: 'installing', percent: 50, message: 'Installing APK...' });
 
-      const { stdout, stderr } = await runAdb(deviceId, ['install', ...flags, apkPath], { timeout: 120000 });
+      const { stdout, stderr } = await runAdb(deviceId, ['install', ...flags, apkPath], { timeout: NO_TIMEOUT });
       const output = stdout + stderr;
 
       // Parse result
@@ -2548,7 +1754,7 @@ export class AdbService extends EventEmitter {
       const { stdout, stderr } = await runAdb(
         deviceId,
         ['install-multiple', ...flags, ...apkPaths],
-        { timeout: 180000 }
+        { timeout: NO_TIMEOUT }
       );
       const output = stdout + stderr;
 
@@ -2628,7 +1834,7 @@ export class AdbService extends EventEmitter {
    */
   async checkJavaAvailable(): Promise<boolean> {
     try {
-      await runCommand('java', ['-version']);
+      await runCommand('java', ['-version'], { timeout: 10000 });
       return true;
     } catch {
       return false;
@@ -2973,33 +2179,19 @@ export class AdbService extends EventEmitter {
         return null;
       }
 
-      // Get thread list from /proc/<pid>/task
-      const { stdout: taskList } = await runAdb(deviceId, [
-        'shell', 'ls', `/proc/${pid}/task`,
+      // Read every thread's stat in one adb round-trip instead of two adb
+      // processes per thread. The stat line already carries the thread name
+      // (same 15-char value as /proc/.../comm). Threads can exit between the
+      // glob expansion and the read, so ignore cat's errors.
+      const { stdout: statOutput } = await runAdb(deviceId, [
+        'shell', `cat /proc/${pid}/task/*/stat 2>/dev/null; true`,
       ]);
 
-      const threadIds = taskList.trim().split('\n').filter(Boolean).map(t => parseInt(t.trim(), 10));
-      // Get thread files concurrently. Each failure is isolated because threads
-      // can disappear between listing and reading /proc.
-      const threadResults = await Promise.all(threadIds.map(async (tid): Promise<ThreadInfo | null> => {
-        try {
-          const [statResult, commResult] = await Promise.all([
-            runAdb(deviceId, ['shell', 'cat', `/proc/${pid}/task/${tid}/stat`]).catch(() => ({ stdout: '' } as CommandResult)),
-            runAdb(deviceId, ['shell', 'cat', `/proc/${pid}/task/${tid}/comm`]).catch(() => ({ stdout: '' } as CommandResult)),
-          ]);
-
-          const stat = statResult.stdout.trim();
-          const comm = commResult.stdout.trim();
-
-          if (stat) {
-            const threadInfo = this.parseThreadStat(tid, stat, comm);
-            return threadInfo;
-          }
-        } catch {
-          // Skip threads that can't be read
-        }
-        return null;
-      }));
+      const threadResults = statOutput.split('\n').map((line): ThreadInfo | null => {
+        const stat = line.trim();
+        const tid = parseInt(stat, 10);
+        return stat && Number.isFinite(tid) ? this.parseThreadStat(tid, stat, '') : null;
+      });
       const threads = threadResults.filter((thread): thread is ThreadInfo => thread !== null);
 
       return {
@@ -3120,25 +2312,24 @@ export class AdbService extends EventEmitter {
       return;
     }
 
-    // Monitor GC events via logcat filtering for ART/Dalvik GC messages
+    // Monitor GC events via the app's logcat. Since Android 8 ART logs GC
+    // lines under the process name rather than the `art` tag, so filter by
+    // PID only and let parseGcLogLine pick out the GC messages.
     const process = spawn('adb', [
       '-s', deviceId,
       'logcat',
       '--pid', String(pid),
       '-v', 'time',
-      '-s',
-      'art:D',
-      'dalvikvm:D',
-      'dalvikvm-heap:D',
     ]);
     this.gcMonitorProcess = process;
+    process.stdout?.setEncoding('utf8');
 
     let buffer = '';
 
-    process.stdout?.on('data', (data: Buffer) => {
+    process.stdout?.on('data', (data: string) => {
       if (generation !== this.gcMonitorGeneration || this.gcMonitorProcess !== process) return;
-      buffer += data.toString();
-      const lines = buffer.split('\n');
+      buffer += data;
+      const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
 
       for (const line of lines) {
@@ -3234,11 +2425,14 @@ export class AdbService extends EventEmitter {
   }
 
   private parseGcReason(reason: string): GcReason {
+    // ART prefixes the collector description with the GC cause, e.g.
+    // "Explicit concurrent mark compact" or "Background young concurrent copying",
+    // so the cause must win over the "concurrent" collector name.
     const upper = reason.toUpperCase();
-    if (upper.includes('ALLOC') || upper === 'FOR_ALLOC') return 'FOR_ALLOC';
-    if (upper.includes('CONCURRENT') || upper === 'CONC') return 'CONCURRENT';
     if (upper.includes('EXPLICIT')) return 'EXPLICIT';
+    if (upper.includes('ALLOC') || upper === 'FOR_ALLOC') return 'FOR_ALLOC';
     if (upper.includes('BACKGROUND') || upper === 'BG') return 'BACKGROUND';
+    if (upper.includes('CONCURRENT') || upper === 'CONC') return 'CONCURRENT';
     return 'UNKNOWN';
   }
 
@@ -3283,7 +2477,7 @@ export class AdbService extends EventEmitter {
       await runAdb(
         deviceId,
         ['shell', 'am', 'dumpheap', String(pid), remotePath],
-        { timeout: 120000 }
+        { timeout: NO_TIMEOUT }
       );
 
       // Wait for dump to complete
@@ -3295,7 +2489,7 @@ export class AdbService extends EventEmitter {
       await runAdb(
         deviceId,
         ['pull', remotePath, localPath],
-        { timeout: 300000 }
+        { timeout: NO_TIMEOUT }
       );
 
       onProgress?.('capturing', 90);
@@ -3468,7 +2662,7 @@ export class AdbService extends EventEmitter {
       await runAdb(
         deviceId,
         ['pull', remotePath, localPath],
-        { timeout: 60000 }
+        { timeout: NO_TIMEOUT }
       );
 
       // Clean up remote file

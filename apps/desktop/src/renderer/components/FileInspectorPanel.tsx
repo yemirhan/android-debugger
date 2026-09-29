@@ -124,7 +124,7 @@ function SharedPrefsView({ device, packageName }: { device: Device; packageName:
         {/* File list */}
         <div className="w-64 bg-surface rounded-lg border border-border-muted overflow-hidden flex flex-col">
           <div className="p-2 border-b border-border-muted">
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wider">Files</p>
+            <p className="text-xs font-medium text-text-muted">Files</p>
           </div>
           <div className="flex-1 overflow-auto">
             {preferences.map((pref) => (
@@ -146,7 +146,7 @@ function SharedPrefsView({ device, packageName }: { device: Device; packageName:
         {/* Entries */}
         <div className="flex-1 bg-surface rounded-lg border border-border-muted overflow-hidden flex flex-col">
           <div className="p-2 border-b border-border-muted">
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wider">
+            <p className="text-xs font-medium text-text-muted">
               Entries ({selectedPreference ? Object.keys(selectedPreference.entries).length : 0})
             </p>
           </div>
@@ -154,7 +154,7 @@ function SharedPrefsView({ device, packageName }: { device: Device; packageName:
             {selectedPreference && Object.keys(selectedPreference.entries).length > 0 ? (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-text-muted text-xs uppercase">
+                  <tr className="text-text-muted text-xs">
                     <th className="text-left p-2">Key</th>
                     <th className="text-left p-2 w-20">Type</th>
                     <th className="text-left p-2">Value</th>
@@ -270,11 +270,11 @@ function DatabaseView({ device, packageName }: { device: Device; packageName: st
               onChange={(e) => setCustomQuery(e.target.value)}
               placeholder="SELECT * FROM table_name LIMIT 100"
               className="flex-1 px-3 py-2 text-sm bg-surface-hover border border-border-muted rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 font-mono"
-              onKeyDown={(e) => e.key === 'Enter' && customQuery && executeQuery(customQuery)}
+              onKeyDown={(e) => e.key === 'Enter' && customQuery.trim() && !queryLoading && executeQuery(customQuery)}
             />
             <button
-              onClick={() => customQuery && executeQuery(customQuery)}
-              disabled={queryLoading || !customQuery}
+              onClick={() => customQuery.trim() && executeQuery(customQuery)}
+              disabled={queryLoading || !customQuery.trim()}
               className="px-4 py-2 text-sm font-medium bg-accent hover:bg-accent/90 text-white rounded-md transition-all duration-150 btn-press disabled:opacity-50"
             >
               {queryLoading ? 'Running...' : 'Run Query'}
@@ -284,7 +284,7 @@ function DatabaseView({ device, packageName }: { device: Device; packageName: st
           {/* Results */}
           <div className="flex-1 bg-surface rounded-lg border border-border-muted overflow-hidden flex flex-col min-h-0">
             <div className="p-2 border-b border-border-muted flex items-center justify-between">
-              <p className="text-xs font-medium text-text-muted uppercase tracking-wider">
+              <p className="text-xs font-medium text-text-muted">
                 Results {queryResult ? `(${queryResult.rowCount} rows)` : ''}
               </p>
             </div>
@@ -292,7 +292,7 @@ function DatabaseView({ device, packageName }: { device: Device; packageName: st
               {queryResult && queryResult.columns.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-surface">
-                    <tr className="text-text-muted text-xs uppercase">
+                    <tr className="text-text-muted text-xs">
                       {queryResult.columns.map((col, i) => (
                         <th key={i} className="text-left p-2 border-b border-border-muted">
                           {col}
@@ -358,10 +358,10 @@ function FileBrowserView({ device, packageName }: { device: Device; packageName:
   }, [device?.id, packageName]);
 
   const formatSize = (bytes: number) => {
-    if (bytes === 0) return '-';
+    if (!Number.isFinite(bytes) || bytes <= 0) return '-';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
@@ -422,7 +422,7 @@ function FileBrowserView({ device, packageName }: { device: Device; packageName:
                 <ChevronUpIcon className="w-4 h-4" />
               </button>
             )}
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wider">
+            <p className="text-xs font-medium text-text-muted">
               {files.length} items
             </p>
           </div>
@@ -456,7 +456,7 @@ function FileBrowserView({ device, packageName }: { device: Device; packageName:
         {selectedFile && (
           <div className="w-1/2 bg-surface rounded-lg border border-border-muted overflow-hidden flex flex-col">
             <div className="p-2 border-b border-border-muted">
-              <p className="text-xs font-medium text-text-muted uppercase tracking-wider truncate">
+              <p className="text-xs font-medium text-text-muted truncate">
                 {selectedFile.name}
               </p>
             </div>

@@ -3,7 +3,7 @@ import type { CrashEntry, NetworkRequest } from '@android-debugger/shared';
 
 interface ActivityItem {
   id: string;
-  type: 'crash' | 'network-error' | 'warning';
+  type: 'crash' | 'network-error';
   title: string;
   subtitle: string;
   timestamp: number;
@@ -11,127 +11,96 @@ interface ActivityItem {
 
 interface RecentActivityProps {
   crashes: CrashEntry[];
-  networkErrors: NetworkRequest[];
-  memoryWarnings: string[];
+  failedRequests: NetworkRequest[];
   maxItems?: number;
-  onItemClick?: (type: string, id?: string) => void;
+  onItemClick?: (type: ActivityItem['type']) => void;
 }
 
-export function RecentActivity({
-  crashes,
-  networkErrors,
-  memoryWarnings,
-  maxItems = 5,
-  onItemClick,
-}: RecentActivityProps) {
-  // Combine all activity into a single sorted list
+function toTimestamp(value: string | number): number {
+  const parsed = typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Shows the path of a request URL, falling back to the raw string for relative or malformed URLs. */
+function requestPath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+const CrashGlyph = () => (
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+  </svg>
+);
+
+const NetworkGlyph = () => (
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+  </svg>
+);
+
+export function RecentActivity({ crashes, failedRequests, maxItems = 6, onItemClick }: RecentActivityProps) {
   const activities: ActivityItem[] = [
     ...crashes.map((crash): ActivityItem => ({
-      id: crash.id,
+      id: `crash-${crash.id}`,
       type: 'crash',
-      title: crash.processName || 'App Crash',
-      subtitle: crash.stackTrace?.[0] || crash.message || 'Unknown error',
-      timestamp: typeof crash.timestamp === 'string' ? Date.parse(crash.timestamp) : crash.timestamp,
+      title: crash.message || 'App crashed',
+      subtitle: crash.processName || crash.stackTrace?.[0] || 'Unknown process',
+      timestamp: toTimestamp(crash.timestamp),
     })),
-    ...networkErrors
-      .filter((req) => req.status && req.status >= 400)
-      .map((req): ActivityItem => ({
-        id: req.id,
-        type: 'network-error',
-        title: `${req.method} ${req.status}`,
-        subtitle: new URL(req.url).pathname,
-        timestamp: req.timestamp,
-      })),
-    ...memoryWarnings.map((warning, idx): ActivityItem => ({
-      id: `warning-${idx}`,
-      type: 'warning',
-      title: 'Memory Warning',
-      subtitle: warning,
-      timestamp: Date.now() - idx * 1000,
+    ...failedRequests.map((req): ActivityItem => ({
+      id: `request-${req.id}`,
+      type: 'network-error',
+      title: `${req.method} ${requestPath(req.url)}`,
+      subtitle: `HTTP ${req.status}`,
+      timestamp: toTimestamp(req.timestamp),
     })),
   ]
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, maxItems);
 
-  const typeStyles = {
-    crash: {
-      bg: 'bg-red-500/10',
-      text: 'text-red-400',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-      ),
-    },
-    'network-error': {
-      bg: 'bg-amber-500/10',
-      text: 'text-amber-400',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
-        </svg>
-      ),
-    },
-    warning: {
-      bg: 'bg-amber-500/10',
-      text: 'text-amber-400',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-      ),
-    },
-  };
-
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
   if (activities.length === 0) {
     return (
-      <div className="bg-surface rounded-lg p-4 border border-border-muted h-full">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
-          Recent Activity
-        </h3>
-        <div className="flex flex-col items-center justify-center h-32 text-text-muted">
-          <svg className="w-8 h-8 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-sm">All clear! No issues detected.</p>
-        </div>
+      <div className="flex-1 flex flex-col items-center justify-center text-center py-8 px-6">
+        <p className="text-sm text-text-secondary">Nothing has gone wrong yet</p>
+        <p className="text-xs text-text-muted mt-1 max-w-xs">
+          Crashes on this device and failed requests from the SDK show up here as they happen.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="bg-surface rounded-lg p-4 border border-border-muted h-full">
-      <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
-        Recent Activity
-      </h3>
-      <div className="space-y-2">
-        {activities.map((activity) => {
-          const style = typeStyles[activity.type];
-          return (
-            <button
-              key={activity.id}
-              onClick={() => onItemClick?.(activity.type, activity.id)}
-              className="w-full flex items-start gap-3 p-2 rounded-lg hover:bg-surface-hover transition-colors text-left"
+    <ul className="divide-y divide-border-muted">
+      {activities.map((activity) => (
+        <li key={activity.id}>
+          <button
+            onClick={() => onItemClick?.(activity.type)}
+            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover/60 transition-colors text-left"
+          >
+            <span
+              className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center ${
+                activity.type === 'crash' ? 'bg-red-500/12 text-red-400' : 'bg-amber-500/12 text-amber-400'
+              }`}
             >
-              <div className={`flex-shrink-0 w-7 h-7 rounded-lg ${style.bg} ${style.text} flex items-center justify-center`}>
-                {style.icon}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-text-primary truncate">{activity.title}</p>
-                <p className="text-xs text-text-muted truncate">{activity.subtitle}</p>
-              </div>
-              <span className="text-xs text-text-muted flex-shrink-0">
-                {formatTime(activity.timestamp)}
+              {activity.type === 'crash' ? <CrashGlyph /> : <NetworkGlyph />}
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-[13px] text-text-primary truncate">{activity.title}</span>
+              <span className="block text-xs text-text-muted truncate">{activity.subtitle}</span>
+            </span>
+            {activity.timestamp > 0 && (
+              <span className="text-xs text-text-muted flex-shrink-0 tabular-nums">
+                {new Date(activity.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

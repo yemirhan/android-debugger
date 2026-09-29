@@ -108,3 +108,32 @@ test('HPROF parser counts instances and arrays without fabricating retained size
   assert.deepEqual(foo, { id: 2, name: 'com.example.Foo', instanceCount: 1, shallowSize: 16 });
   assert.equal(result.instances.get(2)?.[0].className, 'com.example.Foo');
 });
+
+test('method trace parser matches method IDs with the high bit set', () => {
+  const textHeader = Buffer.from([
+    '*version',
+    '3',
+    '*threads',
+    '1\tmain',
+    '*methods',
+    '0x9f3a2b10\tcom/example/Foo\thot\t()V',
+    '*end',
+    '',
+  ].join('\n'));
+  const binaryHeader = Buffer.alloc(18);
+  binaryHeader.write('SLOW', 0, 'ascii');
+  binaryHeader.writeUInt16LE(3, 4);
+  binaryHeader.writeUInt16LE(18, 6);
+  binaryHeader.writeUInt16LE(14, 16);
+  const trace = Buffer.concat([
+    textHeader,
+    binaryHeader,
+    traceRecord(1, 0x9f3a2b10, 0, 0),
+    traceRecord(1, 0x9f3a2b11, 25, 25),
+  ]);
+
+  const analysis = parseMethodTrace(trace);
+  assert.deepEqual(analysis.methods, [{
+    className: 'com.example.Foo', methodName: 'hot', inclusiveTime: 25, exclusiveTime: 25, callCount: 1,
+  }]);
+});

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { GcEvent, GcStats, Device } from '@android-debugger/shared';
 
 const MAX_EVENTS = 500; // Keep last 500 GC events
@@ -6,15 +6,20 @@ const MAX_EVENTS = 500; // Keep last 500 GC events
 export function useGcMonitor(device: Device | null, packageName: string) {
   const [events, setEvents] = useState<GcEvent[]>([]);
   const [isMonitoring, setIsMonitoring] = useState(false);
+  // Main-process monitors can emit after stop (or survive a reload); only accept
+  // updates while this hook owns a running monitor.
+  const activeRef = useRef(false);
 
   const startMonitoring = useCallback(() => {
     if (!device || !packageName) return;
 
+    activeRef.current = true;
     window.electronAPI.startGcMonitor(device.id, packageName);
     setIsMonitoring(true);
   }, [device, packageName]);
 
   const stopMonitoring = useCallback(() => {
+    activeRef.current = false;
     window.electronAPI.stopGcMonitor();
     setIsMonitoring(false);
   }, []);
@@ -55,6 +60,7 @@ export function useGcMonitor(device: Device | null, packageName: string) {
   // Listen for GC events
   useEffect(() => {
     const unsubscribe = window.electronAPI.onGcEvent((event: GcEvent) => {
+      if (!activeRef.current) return;
       setEvents((prev) => {
         const newData = [...prev, event];
         if (newData.length > MAX_EVENTS) {
@@ -76,9 +82,13 @@ export function useGcMonitor(device: Device | null, packageName: string) {
       return;
     }
 
+    activeRef.current = true;
     window.electronAPI.startGcMonitor(device.id, packageName);
     setIsMonitoring(true);
-    return () => window.electronAPI.stopGcMonitor();
+    return () => {
+      activeRef.current = false;
+      window.electronAPI.stopGcMonitor();
+    };
   }, [device?.id, packageName, clearData]);
 
   return {

@@ -16,7 +16,7 @@ const createEmptyIntent = (): IntentConfig => ({
 });
 
 export function useIntentTester(device: Device | null) {
-  const [currentIntent, setCurrentIntent] = useState<IntentConfig>(createEmptyIntent());
+  const [currentIntent, setCurrentIntent] = useState<IntentConfig>(createEmptyIntent);
   const [savedIntents, setSavedIntents] = useState<IntentConfig[]>([]);
   const [history, setHistory] = useState<IntentHistoryEntry[]>([]);
   const [deepLinkUri, setDeepLinkUri] = useState<string>('');
@@ -48,7 +48,9 @@ export function useIntentTester(device: Device | null) {
     }
   }, []);
 
-  const fireIntent = useCallback(async () => {
+  // Pass `intent` to fire a specific config (e.g. a saved intent) without
+  // waiting for it to be loaded into the builder state first.
+  const fireIntent = useCallback(async (intent?: IntentConfig) => {
     if (!device) {
       setError('No device connected');
       return false;
@@ -58,7 +60,7 @@ export function useIntentTester(device: Device | null) {
     setError(null);
 
     try {
-      const result = await window.electronAPI.fireIntent(device.id, currentIntent);
+      const result = await window.electronAPI.fireIntent(device.id, intent ?? currentIntent);
       setLastResult(result);
       if (!result.success) {
         setError(result.error || 'Intent failed');

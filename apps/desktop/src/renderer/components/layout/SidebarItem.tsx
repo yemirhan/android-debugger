@@ -28,24 +28,27 @@ export function SidebarItem({
         onClick={() => onClick(id)}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
+        aria-current={isActive ? 'page' : undefined}
+        aria-label={isExpanded ? undefined : label}
         className={`
-          relative w-full flex items-center gap-3 rounded-lg transition-all duration-150 btn-press
-          ${isNested ? 'h-9' : 'h-10'}
-          ${isExpanded ? 'px-3' : 'px-0 justify-center'}
+          relative w-full flex items-center gap-2.5 rounded-md transition-colors duration-150
+          ${isNested ? 'h-8' : 'h-9'}
+          ${isExpanded ? 'px-2.5' : 'px-0 justify-center'}
           ${isActive
-            ? 'bg-accent-muted text-accent'
-            : 'text-text-muted hover:bg-surface-hover hover:text-text-primary'
+            ? 'bg-surface-hover text-text-primary'
+            : 'text-text-secondary hover:bg-surface-hover/60 hover:text-text-primary'
           }
         `}
       >
-        {isActive && (
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent rounded-r" />
-        )}
-        <span className={`flex-shrink-0 ${isNested ? 'w-4 h-4 [&>svg]:w-4 [&>svg]:h-4' : ''}`}>
+        <span
+          className={`flex-shrink-0 w-4 h-4 [&>svg]:w-4 [&>svg]:h-4 ${
+            isActive ? 'text-accent' : 'text-text-muted'
+          }`}
+        >
           {icon}
         </span>
         {isExpanded && (
-          <span className={`text-sm font-medium truncate ${isNested ? 'text-xs' : ''}`}>
+          <span className={`truncate text-[13px] ${isActive ? 'font-medium' : ''}`}>
             {label}
           </span>
         )}
@@ -54,7 +57,7 @@ export function SidebarItem({
       {/* Tooltip when collapsed */}
       {!isExpanded && isHovered && (
         <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 pointer-events-none">
-          <div className="px-2.5 py-1.5 bg-surface-elevated border border-border rounded-md shadow-lg animate-fade-in">
+          <div className="px-2.5 py-1.5 bg-surface-elevated border border-border rounded-md shadow-lg shadow-black/40 animate-pop-in">
             <span className="text-xs font-medium text-text-primary whitespace-nowrap">{label}</span>
           </div>
         </div>

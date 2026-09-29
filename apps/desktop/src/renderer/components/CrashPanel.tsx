@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { CrashEntry, Device } from '@android-debugger/shared';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
 import { tabGuides } from '../data/tabGuides';
-import { useCrashLogcat } from '../hooks/useCrashLogcat';
+import { useCrashContext } from '../contexts';
 
 interface CrashPanelProps {
   device: Device;
@@ -12,7 +12,9 @@ interface CrashPanelProps {
 export function CrashPanel({ device }: CrashPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
   const [expandedCrash, setExpandedCrash] = useState<string | null>(null);
-  const { crashes, isMonitoring, startMonitoring, stopMonitoring, clearCrashes } = useCrashLogcat(device);
+  // Use the app-wide crash stream (CrashProvider) so crashes are captured while
+  // other tabs are active and unmounting this panel doesn't stop the stream.
+  const { crashes, isMonitoring, startMonitoring, stopMonitoring, clearCrashes } = useCrashContext();
   const guide = tabGuides['crashes'];
 
   const toggleExpand = (id: string) => {
@@ -107,6 +109,27 @@ interface CrashItemProps {
 }
 
 function CrashItem({ crash, device, isExpanded, onToggle }: CrashItemProps) {
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
+  const copyRaw = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(crash.raw);
+      setCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy crash to clipboard:', err);
+    }
+  };
+
   const buildCrashQuery = () => {
     const maxRawLength = 3000;
     const truncatedRaw = crash.raw.length > maxRawLength
@@ -179,7 +202,7 @@ function CrashItem({ crash, device, isExpanded, onToggle }: CrashItemProps) {
           {/* Stack trace */}
           {crash.stackTrace.length > 0 && (
             <div className="mt-2">
-              <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Stack Trace</p>
+              <p className="text-xs font-medium text-text-muted mb-2">Stack Trace</p>
               <div className="bg-background rounded-lg p-3 overflow-x-auto">
                 <pre className="text-xs font-mono text-text-secondary">
                   {crash.stackTrace.map((line, i) => (
@@ -194,7 +217,7 @@ function CrashItem({ crash, device, isExpanded, onToggle }: CrashItemProps) {
 
           {/* Raw output */}
           <div className="mt-3">
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Raw Output</p>
+            <p className="text-xs font-medium text-text-muted mb-2">Raw Output</p>
             <div className="bg-background rounded-lg p-3 overflow-x-auto max-h-48 overflow-y-auto">
               <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap">{crash.raw}</pre>
             </div>
@@ -215,13 +238,10 @@ function CrashItem({ crash, device, isExpanded, onToggle }: CrashItemProps) {
               Ask Claude
             </button>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(crash.raw);
-              }}
+              onClick={copyRaw}
               className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface-hover rounded-md hover:text-text-primary transition-all duration-150 btn-press"
             >
-              Copy to Clipboard
+              {copied ? 'Copied!' : 'Copy to Clipboard'}
             </button>
           </div>
         </div>

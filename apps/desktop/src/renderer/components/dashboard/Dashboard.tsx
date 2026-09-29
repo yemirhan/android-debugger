@@ -2,113 +2,112 @@ import React, { useMemo, useState } from 'react';
 import type { Device } from '@android-debugger/shared';
 import type { TabId } from '../../App';
 import { useSdkContext } from '../../contexts/SdkContext';
+import { useCrashContext } from '../../contexts/CrashContext';
 import { useMemory } from '../../hooks/useMemory';
 import { useCpu } from '../../hooks/useCpu';
 import { useFps } from '../../hooks/useFps';
 import { useBattery } from '../../hooks/useBattery';
-import { useCrashLogcat } from '../../hooks/useCrashLogcat';
-import { QuickStats } from './QuickStats';
 import { RecentActivity } from './RecentActivity';
-import { QuickActions } from './QuickActions';
-import { MiniChart, MiniChartPlaceholder } from './MiniChart';
-import { NoDeviceState } from '../shared/EmptyState';
-import { InfoIcon } from '../icons';
+import { Sparkline } from './MiniChart';
+import {
+  InfoIcon,
+  LogsIcon,
+  ScreenCaptureIcon,
+  ScreenMirrorIcon,
+  InstallAppIcon,
+} from '../icons';
 import { InfoModal } from '../shared/InfoModal';
 import { tabGuides } from '../../data/tabGuides';
 
 interface DashboardProps {
-  device: Device | null;
+  device: Device;
   packageName: string;
   onNavigate: (tab: TabId) => void;
   onRefreshDevices: () => void;
 }
 
-export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }: DashboardProps) {
+interface ReadoutProps {
+  label: string;
+  value: number | null;
+  unit: string;
+  color: string;
+  history: number[];
+  caption?: string;
+  onClick: () => void;
+  disabled: boolean;
+}
+
+function Readout({ label, value, unit, color, history, caption, onClick, disabled }: ReadoutProps) {
+  return (
+    <button
+      onClick={onClick}
+      className="group text-left bg-surface border border-border-muted rounded-xl p-4 hover:border-border transition-colors flex flex-col min-h-[148px]"
+    >
+      <div className="w-full flex items-center justify-between">
+        <span className="text-[13px] text-text-secondary">{label}</span>
+        <span className="text-xs text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">Open</span>
+      </div>
+      <div className="mt-2 flex items-baseline gap-1.5">
+        <span
+          className={`text-[32px] leading-none font-semibold font-mono tracking-tight ${
+            value === null ? 'text-text-muted' : 'text-text-primary'
+          }`}
+        >
+          {value === null ? '––' : value}
+        </span>
+        <span className="text-sm text-text-muted">{unit}</span>
+      </div>
+      {caption && <p className="text-xs text-text-muted mt-1.5">{caption}</p>}
+      <div className="w-full mt-auto pt-3 h-[60px]">
+        {disabled ? null : <Sparkline data={history} color={color} />}
+      </div>
+    </button>
+  );
+}
+
+function batteryCaption(status: string, plugged: string): string {
+  if (status === 'charging') return plugged !== 'none' ? `charging over ${plugged === 'wireless' ? 'wireless' : plugged.toUpperCase()}` : 'charging';
+  if (status === 'full') return 'full';
+  if (plugged !== 'none') return 'plugged in';
+  return 'on battery';
+}
+
+export function Dashboard({ device, packageName, onNavigate }: DashboardProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const { requests, clearConsoleLogs, clearRequests } = useSdkContext();
+  const { requests } = useSdkContext();
+  const { crashes } = useCrashContext();
   const guide = tabGuides['dashboard'];
 
-  // Get memory data (only if package is selected)
-  const { data: memoryData, current: memoryStats } = useMemory(
-    device,
-    packageName
-  );
-
-  // Get CPU data (only if package is selected)
-  const { data: cpuData, current: cpuStats } = useCpu(
-    device,
-    packageName
-  );
-
-  // Get FPS data (only if package is selected)
-  const { data: fpsData, current: fpsStats } = useFps(
-    device,
-    packageName
-  );
-
-  // Get battery data
+  const memory = useMemory(device, packageName);
+  const cpu = useCpu(device, packageName);
+  const fps = useFps(device, packageName);
+  const { data: memoryData, current: memoryStats } = memory;
+  const { data: cpuData, current: cpuStats } = cpu;
+  const { data: fpsData, current: fpsStats } = fps;
+  const monitoringStopped = !memory.isMonitoring && !cpu.isMonitoring && !fps.isMonitoring;
   const { current: batteryStats } = useBattery(device);
 
-  // Get crash data
-  const { crashes } = useCrashLogcat(device);
+  const failedRequests = useMemo(
+    () => requests.filter((req) => typeof req.status === 'number' && req.status >= 400),
+    [requests]
+  );
 
-  // Calculate network errors
-  const networkErrors = useMemo(() => {
-    return requests.filter((req) => req.status && req.status >= 400);
-  }, [requests]);
+  const memoryHistory = useMemo(() => memoryData.map((d) => d.totalPss / 1024), [memoryData]);
+  const cpuHistory = useMemo(() => cpuData.map((d) => d.usage), [cpuData]);
+  const fpsHistory = useMemo(() => fpsData.map((d) => d.fps), [fpsData]);
 
-  // Memory history for mini chart
-  const memoryHistory = useMemo(() => {
-    return memoryData.map((d) => Math.round(d.totalPss / 1024));
-  }, [memoryData]);
+  const hasPackage = packageName.length > 0;
+  const isEmulator = device.id.startsWith('emulator-');
 
-  // CPU history for mini chart
-  const cpuHistory = useMemo(() => {
-    return cpuData.map((d) => d.usage);
-  }, [cpuData]);
-
-  // FPS history for mini chart
-  const fpsHistory = useMemo(() => {
-    return fpsData.map((d) => d.fps);
-  }, [fpsData]);
-
-  // Handle screenshot
-  const handleTakeScreenshot = async () => {
-    if (!device) return;
-    onNavigate('screen-capture');
-  };
-
-  // Handle clear logs
-  const handleClearLogs = () => {
-    clearConsoleLogs();
-    clearRequests();
-  };
-
-  // Handle activity item click
-  const handleActivityClick = (type: string) => {
-    switch (type) {
-      case 'crash':
-        onNavigate('crashes');
-        break;
-      case 'network-error':
-        onNavigate('network');
-        break;
-      case 'warning':
-        onNavigate('memory');
-        break;
-    }
-  };
-
-  if (!device) {
-    return (
-      <div className="flex-1 flex items-center justify-center panel-content">
-        <NoDeviceState />
-      </div>
-    );
-  }
+  const shortcuts: { tab: TabId; label: string; icon: React.ReactNode }[] = [
+    { tab: 'logs', label: 'Logs', icon: <LogsIcon /> },
+    { tab: 'screen-capture', label: 'Screenshot or record', icon: <ScreenCaptureIcon /> },
+    { tab: 'screen-mirror', label: 'Mirror screen', icon: <ScreenMirrorIcon /> },
+    { tab: 'install-app', label: 'Install an APK', icon: <InstallAppIcon /> },
+  ];
 
   return (
-    <div className="flex-1 flex flex-col overflow-auto p-4 gap-4">
+    <div className="flex-1 overflow-auto">
       <InfoModal
         isOpen={showInfo}
         onClose={() => setShowInfo(false)}
@@ -118,147 +117,166 @@ export function Dashboard({ device, packageName, onNavigate, onRefreshDevices }:
         tips={guide.tips}
       />
 
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <h2 className="text-base font-semibold">Dashboard</h2>
-        <button
-          onClick={() => setShowInfo(true)}
-          className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-          title="Learn more about this feature"
-        >
-          <InfoIcon />
-        </button>
-      </div>
+      <div className="max-w-[1200px] mx-auto p-6 space-y-5">
+        {/* Device */}
+        <section className="flex items-end justify-between gap-6">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold text-text-primary truncate">{device.model || device.id}</h1>
+              <button
+                onClick={() => setShowInfo(true)}
+                className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                title="About the dashboard"
+                aria-label="About the dashboard"
+              >
+                <InfoIcon />
+              </button>
+            </div>
+            <p className="text-sm text-text-secondary mt-1 flex flex-wrap gap-x-4 gap-y-1">
+              {device.androidVersion && <span>Android {device.androidVersion}</span>}
+              {isEmulator && <span>Emulator</span>}
+              <span className="font-mono text-text-muted">{device.id}</span>
+            </p>
+          </div>
 
-      {/* Quick Stats Row */}
-      <QuickStats
-        memoryMB={memoryStats ? Math.round(memoryStats.totalPss / 1024) : undefined}
-        cpuPercent={cpuStats?.usage ? Math.round(cpuStats.usage) : undefined}
-        fps={fpsStats?.fps}
-        crashCount={crashes.length}
-        networkErrorCount={networkErrors.length}
-        onStatClick={onNavigate}
-      />
+          <dl className="flex gap-6 flex-shrink-0 text-right">
+            <div>
+              <dt className="text-xs text-text-muted">Battery</dt>
+              <dd className="text-sm text-text-primary tabular-nums mt-0.5">
+                {batteryStats ? (
+                  <>
+                    <span
+                      className={
+                        batteryStats.level <= 15 ? 'text-red-400' : batteryStats.level <= 30 ? 'text-amber-400' : ''
+                      }
+                    >
+                      {batteryStats.level}%
+                    </span>
+                    <span className="text-text-muted"> {batteryCaption(batteryStats.status, batteryStats.plugged)}</span>
+                  </>
+                ) : (
+                  <span className="text-text-muted">Reading…</span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-text-muted">Wi-Fi</dt>
+              <dd className="text-sm text-text-primary mt-0.5 max-w-[180px] truncate">
+                {device.wifiName?.trim() || <span className="text-text-muted">Not connected</span>}
+              </dd>
+            </div>
+          </dl>
+        </section>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-3 gap-4 flex-1 min-h-0">
-        {/* Recent Activity - Takes 2 columns */}
-        <div className="col-span-2">
-          <RecentActivity
-            crashes={crashes}
-            networkErrors={requests}
-            memoryWarnings={[]}
-            onItemClick={handleActivityClick}
-          />
-        </div>
-
-        {/* Quick Actions */}
-        <div className="col-span-1">
-          <QuickActions
-            device={device}
-            onTakeScreenshot={handleTakeScreenshot}
-            onClearLogs={handleClearLogs}
-            onRefreshDevice={onRefreshDevices}
-          />
-        </div>
-      </div>
-
-      {/* Mini Charts Grid */}
-      <div className="grid grid-cols-4 gap-3">
-        {packageName ? (
-          <>
-            <MiniChart
-              data={memoryHistory}
-              color="#10b981"
+        {/* Live readouts */}
+        <section>
+          {hasPackage && monitoringStopped && (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-border-muted bg-surface px-4 py-2.5">
+              <p className="flex-1 text-sm text-text-secondary">
+                Live monitoring is off because auto-start is disabled in Settings.
+              </p>
+              <button
+                onClick={() => {
+                  memory.startMonitoring();
+                  cpu.startMonitoring();
+                  fps.startMonitoring();
+                }}
+                className="px-3 h-8 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent-hover transition-colors"
+              >
+                Start monitoring
+              </button>
+            </div>
+          )}
+          {!hasPackage && (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-accent/25 bg-accent-muted px-4 py-3">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+              <p className="text-sm text-text-primary">
+                Pick an app in the toolbar to watch its memory, CPU and frame rate live.
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-3">
+            <Readout
               label="Memory"
-              value={memoryStats ? `${Math.round(memoryStats.totalPss / 1024)} MB` : '--'}
+              value={memoryStats ? Math.round(memoryStats.totalPss / 1024) : null}
+              unit="MB"
+              color="#3ddc84"
+              history={memoryHistory}
+              caption={memoryStats ? `Java ${Math.round(memoryStats.javaHeap / 1024)} MB, native ${Math.round(memoryStats.nativeHeap / 1024)} MB` : undefined}
+              onClick={() => onNavigate('memory')}
+              disabled={!hasPackage}
             />
-            <MiniChart
-              data={cpuHistory}
-              color="#ef4444"
+            <Readout
               label="CPU"
-              value={cpuStats ? `${Math.round(cpuStats.usage)}%` : '--'}
+              value={cpuStats ? Math.round(cpuStats.usage) : null}
+              unit="%"
+              color="#f26d6d"
+              history={cpuHistory}
+              onClick={() => onNavigate('cpu-fps')}
+              disabled={!hasPackage}
             />
-            <MiniChart
-              data={fpsHistory}
-              color="#06b6d4"
-              label="FPS"
-              value={fpsStats ? fpsStats.fps.toString() : '--'}
+            <Readout
+              label="Frame rate"
+              value={fpsStats ? Math.round(fpsStats.fps) : null}
+              unit="fps"
+              color="#3cc8d8"
+              history={fpsHistory}
+              caption={
+                fpsStats && fpsStats.totalFrames > 0
+                  ? `${fpsStats.jankyFrames} of ${fpsStats.totalFrames} frames janky`
+                  : undefined
+              }
+              onClick={() => onNavigate('cpu-fps')}
+              disabled={!hasPackage}
             />
-          </>
-        ) : (
-          <>
-            <MiniChartPlaceholder label="Memory" message="Select package" />
-            <MiniChartPlaceholder label="CPU" message="Select package" />
-            <MiniChartPlaceholder label="FPS" message="Select package" />
-          </>
-        )}
-        <div className="bg-surface rounded-lg p-3 border border-border-muted">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-text-muted">Battery</span>
-            <span
-              className="text-sm font-semibold font-mono"
-              style={{
-                color: batteryStats
-                  ? batteryStats.level > 50
-                    ? '#10b981'
-                    : batteryStats.level > 20
-                    ? '#f59e0b'
-                    : '#ef4444'
-                  : '#71717a',
-              }}
-            >
-              {batteryStats ? `${batteryStats.level}%` : '--'}
-            </span>
           </div>
-          <div className="h-12 flex items-center justify-center">
-            {batteryStats ? (
-              <div className="flex items-center gap-2">
-                <div className="relative w-12 h-6 bg-surface-hover rounded border border-border-muted overflow-hidden">
-                  <div
-                    className={`absolute left-0 top-0 bottom-0 transition-all duration-300 ${
-                      batteryStats.level > 50
-                        ? 'bg-emerald-500/40'
-                        : batteryStats.level > 20
-                        ? 'bg-amber-500/40'
-                        : 'bg-red-500/40'
-                    }`}
-                    style={{ width: `${batteryStats.level}%` }}
-                  />
-                  <div className="absolute right-[-2px] top-1/2 -translate-y-1/2 w-1 h-3 bg-border-muted rounded-r" />
-                </div>
-                <span className="text-xs text-text-muted">
-                  {batteryStats.status === 'charging' ? 'Charging' : batteryStats.plugged !== 'none' ? 'Plugged' : ''}
-                </span>
-              </div>
-            ) : (
-              <span className="text-xs text-text-muted">No data</span>
-            )}
-          </div>
-        </div>
-      </div>
+        </section>
 
-      {/* Device Info Footer */}
-      <div className="flex items-center justify-between text-xs text-text-muted border-t border-border-muted pt-3">
-        <div className="flex items-center gap-4">
-          <span>
-            <span className="text-text-secondary">Device:</span> {device.model || device.id}
-          </span>
-          {device.model && (
-            <span>
-              <span className="text-text-secondary">Model:</span> {device.model}
-            </span>
-          )}
-          {packageName && (
-            <span>
-              <span className="text-text-secondary">Package:</span> {packageName}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-dot" />
-          <span>Connected</span>
-        </div>
+        {/* Problems and shortcuts */}
+        <section className="grid grid-cols-3 gap-3">
+          <div className="col-span-2 bg-surface border border-border-muted rounded-xl flex flex-col min-h-[240px] overflow-hidden">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-border-muted">
+              <h2 className="text-[13px] font-medium text-text-primary">Problems</h2>
+              <div className="flex items-center gap-3 text-xs">
+                <button
+                  onClick={() => onNavigate('crashes')}
+                  className={`hover:underline ${crashes.length > 0 ? 'text-red-400' : 'text-text-muted'}`}
+                >
+                  {crashes.length} {crashes.length === 1 ? 'crash' : 'crashes'}
+                </button>
+                <button
+                  onClick={() => onNavigate('network')}
+                  className={`hover:underline ${failedRequests.length > 0 ? 'text-amber-400' : 'text-text-muted'}`}
+                >
+                  {failedRequests.length} failed {failedRequests.length === 1 ? 'request' : 'requests'}
+                </button>
+              </div>
+            </div>
+            <RecentActivity
+              crashes={crashes}
+              failedRequests={failedRequests}
+              onItemClick={(type) => onNavigate(type === 'crash' ? 'crashes' : 'network')}
+            />
+          </div>
+
+          <div className="bg-surface border border-border-muted rounded-xl overflow-hidden">
+            <div className="flex items-center px-4 h-11 border-b border-border-muted">
+              <h2 className="text-[13px] font-medium text-text-primary">Shortcuts</h2>
+            </div>
+            <div className="p-1.5">
+              {shortcuts.map((shortcut) => (
+                <button
+                  key={shortcut.tab}
+                  onClick={() => onNavigate(shortcut.tab)}
+                  className="w-full flex items-center gap-3 h-10 px-3 rounded-md text-left text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
+                >
+                  <span className="w-4 h-4 [&>svg]:w-4 [&>svg]:h-4 text-text-muted">{shortcut.icon}</span>
+                  <span className="text-[13px]">{shortcut.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

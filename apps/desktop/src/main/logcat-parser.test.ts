@@ -22,3 +22,13 @@ test('logcat parser accepts legacy messages and rejects unreasonable chunk count
   assert.equal(legacy?.type, 'log');
   assert.equal(parser.parseLogLine('SDKMSG:source01:000002:LOG:-:1/999 {}'), null);
 });
+
+test('logcat parser tolerates CRLF line endings when reassembling chunks', () => {
+  const parser = new LogcatMessageParser();
+  const encoded = Buffer.from('{"type":"log","timestamp":1,"payload":{"message":"çğü"}}', 'utf8').toString('base64');
+  const [first, second] = [encoded.slice(0, 20), encoded.slice(20)];
+  assert.equal(parser.parseLogLine(`I/ReactNativeJS( 123): SDKMSG:source01:000003:LOG:Z:1/2 ${first}\r`), null);
+  const message = parser.parseLogLine(`I/ReactNativeJS( 123): SDKMSG:source01:000003:LOG:Z:2/2 ${second}\r`);
+  assert.equal(message?.payload.message, 'çğü');
+  assert.equal(parser.parseLogLine('SDKMSG:source01:000004:LOG:-:1/1 {"type":"log","timestamp":2,"payload":{}}\r')?.timestamp, 2);
+});

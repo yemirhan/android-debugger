@@ -56,6 +56,9 @@ export function useHeapDump(device: Device | null, packageName: string) {
   const busyTokenRef = useRef<symbol | null>(null);
   const dumpPathsRef = useRef<string[]>([]);
   const lastAutomaticCaptureRef = useRef(0);
+  // First PSS sample of the session. Kept separately because memorySamples is
+  // capped and its first element would otherwise drift after the cap is hit.
+  const baselinePssRef = useRef<{ sessionId: string; totalPssKb: number } | null>(null);
 
   const commitSession = useCallback((updater: (current: HeapLeakSession | null) => HeapLeakSession | null) => {
     setState((previous) => {
@@ -334,12 +337,13 @@ export function useHeapDump(device: Device | null, packageName: string) {
           : current);
         setState((previous) => ({ ...previous, liveMemoryPssKb: info.totalPss }));
 
-        const current = sessionRef.current;
-        const baselinePss = current?.memorySamples[0]?.totalPssKb;
+        if (baselinePssRef.current?.sessionId !== session.id) {
+          baselinePssRef.current = { sessionId: session.id, totalPssKb: info.totalPss };
+        }
+        const baselinePss = baselinePssRef.current.totalPssKb;
         const thresholdKb = session.thresholdMb * 1024;
         if (
           session.automation === 'memory-threshold' &&
-          baselinePss !== undefined &&
           info.totalPss - baselinePss >= thresholdKb &&
           Date.now() - lastAutomaticCaptureRef.current >= 30_000
         ) {

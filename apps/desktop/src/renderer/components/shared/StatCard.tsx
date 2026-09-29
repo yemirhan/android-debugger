@@ -15,39 +15,39 @@ interface StatCardProps {
 
 const colorStyles: Record<StatCardColor, { bg: string; text: string; border: string }> = {
   emerald: {
-    bg: 'bg-emerald-500/5',
+    bg: 'bg-surface',
     text: 'text-emerald-400',
-    border: 'border-emerald-500/20',
+    border: 'border-border-muted',
   },
   blue: {
-    bg: 'bg-blue-500/5',
+    bg: 'bg-surface',
     text: 'text-blue-400',
-    border: 'border-blue-500/20',
+    border: 'border-border-muted',
   },
   violet: {
-    bg: 'bg-violet-500/5',
+    bg: 'bg-surface',
     text: 'text-violet-400',
-    border: 'border-violet-500/20',
+    border: 'border-border-muted',
   },
   amber: {
-    bg: 'bg-amber-500/5',
+    bg: 'bg-surface',
     text: 'text-amber-400',
-    border: 'border-amber-500/20',
+    border: 'border-border-muted',
   },
   red: {
-    bg: 'bg-red-500/5',
+    bg: 'bg-surface',
     text: 'text-red-400',
-    border: 'border-red-500/20',
+    border: 'border-border-muted',
   },
   cyan: {
-    bg: 'bg-cyan-500/5',
+    bg: 'bg-surface',
     text: 'text-cyan-400',
-    border: 'border-cyan-500/20',
+    border: 'border-border-muted',
   },
   gray: {
-    bg: 'bg-zinc-500/5',
+    bg: 'bg-surface',
     text: 'text-zinc-400',
-    border: 'border-zinc-500/20',
+    border: 'border-border-muted',
   },
 };
 
@@ -69,7 +69,7 @@ export function StatCard({
       onClick={onClick}
       className={`
         rounded-lg p-3 border ${styles.border} ${styles.bg}
-        ${isClickable ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}
+        ${isClickable ? 'cursor-pointer hover:border-border transition-colors' : ''}
         ${className}
       `}
     >

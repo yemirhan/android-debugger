@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Device, ScreenshotResult, RecordingState } from '@android-debugger/shared';
 
 export function useScreenCapture(device: Device | null) {
@@ -7,18 +7,23 @@ export function useScreenCapture(device: Device | null) {
   const [lastScreenshot, setLastScreenshot] = useState<ScreenshotResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Recording is global in the main process and bound to the device it was
+  // started on, which may differ from the currently selected device.
+  const recordingDeviceIdRef = useRef<string | null>(null);
 
   // Listen for recording state updates
   useEffect(() => {
     let active = true;
     window.electronAPI.getRecordingState().then((state) => {
       if (!active) return;
+      recordingDeviceIdRef.current = state.isRecording ? state.deviceId ?? null : null;
       setIsRecording(state.isRecording);
       setRecordingPath(state.outputPath || null);
     }).catch((error) => {
       console.error('Failed to restore recording state:', error);
     });
     const unsubscribe = window.electronAPI.onRecordingUpdate((state: RecordingState) => {
+      recordingDeviceIdRef.current = state.isRecording ? state.deviceId ?? null : null;
       setIsRecording(state.isRecording);
       setRecordingPath(state.outputPath || null);
     });
@@ -71,6 +76,7 @@ export function useScreenCapture(device: Device | null) {
     try {
       const result = await window.electronAPI.startScreenRecording(device.id);
       if (result.success) {
+        recordingDeviceIdRef.current = device.id;
         setIsRecording(true);
         setRecordingPath(result.path || null);
       } else {
@@ -99,11 +105,17 @@ export function useScreenCapture(device: Device | null) {
     setError(null);
 
     try {
-      const result = await window.electronAPI.stopScreenRecording(device.id);
-      setIsRecording(false);
+      const result = await window.electronAPI.stopScreenRecording(
+        recordingDeviceIdRef.current ?? device.id
+      );
       if (result.success) {
+        recordingDeviceIdRef.current = null;
+        setIsRecording(false);
+        setRecordingPath(null);
         return result.path || null;
       } else {
+        // Keep the recording state; 'recording-update' will sync it if the
+        // recording actually ended.
         setError('Failed to stop recording');
         return null;
       }
@@ -112,7 +124,6 @@ export function useScreenCapture(device: Device | null) {
       return null;
     } finally {
       setLoading(false);
-      setRecordingPath(null);
     }
   }, [device, isRecording]);
 

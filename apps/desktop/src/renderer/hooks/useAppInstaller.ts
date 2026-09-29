@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   Device,
   InstallOptions,
@@ -18,6 +18,8 @@ interface UseAppInstallerReturn {
   // File selection
   selectedFile: SelectedAppFile | null;
   selectFile: () => Promise<void>;
+  selectDroppedFile: (file: File) => void;
+  fileError: string | null;
   clearFile: () => void;
 
   // Installation
@@ -47,6 +49,7 @@ interface UseAppInstallerReturn {
 export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
   // File selection state
   const [selectedFile, setSelectedFile] = useState<SelectedAppFile | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   // Installation options
   const [installOptions, setInstallOptions] = useState<InstallOptions>({
@@ -67,6 +70,9 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
   const [isDownloadingBundletool, setIsDownloadingBundletool] = useState<boolean>(false);
   const [bundletoolDownloadProgress, setBundletoolDownloadProgress] = useState<BundletoolDownloadProgress | null>(null);
   const [deviceSpec, setDeviceSpec] = useState<DeviceSpec | null>(null);
+  // Tracks the current device so async results for a previously selected
+  // device are not applied after switching.
+  const deviceIdRef = useRef<string | null>(device?.id ?? null);
 
   // Select file via dialog
   const selectFile = useCallback(async () => {
@@ -74,6 +80,7 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
       const file = await window.electronAPI.selectAppFile();
       if (file) {
         setSelectedFile(file);
+        setFileError(null);
         setResult(null);
         setProgress(null);
       }
@@ -82,9 +89,30 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
     }
   }, []);
 
+  // Select a file dropped onto the panel. File.path no longer exists in modern
+  // Electron, so the absolute path is resolved through webUtils in the preload.
+  const selectDroppedFile = useCallback((file: File) => {
+    const name = file.name.toLowerCase();
+    const fileType = name.endsWith('.aab') ? 'aab' : name.endsWith('.apk') ? 'apk' : null;
+    if (!fileType) {
+      setFileError('Only .apk and .aab files can be installed');
+      return;
+    }
+    const filePath = window.electronAPI.getPathForFile(file);
+    if (!filePath) {
+      setFileError('Could not resolve the dropped file path');
+      return;
+    }
+    setSelectedFile({ filePath, fileName: file.name, fileSize: file.size, fileType });
+    setFileError(null);
+    setResult(null);
+    setProgress(null);
+  }, []);
+
   // Clear selected file
   const clearFile = useCallback(() => {
     setSelectedFile(null);
+    setFileError(null);
     setResult(null);
     setProgress(null);
   }, []);
@@ -102,8 +130,11 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
       setNeedsBundletoolDownload(needsDownload);
 
       if (device) {
-        const spec = await window.electronAPI.getDeviceSpec(device.id);
-        setDeviceSpec(spec);
+        const requestedDeviceId = device.id;
+        const spec = await window.electronAPI.getDeviceSpec(requestedDeviceId);
+        if (deviceIdRef.current === requestedDeviceId) {
+          setDeviceSpec(spec);
+        }
       }
     } catch (error) {
       console.error('Error checking environment:', error);
@@ -136,6 +167,7 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
   const install = useCallback(async () => {
     if (!device || !selectedFile) return;
 
+    const requestedDeviceId = device.id;
     setIsInstalling(true);
     setResult(null);
     setProgress({ stage: 'validating', percent: 0, message: 'Starting installation...' });
@@ -146,18 +178,23 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
         selectedFile.filePath,
         installOptions
       );
+      if (deviceIdRef.current !== requestedDeviceId) return;
       setResult(installResult);
     } catch (error) {
+      if (deviceIdRef.current !== requestedDeviceId) return;
       const message = error instanceof Error ? error.message : 'Unknown error';
       setResult({ success: false, error: message, errorCode: 'UNKNOWN' });
     } finally {
-      setIsInstalling(false);
+      if (deviceIdRef.current === requestedDeviceId) {
+        setIsInstalling(false);
+      }
     }
   }, [device, selectedFile, installOptions]);
 
   // Reset all state
   const reset = useCallback(() => {
     setSelectedFile(null);
+    setFileError(null);
     setProgress(null);
     setResult(null);
     setIsInstalling(false);
@@ -185,6 +222,13 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
     };
   }, []);
 
+  // Reset when device changes
+  useEffect(() => {
+    deviceIdRef.current = device?.id ?? null;
+    setDeviceSpec(null);
+    reset();
+  }, [device?.id]);
+
   // Check environment when device changes
   useEffect(() => {
     if (device) {
@@ -192,15 +236,12 @@ export function useAppInstaller(device: Device | null): UseAppInstallerReturn {
     }
   }, [device?.id]);
 
-  // Reset when device changes
-  useEffect(() => {
-    reset();
-  }, [device?.id]);
-
   return {
     // File selection
     selectedFile,
     selectFile,
+    selectDroppedFile,
+    fileError,
     clearFile,
 
     // Installation

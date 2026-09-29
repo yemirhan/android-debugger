@@ -289,7 +289,9 @@ export function parseMethodTrace(buffer: Buffer): MethodTraceAnalysis {
   for (let cursor = binaryOffset + dataOffset; cursor + recordSize <= buffer.length; cursor += recordSize) {
     const threadId = threadIdSize === 1 ? buffer[cursor] : buffer.readUInt16LE(cursor);
     const methodAndAction = buffer.readUInt32LE(cursor + threadIdSize);
-    const methodId = methodAndAction & 0xfffffffc;
+    // `>>> 0` keeps IDs with the high bit set unsigned so they match the
+    // header's hex method IDs (JS bitwise results are signed 32-bit).
+    const methodId = (methodAndAction & 0xfffffffc) >>> 0;
     const action = methodAndAction & 0x03;
     const firstTimeOffset = cursor + threadIdSize + 4;
     const timestamp = recordSize >= threadIdSize + 12

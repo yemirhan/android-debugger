@@ -91,11 +91,36 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
   const checkForUpdates = useCallback(async () => {
     setUpdateStatus('checking');
     setUpdateError(null);
-    await window.electronAPI.checkForUpdates();
+    try {
+      const result = await window.electronAPI.checkForUpdates();
+      // Events normally drive the status, but don't leave the UI stuck in
+      // 'checking' if the check failed without emitting an error event.
+      if (result.error) {
+        setUpdateStatus('error');
+        setUpdateError(result.error);
+      } else if (!result.updateAvailable) {
+        setUpdateStatus((prev) => (prev === 'checking' ? 'idle' : prev));
+      }
+    } catch (error) {
+      setUpdateStatus('error');
+      setUpdateError(error instanceof Error ? error.message : 'Failed to check for updates');
+    }
   }, []);
 
   const downloadUpdate = useCallback(async () => {
-    await window.electronAPI.downloadUpdate();
+    // Show progress immediately; progress events may take a moment to arrive.
+    setUpdateStatus('downloading');
+    setUpdateError(null);
+    try {
+      const result = await window.electronAPI.downloadUpdate();
+      if (!result.success) {
+        setUpdateStatus('error');
+        setUpdateError(result.error || 'Failed to download update');
+      }
+    } catch (error) {
+      setUpdateStatus('error');
+      setUpdateError(error instanceof Error ? error.message : 'Failed to download update');
+    }
   }, []);
 
   const installUpdate = useCallback(async () => {

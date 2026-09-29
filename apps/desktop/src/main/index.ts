@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { execFileSync, spawnSync } from 'child_process';
 import { deflateSync } from 'zlib';
-import type { UpdateSettings, UpdateInfo, UpdateProgress, BundleAnalysisResult } from '@android-debugger/shared';
+import type { UpdateSettings, UpdateInfo, UpdateProgress, UpdateCheckResult, BundleAnalysisResult } from '@android-debugger/shared';
 import { analyzeBundle, extractBundleEntry } from './bundle-analyzer';
 
 interface AdbInfo {
@@ -97,7 +97,7 @@ function getAdbInfo(): AdbInfo | null {
 
       // Get version
       try {
-        const version = execFileSync(adbPath, ['version'], { encoding: 'utf-8' })
+        const version = execFileSync(adbPath, ['version'], { encoding: 'utf-8', timeout: 10000 })
           .split('\n')[0]
           .replace('Android Debug Bridge version ', '');
         return { path: adbPath, version, source };
@@ -117,13 +117,13 @@ function getJavaInfo(): JavaInfo | null {
 
     let javaPath: string;
     try {
-      javaPath = execFileSync(whichCommand, ['java'], { encoding: 'utf-8' }).trim().split('\n')[0];
+      javaPath = execFileSync(whichCommand, ['java'], { encoding: 'utf-8', timeout: 10000 }).trim().split('\n')[0];
     } catch {
       return null;
     }
 
     // Get version
-    const versionResult = spawnSync(javaPath, ['-version'], { encoding: 'utf-8' });
+    const versionResult = spawnSync(javaPath, ['-version'], { encoding: 'utf-8', timeout: 10000 });
     const versionOutput = `${versionResult.stdout ?? ''}\n${versionResult.stderr ?? ''}`;
     // Java version output is on stderr and looks like: java version "17.0.1" or openjdk version "11.0.12"
     const versionMatch = versionOutput.match(/(?:java|openjdk) version "([^"]+)"/i);
@@ -580,7 +580,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1000,
     minHeight: 700,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: '#131519',
     titleBarStyle: 'hiddenInset',
     title: isDev ? 'Android Debugger (Dev)' : 'Android Debugger',
     webPreferences: {
@@ -592,11 +592,18 @@ function createWindow(): void {
   });
 
   // Load the renderer
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
-  }
+  const load = process.env.ELECTRON_RENDERER_URL
+    ? mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    : mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+  load.catch((error) => console.error('Failed to load renderer:', error));
+
+  // Monitors and log streams are owned by the page that started them. A reload
+  // (Cmd+R, full HMR reload) or renderer crash leaves nothing to stop them, so
+  // tear them down here; the new page restarts whatever it needs.
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) stopRendererSessions();
+  });
+  mainWindow.webContents.on('render-process-gone', () => stopRendererSessions());
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     const parsed = parseAllowedExternalUrl(url);
@@ -617,6 +624,21 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+// Polling intervals come from renderer settings; never trust them blindly.
+const MIN_POLL_INTERVAL_MS = 250;
+const MAX_POLL_INTERVAL_MS = 60_000;
+function clampPollInterval(interval: unknown, fallback: number): number {
+  if (typeof interval !== 'number' || !Number.isFinite(interval) || interval <= 0) return fallback;
+  return Math.min(MAX_POLL_INTERVAL_MS, Math.max(MIN_POLL_INTERVAL_MS, Math.round(interval)));
+}
+
+function stopRendererSessions(): void {
+  // Invalidate in-flight async logcat starts (they await a PID lookup first).
+  displayLogcatRequestId++;
+  sdkLogcatRequestId++;
+  void adbService.stopAll(false);
 }
 
 function setupIpcHandlers(): void {
@@ -646,7 +668,7 @@ function setupIpcHandlers(): void {
     adbService.startMemoryMonitor(
       deviceId,
       packageName,
-      interval || MEMORY_POLL_INTERVAL,
+      clampPollInterval(interval, MEMORY_POLL_INTERVAL),
       (info: MemoryInfo) => {
         mainWindow?.webContents.send('memory-update', info);
       }
@@ -661,24 +683,40 @@ function setupIpcHandlers(): void {
   ipcMain.on('adb:start-logcat', async (_, deviceId: string, filters?: string[], packageName?: string) => {
     const requestId = ++displayLogcatRequestId;
 
-    let pid: number | undefined;
-    if (packageName) {
-      const fetchedPid = await adbService.getPid(deviceId, packageName);
-      if (fetchedPid) {
-        pid = fetchedPid;
+    try {
+      let pid: number | undefined;
+      let uid: number | undefined;
+      if (packageName) {
+        // --uid needs Android 9+; fall back to the current PID on older devices.
+        const sdk = await adbService.getDeviceSdkVersion(deviceId);
+        if (sdk === 0 || sdk >= 28) {
+          uid = (await adbService.getUid(deviceId, packageName)) ?? undefined;
+        }
+        if (!uid) {
+          pid = (await adbService.getPid(deviceId, packageName)) ?? undefined;
+        }
+        // Never fall back to the whole device's log when an app was asked for.
+        if (!uid && !pid) {
+          if (requestId === displayLogcatRequestId) adbService.stopLogcat();
+          return;
+        }
       }
+
+      if (requestId !== displayLogcatRequestId) return;
+
+      adbService.startLogcat(
+        deviceId,
+        (entry: LogEntry) => {
+          mainWindow?.webContents.send('log-entry', entry);
+        },
+        filters,
+        pid,
+        uid
+      );
+    } catch (error) {
+      // ipcMain.on listeners have no caller to reject to.
+      console.error('Error starting logcat:', error);
     }
-
-    if (requestId !== displayLogcatRequestId) return;
-
-    adbService.startLogcat(
-      deviceId,
-      (entry: LogEntry) => {
-        mainWindow?.webContents.send('log-entry', entry);
-      },
-      filters,
-      pid
-    );
   });
 
   ipcMain.on('adb:stop-logcat', () => {
@@ -688,9 +726,13 @@ function setupIpcHandlers(): void {
 
   ipcMain.on('adb:start-sdk-logcat', async (_, deviceId: string, packageName?: string) => {
     const requestId = ++sdkLogcatRequestId;
-    const pid = packageName ? await adbService.getPid(deviceId, packageName) : undefined;
-    if (requestId !== sdkLogcatRequestId) return;
-    adbService.startSdkLogcat(deviceId, pid || undefined);
+    try {
+      const pid = packageName ? await adbService.getPid(deviceId, packageName) : undefined;
+      if (requestId !== sdkLogcatRequestId) return;
+      adbService.startSdkLogcat(deviceId, pid || undefined);
+    } catch (error) {
+      console.error('Error starting SDK logcat:', error);
+    }
   });
 
   ipcMain.on('adb:stop-sdk-logcat', () => {
@@ -711,7 +753,7 @@ function setupIpcHandlers(): void {
     adbService.startCpuMonitor(
       deviceId,
       packageName,
-      interval || CPU_POLL_INTERVAL,
+      clampPollInterval(interval, CPU_POLL_INTERVAL),
       (info: CpuInfo) => {
         mainWindow?.webContents.send('cpu-update', info);
       }
@@ -731,7 +773,7 @@ function setupIpcHandlers(): void {
     adbService.startFpsMonitor(
       deviceId,
       packageName,
-      interval || FPS_POLL_INTERVAL,
+      clampPollInterval(interval, FPS_POLL_INTERVAL),
       (info: FpsInfo) => {
         mainWindow?.webContents.send('fps-update', info);
       }
@@ -925,7 +967,7 @@ function setupIpcHandlers(): void {
   ipcMain.on('adb:start-battery-monitor', (_, deviceId: string, interval?: number) => {
     adbService.startBatteryMonitor(
       deviceId,
-      interval || BATTERY_POLL_INTERVAL,
+      clampPollInterval(interval, BATTERY_POLL_INTERVAL),
       (info: BatteryInfo) => {
         mainWindow?.webContents.send('battery-update', info);
       }
@@ -938,9 +980,13 @@ function setupIpcHandlers(): void {
 
   // Crash logcat handlers
   ipcMain.on('adb:start-crash-logcat', (_, deviceId: string) => {
-    adbService.startCrashLogcat(deviceId, (entry: CrashEntry) => {
-      mainWindow?.webContents.send('crash-entry', entry);
-    });
+    try {
+      adbService.startCrashLogcat(deviceId, (entry: CrashEntry) => {
+        mainWindow?.webContents.send('crash-entry', entry);
+      });
+    } catch (error) {
+      console.error('Error starting crash logcat:', error);
+    }
   });
 
   ipcMain.on('adb:stop-crash-logcat', () => {
@@ -965,7 +1011,7 @@ function setupIpcHandlers(): void {
     adbService.startNetworkStatsMonitor(
       deviceId,
       packageName,
-      interval || NETWORK_STATS_POLL_INTERVAL,
+      clampPollInterval(interval, NETWORK_STATS_POLL_INTERVAL),
       (stats: AppNetworkStats) => {
         mainWindow?.webContents.send('network-stats-update', stats);
       }
@@ -1112,28 +1158,32 @@ function setupIpcHandlers(): void {
   });
 
   // Auto-updater handlers
-  ipcMain.handle('updater:check', () => new Promise((resolve) => {
-    const cleanup = () => {
+  ipcMain.handle('updater:check', () => new Promise<UpdateCheckResult>((resolve) => {
+    let settled = false;
+    const finish = (result: UpdateCheckResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
       autoUpdater.off('update-available', onAvailable);
       autoUpdater.off('update-not-available', onNotAvailable);
       autoUpdater.off('error', onError);
+      resolve(result);
     };
-    const onAvailable = (info: { version: string }) => {
-      cleanup();
-      resolve({ updateAvailable: true, version: info.version });
-    };
-    const onNotAvailable = () => {
-      cleanup();
-      resolve({ updateAvailable: false });
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      resolve({ updateAvailable: false, error: error.message });
-    };
+    const onAvailable = (info: { version: string }) => finish({ updateAvailable: true, version: info.version });
+    const onNotAvailable = () => finish({ updateAvailable: false });
+    const onError = (error: Error) => finish({ updateAvailable: false, error: error.message });
+    // Never leave the renderer waiting forever if no updater event arrives.
+    const timeout = setTimeout(() => finish({ updateAvailable: false, error: 'Update check timed out' }), 60_000);
     autoUpdater.once('update-available', onAvailable);
     autoUpdater.once('update-not-available', onNotAvailable);
     autoUpdater.once('error', onError);
-    autoUpdater.checkForUpdates().catch(onError);
+    autoUpdater.checkForUpdates()
+      .then((result) => {
+        // electron-updater resolves null without emitting any event when the
+        // app is not packaged (dev builds) or updates are otherwise disabled.
+        if (!result) finish({ updateAvailable: false, error: 'Update checks are only available in the packaged app' });
+      })
+      .catch(onError);
   }));
 
   ipcMain.handle('updater:download', async () => {
@@ -1177,7 +1227,7 @@ function setupIpcHandlers(): void {
     adbService.startThreadMonitor(
       deviceId,
       packageName,
-      interval,
+      clampPollInterval(interval, 1000),
       (snapshot: ThreadSnapshot) => {
         mainWindow?.webContents.send('thread-update', snapshot);
       }
@@ -1376,7 +1426,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  void adbService.stopAll(false);
+  stopRendererSessions();
   void scrcpyService.stopMirror();
 
   if (process.platform !== 'darwin') {

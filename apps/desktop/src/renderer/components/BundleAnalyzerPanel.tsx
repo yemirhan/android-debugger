@@ -95,6 +95,8 @@ export function BundleAnalyzerPanel() {
   const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    // dragleave also fires when moving onto a child element; ignore those.
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
     setIsDragOver(false);
   }, []);
 
@@ -249,6 +251,7 @@ export function BundleAnalyzerPanel() {
           menu={contextMenu}
           onClose={() => setContextMenu(null)}
           onExtract={handleExtract}
+          onNotice={setNotice}
         />
       )}
     </div>
@@ -265,10 +268,12 @@ function BundleContextMenu({
   menu,
   onClose,
   onExtract,
+  onNotice,
 }: {
   menu: ContextMenuState;
   onClose: () => void;
   onExtract: (target: ContextTarget) => void;
+  onNotice: (notice: { kind: 'success' | 'error'; text: string }) => void;
 }) {
   const { target } = menu;
 
@@ -281,7 +286,10 @@ function BundleContextMenu({
   }, [onClose]);
 
   const copy = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard
+      .writeText(text)
+      .then(() => onNotice({ kind: 'success', text: 'Copied to clipboard' }))
+      .catch(() => onNotice({ kind: 'error', text: 'Failed to copy to clipboard' }));
     onClose();
   };
 
@@ -410,7 +418,7 @@ function SummaryHeader({ analysis }: { analysis: BundleAnalysis }) {
 function SummaryStat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
     <div className="bg-surface-hover rounded-lg px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wider text-text-muted">{label}</p>
+      <p className="text-[10px] text-text-muted">{label}</p>
       <p className={`text-sm font-semibold mt-0.5 ${warn ? 'text-amber-400' : 'text-text-primary'}`}>
         {value}
       </p>
@@ -500,7 +508,7 @@ function FileTreeView({
 
   return (
     <>
-      <div className="flex items-center px-3 py-2 border-b border-border-muted text-[10px] uppercase tracking-wider text-text-muted">
+      <div className="flex items-center px-3 py-2 border-b border-border-muted text-[10px] text-text-muted">
         <span className="flex-1">File</span>
         <span className="w-24 text-right">Raw Size</span>
         <span className="w-24 text-right">Download</span>
@@ -666,7 +674,7 @@ function DexView({
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="flex items-center px-3 py-2 border-b border-border-muted text-[10px] uppercase tracking-wider text-text-muted">
+      <div className="flex items-center px-3 py-2 border-b border-border-muted text-[10px] text-text-muted">
         <span className="flex-1">File</span>
         <span className="w-24 text-right">Size</span>
         <span className="w-24 text-right">Classes</span>

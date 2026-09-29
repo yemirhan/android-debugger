@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { AppNetworkStats, Device } from '@android-debugger/shared';
 import { MAX_NETWORK_STATS_DATA_POINTS } from '@android-debugger/shared';
+import { getAppSettings } from '../lib/app-settings';
 
 export interface NetworkStatsHistory {
   timestamp: number;
@@ -14,17 +15,22 @@ export function useNetworkStats(device: Device | null, packageName: string) {
   const [history, setHistory] = useState<NetworkStatsHistory[]>([]);
   const [current, setCurrent] = useState<AppNetworkStats | null>(null);
   const [isMonitoring, setIsMonitoring] = useState(false);
+  // Main-process monitors can emit after stop (or survive a reload); only accept
+  // updates while this hook owns a running monitor.
+  const activeRef = useRef(false);
 
   // Start monitoring
   const startMonitoring = useCallback(() => {
     if (!device || !packageName) return;
 
+    activeRef.current = true;
     window.electronAPI.startNetworkStatsMonitor(device.id, packageName);
     setIsMonitoring(true);
   }, [device, packageName]);
 
   // Stop monitoring
   const stopMonitoring = useCallback(() => {
+    activeRef.current = false;
     window.electronAPI.stopNetworkStatsMonitor();
     setIsMonitoring(false);
   }, []);
@@ -52,6 +58,7 @@ export function useNetworkStats(device: Device | null, packageName: string) {
   // Listen for network stats updates
   useEffect(() => {
     const unsubscribe = window.electronAPI.onNetworkStatsUpdate((stats: AppNetworkStats) => {
+      if (!activeRef.current) return;
       setCurrent(stats);
       setHistory((prev) => {
         const entry: NetworkStatsHistory = {
@@ -74,16 +81,22 @@ export function useNetworkStats(device: Device | null, packageName: string) {
     };
   }, []);
 
+  // Own exactly one monitor for the current target; auto-start it unless
+  // disabled in Settings (then the user starts it manually).
   useEffect(() => {
     clearData();
-    if (!device || !packageName) {
+    if (device && packageName && getAppSettings().autoStartMonitoring) {
+      activeRef.current = true;
+      window.electronAPI.startNetworkStatsMonitor(device.id, packageName);
+      setIsMonitoring(true);
+    } else {
       setIsMonitoring(false);
-      return;
     }
-
-    window.electronAPI.startNetworkStatsMonitor(device.id, packageName);
-    setIsMonitoring(true);
-    return () => window.electronAPI.stopNetworkStatsMonitor();
+    return () => {
+      if (!activeRef.current) return;
+      activeRef.current = false;
+      window.electronAPI.stopNetworkStatsMonitor();
+    };
   }, [device?.id, packageName, clearData]);
 
   return {

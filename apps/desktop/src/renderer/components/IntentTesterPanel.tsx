@@ -122,7 +122,7 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
                 />
                 <button
                   onClick={fireDeepLink}
-                  disabled={loading || !deepLinkUri}
+                  disabled={loading || !deepLinkUri.trim()}
                   className="px-4 py-2 text-sm font-medium bg-accent hover:bg-accent/90 text-white rounded-md transition-all duration-150 btn-press disabled:opacity-50"
                 >
                   {loading ? 'Firing...' : 'Fire'}
@@ -131,7 +131,7 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
             </div>
 
             <div className="bg-surface rounded-lg p-4 border border-border-muted">
-              <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+              <h3 className="text-xs font-medium text-text-muted mb-3">
                 Common Deep Links
               </h3>
               <div className="flex flex-wrap gap-2">
@@ -303,7 +303,7 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
 
             {/* Fire Button */}
             <button
-              onClick={fireIntent}
+              onClick={() => fireIntent()}
               disabled={loading}
               className="w-full px-4 py-3 text-sm font-medium bg-accent hover:bg-accent/90 text-white rounded-md transition-all duration-150 btn-press disabled:opacity-50"
             >
@@ -346,9 +346,9 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
                         Edit
                       </button>
                       <button
-                        onClick={async () => {
+                        onClick={() => {
                           loadSavedIntent(intent);
-                          await fireIntent();
+                          fireIntent(intent);
                         }}
                         disabled={loading}
                         className="px-3 py-1.5 text-xs font-medium bg-accent hover:bg-accent/90 text-white rounded transition-all duration-150 btn-press disabled:opacity-50"
@@ -356,7 +356,12 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
                         Fire
                       </button>
                       <button
-                        onClick={() => deleteSavedIntent(intent.id)}
+                        onClick={() => {
+                          if (window.confirm(`Delete saved intent "${intent.name || 'Unnamed Intent'}"?`)) {
+                            deleteSavedIntent(intent.id);
+                          }
+                        }}
+                        title="Delete saved intent"
                         className="p-1.5 text-text-muted hover:text-red-400 transition-colors"
                       >
                         <TrashIcon className="w-4 h-4" />
@@ -373,7 +378,11 @@ export function IntentTesterPanel({ device }: IntentTesterPanelProps) {
           <div className="space-y-2">
             <div className="flex justify-end mb-2">
               <button
-                onClick={clearHistory}
+                onClick={() => {
+                  if (window.confirm('Clear all intent history?')) {
+                    clearHistory();
+                  }
+                }}
                 disabled={history.length === 0}
                 className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press disabled:opacity-50"
               >

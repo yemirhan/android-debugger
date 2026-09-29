@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Device } from '@android-debugger/shared';
 import { useScreenCapture } from '../hooks/useScreenCapture';
 import { InfoIcon } from './icons';
@@ -24,27 +24,39 @@ export function ScreenCapturePanel({ device }: ScreenCapturePanelProps) {
   const guide = tabGuides['screen-capture'];
 
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
+
+  // Drive the duration counter from the actual recording state so it stops when
+  // the recording ends on its own (e.g. the 3 minute limit), is cleaned up on
+  // unmount, and resumes correctly if the panel remounts mid-recording.
+  useEffect(() => {
+    if (!isRecording) {
+      setRecordingDuration(0);
+      return;
+    }
+
+    let active = true;
+    let startTime = Date.now();
+    const tick = () => setRecordingDuration(Math.max(0, Math.floor((Date.now() - startTime) / 1000)));
+    window.electronAPI.getRecordingState().then((state) => {
+      if (active && state.isRecording && state.startTime) {
+        startTime = state.startTime;
+        tick();
+      }
+    }).catch(() => {});
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isRecording]);
 
   const handleStartRecording = async () => {
-    const success = await startRecording();
-    if (success) {
-      // Start duration counter
-      setRecordingDuration(0);
-      const interval = setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
-      }, 1000);
-      setRecordingInterval(interval);
-    }
+    await startRecording();
   };
 
   const handleStopRecording = async () => {
-    if (recordingInterval) {
-      clearInterval(recordingInterval);
-      setRecordingInterval(null);
-    }
     await stopRecording();
-    setRecordingDuration(0);
   };
 
   const formatDuration = (seconds: number) => {
@@ -163,7 +175,7 @@ export function ScreenCapturePanel({ device }: ScreenCapturePanelProps) {
 
       {/* Tips */}
       <div className="bg-surface rounded-lg p-4 border border-border-muted">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">Tips</h3>
+        <h3 className="text-xs font-medium text-text-muted mb-3">Tips</h3>
         <ul className="space-y-2 text-sm text-text-secondary">
           <li className="flex items-start gap-2">
             <span className="text-accent">•</span>

@@ -1,18 +1,29 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useUpdateContext } from '../contexts/UpdateContext';
 
 export function UpdateAvailableModal() {
   const {
     updateStatus,
     updateInfo,
-    updateProgress,
     showModal,
     dismissModal,
     downloadUpdate,
     navigateToSettings,
   } = useUpdateContext();
 
-  if (!showModal || updateStatus !== 'available' || !updateInfo) {
+  const isOpen = showModal && updateStatus === 'available' && !!updateInfo;
+
+  // Allow dismissing the dialog with Escape like other modal dialogs.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') dismissModal();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, dismissModal]);
+
+  if (!isOpen || !updateInfo) {
     return null;
   }
 
@@ -90,7 +101,7 @@ export function UpdateAvailableModal() {
         {releaseNotesText && (
           <div className="px-6 pb-4">
             <div className="bg-background rounded-lg p-4 max-h-40 overflow-y-auto">
-              <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
+              <h3 className="text-xs font-medium text-text-muted mb-2">
                 What's New
               </h3>
               <div

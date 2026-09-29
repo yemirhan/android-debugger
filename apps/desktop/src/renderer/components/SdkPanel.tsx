@@ -216,8 +216,8 @@ AndroidDebugger.sendState('user', { name: 'John' });`}
                   <p className="text-xs mt-1">Requires SDK in your app</p>
                 </div>
               ) : (
-                states.map((state, i) => (
-                  <div key={i} className="px-4 py-3 border-b border-border-muted/50 hover:bg-surface-hover/50 transition-colors">
+                states.map((state) => (
+                  <div key={state.name} className="px-4 py-3 border-b border-border-muted/50 hover:bg-surface-hover/50 transition-colors">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-cyan-400">{state.name}</span>
                       <span className="text-xs text-text-muted font-mono">

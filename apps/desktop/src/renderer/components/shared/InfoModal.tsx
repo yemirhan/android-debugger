@@ -65,7 +65,7 @@ export function InfoModal({ isOpen, onClose, title, description, features, tips 
         {features && features.length > 0 && (
           <div className="px-6 pb-4">
             <div className="bg-background rounded-lg p-4">
-              <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+              <h3 className="text-xs font-medium text-text-muted mb-3">
                 Features
               </h3>
               <ul className="space-y-2">
@@ -96,7 +96,7 @@ export function InfoModal({ isOpen, onClose, title, description, features, tips 
         {tips && tips.length > 0 && (
           <div className="px-6 pb-4">
             <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-4">
-              <h3 className="text-xs font-medium text-amber-400 uppercase tracking-wider mb-3">
+              <h3 className="text-xs font-medium text-amber-400 mb-3">
                 Tips
               </h3>
               <ul className="space-y-2">

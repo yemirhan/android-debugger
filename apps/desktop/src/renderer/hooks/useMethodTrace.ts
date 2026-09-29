@@ -24,14 +24,25 @@ export function useMethodTrace(device: Device | null, packageName: string) {
 
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingStartRef = useRef<number>(0);
+  // Bumped on target change so in-flight start/stop results for a previous
+  // device/package don't flip the recording state of the new one.
+  const targetGenerationRef = useRef(0);
+  // Latest trace whose analysis was requested; older responses are dropped.
+  const analyzingTraceIdRef = useRef<string | null>(null);
 
   // Stop an active device-side profiler when the panel or target goes away.
   useEffect(() => {
     return () => {
+      targetGenerationRef.current++;
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
       }
       void window.electronAPI.cancelMethodTrace();
+      // The device-side trace was cancelled, so the recording UI must not stay active.
+      setState(prev => (prev.isRecording || prev.recordingDuration
+        ? { ...prev, isRecording: false, recordingDuration: 0 }
+        : prev));
     };
   }, [device?.id, packageName]);
 
@@ -41,10 +52,14 @@ export function useMethodTrace(device: Device | null, packageName: string) {
       return;
     }
 
+    const generation = targetGenerationRef.current;
     setState(prev => ({ ...prev, isRecording: true, error: null, recordingDuration: 0 }));
     recordingStartRef.current = Date.now();
 
-    // Start duration timer
+    // Start duration timer (never leak a previous one)
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current);
+    }
     durationIntervalRef.current = setInterval(() => {
       setState(prev => ({
         ...prev,
@@ -54,6 +69,7 @@ export function useMethodTrace(device: Device | null, packageName: string) {
 
     try {
       const result = await window.electronAPI.startMethodTrace(device.id, packageName);
+      if (generation !== targetGenerationRef.current) return;
 
       if (!result.success) {
         if (durationIntervalRef.current) {
@@ -67,6 +83,7 @@ export function useMethodTrace(device: Device | null, packageName: string) {
         }));
       }
     } catch (error) {
+      if (generation !== targetGenerationRef.current) return;
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
@@ -84,10 +101,12 @@ export function useMethodTrace(device: Device | null, packageName: string) {
       return;
     }
 
+    analyzingTraceIdRef.current = trace.id;
     setState(prev => ({ ...prev, isAnalyzing: true, selectedTrace: trace, analysis: null }));
 
     try {
       const analysis = await window.electronAPI.analyzeMethodTrace(trace.filePath);
+      if (analyzingTraceIdRef.current !== trace.id) return;
       setState(prev => ({
         ...prev,
         analysis,
@@ -95,6 +114,7 @@ export function useMethodTrace(device: Device | null, packageName: string) {
         error: analysis ? null : 'Failed to analyze method trace',
       }));
     } catch (error) {
+      if (analyzingTraceIdRef.current !== trace.id) return;
       setState(prev => ({
         ...prev,
         isAnalyzing: false,
@@ -147,15 +167,17 @@ export function useMethodTrace(device: Device | null, packageName: string) {
   }, [analyzeTrace]);
 
   const clearTraces = useCallback(() => {
-    setState({
+    analyzingTraceIdRef.current = null;
+    // Clearing the list must not abandon an active recording: its timer and
+    // device-side trace keep running, so keep the recording state intact.
+    setState(prev => ({
+      ...prev,
       traces: [],
       selectedTrace: null,
       analysis: null,
-      isRecording: false,
       isAnalyzing: false,
-      recordingDuration: 0,
       error: null,
-    });
+    }));
   }, []);
 
   const clearError = useCallback(() => {

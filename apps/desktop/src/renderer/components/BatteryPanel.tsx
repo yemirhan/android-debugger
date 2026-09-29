@@ -20,7 +20,7 @@ interface BatteryPanelProps {
 
 export function BatteryPanel({ device }: BatteryPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const { data, current, isMonitoring, stopMonitoring, clearData } = useBattery(device);
+  const { data, current, isMonitoring, startMonitoring, stopMonitoring, clearData } = useBattery(device);
   const guide = tabGuides['battery'];
 
   // Format data for chart
@@ -139,14 +139,14 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
             Clear
           </button>
           <button
-            onClick={isMonitoring ? stopMonitoring : undefined}
+            onClick={isMonitoring ? stopMonitoring : startMonitoring}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
               isMonitoring
                 ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-surface text-text-muted border border-border-muted'
+                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
             }`}
           >
-            {isMonitoring ? 'Stop' : 'Stopped'}
+            {isMonitoring ? 'Stop' : 'Start'}
           </button>
         </div>
       </div>
@@ -200,17 +200,17 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
         {data.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#262a31" vertical={false} />
               <XAxis
                 dataKey="time"
-                stroke="#71717a"
+                stroke="#757c89"
                 tickLine={false}
                 axisLine={false}
                 tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
               />
               <YAxis
                 yAxisId="level"
-                stroke="#71717a"
+                stroke="#757c89"
                 tickLine={false}
                 axisLine={false}
                 tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
@@ -221,7 +221,7 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
               <YAxis
                 yAxisId="temp"
                 orientation="right"
-                stroke="#71717a"
+                stroke="#757c89"
                 tickLine={false}
                 axisLine={false}
                 tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
@@ -231,14 +231,14 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#18181b',
-                  border: '1px solid #3f3f46',
+                  backgroundColor: '#20242a',
+                  border: '1px solid #333842',
                   borderRadius: '8px',
                   fontSize: '12px',
                   fontFamily: 'var(--font-mono)',
                   boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
                 }}
-                labelStyle={{ color: '#a1a1aa' }}
+                labelStyle={{ color: '#a4abb7' }}
                 formatter={(value: number, name: string) => {
                   if (name === 'level') return [`${value}%`, 'Battery'];
                   if (name === 'temperature') return [`${value}°C`, 'Temperature'];
@@ -250,7 +250,7 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
                 type="monotone"
                 dataKey="level"
                 name="level"
-                stroke="#10b981"
+                stroke="#3ddc84"
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 4, strokeWidth: 0 }}
@@ -260,7 +260,7 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
                 type="monotone"
                 dataKey="temperature"
                 name="temperature"
-                stroke="#f59e0b"
+                stroke="#f5b841"
                 strokeWidth={1.5}
                 dot={false}
                 activeDot={{ r: 3, strokeWidth: 0 }}
@@ -275,7 +275,7 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
                 <rect x="20" y="9" width="2" height="6" rx="1" strokeWidth={1.5} />
               </svg>
             </div>
-            <p className="text-sm">Waiting for battery data...</p>
+            <p className="text-sm">{isMonitoring ? 'Waiting for battery data...' : 'Monitoring stopped'}</p>
           </div>
         )}
       </div>
@@ -317,12 +317,12 @@ interface StatCardProps {
 
 function StatCard({ label, value, color }: StatCardProps) {
   const colors = {
-    emerald: 'border-emerald-500/20 bg-emerald-500/5',
-    blue: 'border-blue-500/20 bg-blue-500/5',
-    violet: 'border-violet-500/20 bg-violet-500/5',
-    amber: 'border-amber-500/20 bg-amber-500/5',
-    red: 'border-red-500/20 bg-red-500/5',
-    cyan: 'border-cyan-500/20 bg-cyan-500/5',
+    emerald: 'border-border-muted bg-surface',
+    blue: 'border-border-muted bg-surface',
+    violet: 'border-border-muted bg-surface',
+    amber: 'border-border-muted bg-surface',
+    red: 'border-border-muted bg-surface',
+    cyan: 'border-border-muted bg-surface',
   };
 
   const textColors = {

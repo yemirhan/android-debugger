@@ -182,6 +182,10 @@ export function interceptWebSocket(send: SendFn): () => void {
 
     // Override send method
     send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+      // Send first so a failed send (e.g. while still CONNECTING) throws to the
+      // caller as usual and is not reported as a sent message.
+      super.send(data);
+
       const dataStr = typeof data === 'string' ? data : '[Binary data]';
       let size = 0;
       if (typeof data === 'string') {
@@ -212,8 +216,6 @@ export function interceptWebSocket(send: SendFn): () => void {
           message,
         },
       });
-
-      super.send(data);
     }
   };
 

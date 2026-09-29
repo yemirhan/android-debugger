@@ -7,43 +7,44 @@ export function useAlarmMonitor(device: Device | null, packageName?: string) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Bumped whenever the target changes so responses for a previous
+  // device/package are discarded.
+  const targetGenerationRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const deviceId = device?.id;
 
   // Fetch scheduled alarms
   const fetchAlarms = useCallback(async () => {
-    if (!device) return;
+    if (!deviceId) return;
 
+    const generation = targetGenerationRef.current;
+    inFlightRef.current = true;
     setIsLoading(true);
     setError(null);
 
     try {
-      const result = await window.electronAPI.getScheduledAlarms(device.id, packageName);
+      const result = await window.electronAPI.getScheduledAlarms(deviceId, packageName);
+      if (generation !== targetGenerationRef.current) return;
       setData(result);
     } catch (err) {
+      if (generation !== targetGenerationRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to fetch scheduled alarms');
     } finally {
-      setIsLoading(false);
+      if (generation === targetGenerationRef.current) {
+        inFlightRef.current = false;
+        setIsLoading(false);
+      }
     }
-  }, [device, packageName]);
+  }, [deviceId, packageName]);
 
   // Start polling
   const startPolling = useCallback(() => {
-    if (!device || isPolling) return;
-
+    if (!deviceId) return;
     setIsPolling(true);
-    fetchAlarms();
-
-    intervalRef.current = setInterval(() => {
-      fetchAlarms();
-    }, ALARM_MONITOR_POLL_INTERVAL);
-  }, [device, isPolling, fetchAlarms]);
+  }, [deviceId]);
 
   // Stop polling
   const stopPolling = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
     setIsPolling(false);
   }, []);
 
@@ -53,20 +54,27 @@ export function useAlarmMonitor(device: Device | null, packageName?: string) {
     setError(null);
   }, []);
 
-  // Cleanup on unmount or device/package change
+  // Reset and auto-start polling whenever the device or package changes
   useEffect(() => {
-    return () => {
-      stopPolling();
-    };
-  }, [device?.id, packageName, stopPolling]);
+    targetGenerationRef.current++;
+    inFlightRef.current = false;
+    clearData();
+    setIsLoading(false);
+    setIsPolling(Boolean(deviceId));
+  }, [deviceId, packageName, clearData]);
 
-  // Auto-start polling when device is set
+  // Own the polling interval; it is torn down on stop, target change and unmount
   useEffect(() => {
-    if (device && !isPolling) {
-      clearData();
-      startPolling();
-    }
-  }, [device, packageName]);
+    if (!isPolling || !deviceId) return;
+
+    fetchAlarms();
+    const interval = setInterval(() => {
+      // Skip a tick if the previous request is still running
+      if (!inFlightRef.current) fetchAlarms();
+    }, ALARM_MONITOR_POLL_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [isPolling, deviceId, fetchAlarms]);
 
   // Calculate time until next alarm
   const getTimeUntilNextAlarm = useCallback(() => {

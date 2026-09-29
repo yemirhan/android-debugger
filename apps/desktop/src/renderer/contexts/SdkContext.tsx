@@ -221,14 +221,13 @@ export function SdkProvider({ children, sessionKey }: SdkProviderProps) {
           } else if (payload.type === 'message' && payload.message) {
             const msg = payload.message;
             setWsConnections((prev) => {
+              const conn = prev.get(msg.connectionId);
+              if (!conn) return prev;
               const newMap = new Map(prev);
-              const conn = newMap.get(msg.connectionId);
-              if (conn) {
-                newMap.set(msg.connectionId, {
-                  ...conn,
-                  messages: [...conn.messages.slice(-999), msg],
-                });
-              }
+              newMap.set(msg.connectionId, {
+                ...conn,
+                messages: [...conn.messages.slice(-999), msg],
+              });
               return newMap;
             });
           } else if (payload.type === 'event' && payload.event) {
@@ -236,14 +235,13 @@ export function SdkProvider({ children, sessionKey }: SdkProviderProps) {
             // Update connection state if provided
             if (payload.connection) {
               setWsConnections((prev) => {
+                const existing = prev.get(payload.connection!.id);
+                if (!existing) return prev;
                 const newMap = new Map(prev);
-                const existing = newMap.get(payload.connection!.id);
-                if (existing) {
-                  newMap.set(payload.connection!.id, {
-                    ...existing,
-                    ...payload.connection!,
-                  });
-                }
+                newMap.set(payload.connection!.id, {
+                  ...existing,
+                  ...payload.connection!,
+                });
                 return newMap;
               });
             }

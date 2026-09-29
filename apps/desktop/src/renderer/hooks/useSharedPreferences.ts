@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Device, SharedPreference } from '@android-debugger/shared';
 
 export function useSharedPreferences(device: Device | null, packageName: string) {
@@ -6,10 +6,16 @@ export function useSharedPreferences(device: Device | null, packageName: string)
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const deviceId = device?.id;
 
   const fetchPreferences = useCallback(async () => {
-    if (!device || !packageName) {
+    // Invalidate any in-flight request for a previous device/package.
+    const requestId = ++requestIdRef.current;
+
+    if (!deviceId || !packageName) {
       setPreferences([]);
+      setLoading(false);
       return;
     }
 
@@ -17,27 +23,35 @@ export function useSharedPreferences(device: Device | null, packageName: string)
     setError(null);
 
     try {
-      const result = await window.electronAPI.readSharedPrefs(device.id, packageName);
+      const result = await window.electronAPI.readSharedPrefs(deviceId, packageName);
+      if (requestId !== requestIdRef.current) return;
       setPreferences(result);
-      if (result.length > 0 && !selectedFile) {
-        setSelectedFile(result[0].file);
-      }
+      // Keep the current selection if it still exists, otherwise pick the first file.
+      setSelectedFile((prev) =>
+        prev && result.some((p) => p.file === prev) ? prev : result[0]?.file ?? null
+      );
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to read SharedPreferences');
       setPreferences([]);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
-  }, [device, packageName, selectedFile]);
+  }, [deviceId, packageName]);
 
   const refresh = useCallback(() => {
     fetchPreferences();
   }, [fetchPreferences]);
 
-  // Fetch preferences when device or package changes
+  // Reset and fetch preferences when device or package changes
   useEffect(() => {
+    setPreferences([]);
+    setSelectedFile(null);
+    setError(null);
     fetchPreferences();
-  }, [device?.id, packageName]);
+  }, [fetchPreferences]);
 
   const getSelectedPreference = useCallback(() => {
     return preferences.find((p) => p.file === selectedFile) || null;

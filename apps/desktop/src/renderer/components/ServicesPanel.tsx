@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ServiceInfo, Device } from '@android-debugger/shared';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
@@ -16,20 +16,38 @@ export function ServicesPanel({ device, packageName }: ServicesPanelProps) {
   const [showAllPackages, setShowAllPackages] = useState(false);
   const guide = tabGuides['services'];
 
+  const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+
   const fetchServices = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     if (!device) return;
 
+    // Without a package filter the IPC call returns every package's services,
+    // which is only wanted when “Show all packages” is enabled.
+    if (!showAllPackages && !packageName) {
+      setServices([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
+    setError(null);
     try {
       const result = await window.electronAPI.getRunningServices(
         device.id,
-        showAllPackages ? undefined : packageName || undefined
+        showAllPackages ? undefined : packageName
       );
+      if (requestId !== requestIdRef.current) return;
       setServices(result);
-    } catch (error) {
-      console.error('Error fetching services:', error);
+    } catch (err) {
+      if (requestId !== requestIdRef.current) return;
+      console.error('Error fetching services:', err);
+      setServices([]);
+      setError(err instanceof Error ? err.message : 'Failed to fetch services');
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [device, packageName, showAllPackages]);
 
@@ -102,7 +120,13 @@ export function ServicesPanel({ device, packageName }: ServicesPanelProps) {
       {/* Info message */}
       {!packageName && !showAllPackages && (
         <div className="px-4 py-2.5 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400">
-          Select a package to see its services, or enable "Show all packages"
+          Choose an app in the toolbar to see its services, or enable “Show all packages”
+        </div>
+      )}
+
+      {error && (
+        <div className="px-4 py-2.5 rounded-lg text-sm bg-red-500/15 border border-red-500/25 text-red-400">
+          {error}
         </div>
       )}
 
@@ -113,22 +137,22 @@ export function ServicesPanel({ device, packageName }: ServicesPanelProps) {
             <table className="w-full">
               <thead className="sticky top-0 bg-surface border-b border-border-muted">
                 <tr>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Service Name
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Package
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     State
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     PID
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Clients
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Foreground
                   </th>
                 </tr>

@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Device } from '@android-debugger/shared';
 import { PackageSelector } from './PackageSelector';
+import { DevicePicker } from './DevicePicker';
 
 interface HeaderProps {
   devices: Device[];
@@ -14,27 +15,16 @@ interface HeaderProps {
   onToggleSidebar: () => void;
 }
 
-const RefreshIcon = () => (
+const SidebarIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    <rect x="3" y="4" width="18" height="16" rx="2" strokeWidth={1.5} />
+    <path strokeLinecap="round" strokeWidth={1.5} d="M9 4v16" />
   </svg>
 );
 
-const DeviceIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-  </svg>
-);
-
-const ChevronDownIcon = () => (
+const WifiIcon = () => (
   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-  </svg>
-);
-
-const MenuIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
   </svg>
 );
 
@@ -50,61 +40,32 @@ export function Header({
   onToggleSidebar,
 }: HeaderProps) {
   const wifiName = selectedDevice?.wifiName?.trim();
-  const wifiLabel = wifiName && wifiName.length > 0 ? wifiName : 'Not connected';
+  const isReady = selectedDevice?.status === 'device';
 
   return (
-    <header className="h-12 bg-surface border-b border-border flex items-center justify-between px-4 drag-region">
-      {/* Left section - macOS traffic lights spacing */}
-      <div className="flex items-center gap-3 no-drag pl-16">
-        {/* Sidebar toggle */}
+    <header className="h-12 flex-shrink-0 bg-surface border-b border-border-muted flex items-center justify-between gap-4 pr-3 drag-region">
+      {/* Left section: leaves room for the macOS traffic lights */}
+      <div className="flex items-center gap-2 no-drag pl-[78px] min-w-0">
         <button
           onClick={onToggleSidebar}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+          className="w-8 h-8 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary transition-colors"
           title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          aria-label={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
         >
-          <MenuIcon />
+          <SidebarIcon />
         </button>
 
-        {/* Device selector */}
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={onRefreshDevices}
-            disabled={loading}
-            className={`p-1.5 rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 ${
-              loading ? 'animate-spin' : ''
-            }`}
-            title="Refresh devices"
-          >
-            <RefreshIcon />
-          </button>
+        <div className="w-px h-5 bg-border-muted mx-1" />
 
-          <div className="flex items-center gap-2 px-2.5 py-1.5 bg-background rounded-md border border-border-muted hover:border-border transition-colors">
-            <DeviceIcon />
-            <select
-              value={selectedDevice?.id || ''}
-              onChange={(e) => {
-                const device = devices.find((d) => d.id === e.target.value);
-                if (device) onDeviceSelect(device);
-              }}
-              className="bg-transparent text-sm text-text-primary outline-none cursor-pointer min-w-[100px] appearance-none pr-4"
-              style={{ backgroundImage: 'none' }}
-            >
-              {devices.length === 0 ? (
-                <option value="">No devices</option>
-              ) : (
-                devices.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {device.model}
-                  </option>
-                ))
-              )}
-            </select>
-            <ChevronDownIcon />
-          </div>
-        </div>
+        <DevicePicker
+          devices={devices}
+          selectedDevice={selectedDevice}
+          onDeviceSelect={onDeviceSelect}
+          onRefreshDevices={onRefreshDevices}
+          loading={loading}
+        />
 
-        {/* Package selector */}
-        {selectedDevice?.status === 'device' && (
+        {isReady && selectedDevice && (
           <PackageSelector
             device={selectedDevice}
             value={packageName}
@@ -113,31 +74,28 @@ export function Header({
         )}
       </div>
 
-      {/* Right section */}
-      <div className="flex items-center gap-3 no-drag">
-        {/* Device connected indicator */}
-        {selectedDevice?.status === 'device' && (
-          <>
-            <div className="flex items-center gap-1.5 px-2 py-1">
-              <span className="text-xs text-text-muted">Wi-Fi:</span>
-              <span
-                className="text-xs text-text-primary max-w-[160px] truncate inline-block"
-                title={wifiLabel}
-              >
-                {wifiLabel}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 px-2 py-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-              <span className="text-xs text-text-muted">Connected</span>
-            </div>
-          </>
+      {/* Right section: connection status */}
+      <div className="flex items-center gap-4 no-drag flex-shrink-0">
+        {isReady && (
+          <span
+            className="flex items-center gap-1.5 text-xs text-text-muted max-w-[180px]"
+            title={wifiName ? `Device Wi-Fi: ${wifiName}` : 'Device is not on Wi-Fi'}
+          >
+            <WifiIcon />
+            <span className={`truncate ${wifiName ? 'text-text-secondary' : ''}`}>{wifiName || 'No Wi-Fi'}</span>
+          </span>
         )}
-        {selectedDevice && selectedDevice.status !== 'device' && (
-          <div className="flex items-center gap-1.5 px-2 py-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            <span className="text-xs text-amber-400 capitalize">{selectedDevice.status}</span>
-          </div>
+        {isReady && (
+          <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+            <span className="w-1.5 h-1.5 rounded-full bg-signal animate-pulse-dot" />
+            Connected
+          </span>
+        )}
+        {selectedDevice && !isReady && (
+          <span className="flex items-center gap-1.5 text-xs text-amber-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <span className="capitalize">{selectedDevice.status}</span>
+          </span>
         )}
       </div>
     </header>

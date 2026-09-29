@@ -23,7 +23,7 @@ export function WebSocketPanel() {
   const [showInfo, setShowInfo] = useState(false);
   const { wsConnections, selectedWsConnection, setSelectedWsConnection, clearWebSocket } = useSdkContext();
   const [filterDirection, setFilterDirection] = useState<'all' | 'sent' | 'received'>('all');
-  const [selectedMessage, setSelectedMessage] = useState<WebSocketMessage | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const guide = tabGuides['websocket'];
 
   const connections = useMemo(() => Array.from(wsConnections.values()), [wsConnections]);
@@ -32,6 +32,13 @@ export function WebSocketPanel() {
     if (!selectedWsConnection) return null;
     return wsConnections.get(selectedWsConnection) || null;
   }, [wsConnections, selectedWsConnection]);
+
+  // Derive the selected message from the current connection so it never shows a
+  // message belonging to a different (or cleared) connection.
+  const selectedMessage = useMemo<WebSocketMessage | null>(() => {
+    if (!selectedConnection || !selectedMessageId) return null;
+    return selectedConnection.messages.find((msg) => msg.id === selectedMessageId) || null;
+  }, [selectedConnection, selectedMessageId]);
 
   const filteredMessages = useMemo(() => {
     if (!selectedConnection) return [];
@@ -163,19 +170,19 @@ export function WebSocketPanel() {
                   <table className="w-full">
                     <thead className="sticky top-0 bg-surface border-b border-border-muted">
                       <tr>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted uppercase">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted">
                           Dir
                         </th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted uppercase">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted">
                           Type
                         </th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted uppercase">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted">
                           Size
                         </th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted uppercase">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted">
                           Time
                         </th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted uppercase">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-text-muted">
                           Data
                         </th>
                       </tr>
@@ -184,7 +191,7 @@ export function WebSocketPanel() {
                       {filteredMessages.map((msg) => (
                         <tr
                           key={msg.id}
-                          onClick={() => setSelectedMessage(msg)}
+                          onClick={() => setSelectedMessageId(msg.id)}
                           className={`cursor-pointer transition-colors ${
                             selectedMessage?.id === msg.id
                               ? 'bg-accent-muted'
@@ -238,7 +245,7 @@ export function WebSocketPanel() {
                   <div className="p-3 border-b border-border-muted flex items-center justify-between">
                     <h4 className="text-sm font-medium text-text-primary">Message Detail</h4>
                     <button
-                      onClick={() => setSelectedMessage(null)}
+                      onClick={() => setSelectedMessageId(null)}
                       className="text-text-muted hover:text-text-secondary"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

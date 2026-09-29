@@ -19,7 +19,7 @@ const stateColors: Record<ThreadState, { text: string; bg: string }> = {
 };
 
 export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelProps) {
-  const { current, isMonitoring, stopMonitoring, clearData } = useThreadMonitor(device, packageName);
+  const { current, isMonitoring, startMonitoring, stopMonitoring, clearData } = useThreadMonitor(device, packageName);
   const [sortBy, setSortBy] = useState<'name' | 'state' | 'cpuTime'>('cpuTime');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [filterState, setFilterState] = useState<ThreadState | 'all'>('all');
@@ -80,7 +80,7 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
           <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
             <ThreadsIcon />
           </div>
-          <p className="text-sm">Select a package to monitor threads</p>
+          <p className="text-sm">Choose an app in the toolbar to monitor threads</p>
         </div>
       </div>
     );
@@ -109,6 +109,9 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
             <option value="sleeping">Sleeping</option>
             <option value="waiting">Waiting</option>
             <option value="blocked">Blocked</option>
+            <option value="stopped">Stopped</option>
+            <option value="zombie">Zombie</option>
+            <option value="unknown">Unknown</option>
           </select>
           <button
             onClick={clearData}
@@ -117,14 +120,14 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
             Clear
           </button>
           <button
-            onClick={isMonitoring ? stopMonitoring : undefined}
+            onClick={isMonitoring ? stopMonitoring : startMonitoring}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
               isMonitoring
                 ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-surface text-text-muted border border-border-muted'
+                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
             }`}
           >
-            {isMonitoring ? 'Stop' : 'Stopped'}
+            {isMonitoring ? 'Stop' : 'Start'}
           </button>
         </div>
       </div>
@@ -157,27 +160,27 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
               <thead className="sticky top-0 bg-surface border-b border-border-muted">
                 <tr>
                   <th
-                    className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                    className="text-left px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                     onClick={() => handleSort('name')}
                   >
                     Thread Name {sortBy === 'name' && (sortDir === 'asc' ? '↑' : '↓')}
                   </th>
                   <th
-                    className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                    className="text-left px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                     onClick={() => handleSort('state')}
                   >
                     State {sortBy === 'state' && (sortDir === 'asc' ? '↑' : '↓')}
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     TID
                   </th>
                   <th
-                    className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-primary"
+                    className="text-left px-4 py-3 text-xs font-medium text-text-muted cursor-pointer hover:text-text-primary"
                     onClick={() => handleSort('cpuTime')}
                   >
                     CPU Time {sortBy === 'cpuTime' && (sortDir === 'asc' ? '↑' : '↓')}
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Priority
                   </th>
                 </tr>
@@ -221,7 +224,11 @@ export function ThreadMonitorPanel({ device, packageName }: ThreadMonitorPanelPr
               <ThreadsIcon />
             </div>
             <p className="text-sm">
-              {isMonitoring ? 'Waiting for thread data...' : 'Start monitoring to see threads'}
+              {current && current.threads.length > 0 && filterState !== 'all'
+                ? `No ${filterState} threads`
+                : isMonitoring
+                  ? 'Waiting for thread data...'
+                  : 'Start monitoring to see threads'}
             </p>
           </div>
         )}

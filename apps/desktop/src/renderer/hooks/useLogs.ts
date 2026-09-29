@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { LogEntry, LogLevel, Device } from '@android-debugger/shared';
 import { useLogsContext } from '../contexts';
 
@@ -9,7 +9,17 @@ export interface LogFilter {
 }
 
 export function useLogs(device: Device | null) {
-  const { logs, isStreaming, isPaused, logMode, clearLogs: clearLogsContext, togglePause, setLogMode } = useLogsContext();
+  const {
+    logs,
+    isStreaming,
+    isPaused,
+    logMode,
+    clearLogs: clearLogsContext,
+    togglePause,
+    startStreaming,
+    stopStreaming,
+    setLogMode,
+  } = useLogsContext();
 
   const [filter, setFilter] = useState<LogFilter>({
     search: '',
@@ -40,34 +50,36 @@ export function useLogs(device: Device | null) {
     });
   }, []);
 
-  // Filter logs
-  const filteredLogs = logs.filter((log) => {
-    // Hide SDK internal messages (these are handled separately by the SDK panel)
-    if (log.message.includes('SDKMSG:')) {
-      return false;
-    }
+  // Filter logs (memoized: the buffer can hold up to maxLogEntries entries, see Settings)
+  const filteredLogs = useMemo(() => {
+    const searchLower = filter.search.toLowerCase();
+    return logs.filter((log) => {
+      // Hide SDK internal messages (these are handled separately by the SDK panel)
+      if (log.message.includes('SDKMSG:')) {
+        return false;
+      }
 
-    // Filter by level
-    if (!filter.levels.has(log.level)) {
-      return false;
-    }
+      // Filter by level
+      if (!filter.levels.has(log.level)) {
+        return false;
+      }
 
-    // Filter by tags
-    if (filter.tags.length > 0 && !filter.tags.includes(log.tag)) {
-      return false;
-    }
+      // Filter by tags
+      if (filter.tags.length > 0 && !filter.tags.includes(log.tag)) {
+        return false;
+      }
 
-    // Filter by search
-    if (filter.search) {
-      const searchLower = filter.search.toLowerCase();
-      return (
-        log.message.toLowerCase().includes(searchLower) ||
-        log.tag.toLowerCase().includes(searchLower)
-      );
-    }
+      // Filter by search
+      if (searchLower) {
+        return (
+          log.message.toLowerCase().includes(searchLower) ||
+          log.tag.toLowerCase().includes(searchLower)
+        );
+      }
 
-    return true;
-  });
+      return true;
+    });
+  }, [logs, filter]);
 
   // Export logs to file (reverse to get chronological order - oldest first)
   const exportLogs = useCallback(() => {
@@ -94,6 +106,8 @@ export function useLogs(device: Device | null) {
     filter,
     clearLogs,
     togglePause,
+    startStreaming,
+    stopStreaming,
     setLogMode,
     updateFilter,
     toggleLevel,

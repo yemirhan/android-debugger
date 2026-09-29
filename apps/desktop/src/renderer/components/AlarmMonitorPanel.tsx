@@ -11,11 +11,34 @@ interface AlarmMonitorPanelProps {
 }
 
 export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProps) {
-  const [showInfo, setShowInfo] = useState(false);
   const [showAllPackages, setShowAllPackages] = useState(false);
+  // Remount the content whenever the device or effective package filter changes so
+  // polling restarts and results from the previous filter are never shown.
+  const filterKey = `${device.id}:${showAllPackages ? '*' : packageName}`;
+  return (
+    <AlarmMonitorContent
+      key={filterKey}
+      device={device}
+      packageName={packageName}
+      showAllPackages={showAllPackages}
+      setShowAllPackages={setShowAllPackages}
+    />
+  );
+}
+
+interface AlarmMonitorContentProps extends AlarmMonitorPanelProps {
+  showAllPackages: boolean;
+  setShowAllPackages: (value: boolean) => void;
+}
+
+function AlarmMonitorContent({ device, packageName, showAllPackages, setShowAllPackages }: AlarmMonitorContentProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const guide = tabGuides['alarms'];
+  // Without a package filter the IPC call returns every package's alarms; only do
+  // that when “Show all packages” is explicitly enabled.
+  const hasFilter = showAllPackages || !!packageName;
   const { data, isLoading, error, isPolling, refresh, stopPolling, startPolling, getTimeUntilNextAlarm } = useAlarmMonitor(
-    device,
+    hasFilter ? device : null,
     showAllPackages ? undefined : packageName || undefined
   );
   const [countdown, setCountdown] = useState<string | null>(null);
@@ -128,7 +151,8 @@ export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProp
           </label>
           <button
             onClick={() => (isPolling ? stopPolling() : startPolling())}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all duration-150 btn-press ${
+            disabled={!hasFilter && !isPolling}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all duration-150 btn-press disabled:opacity-50 ${
               isPolling
                 ? 'text-amber-400 bg-amber-500/15 border-amber-500/25'
                 : 'text-text-secondary bg-surface border-border-muted hover:bg-surface-hover hover:text-text-primary'
@@ -138,7 +162,7 @@ export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProp
           </button>
           <button
             onClick={refresh}
-            disabled={isLoading}
+            disabled={isLoading || !hasFilter}
             className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press disabled:opacity-50"
           >
             {isLoading ? 'Loading...' : 'Refresh'}
@@ -149,7 +173,7 @@ export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProp
       {/* Info message */}
       {!packageName && !showAllPackages && (
         <div className="px-4 py-2.5 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400">
-          Select a package to see its scheduled alarms, or enable "Show all packages"
+          Choose an app in the toolbar to see its scheduled alarms, or enable “Show all packages”
         </div>
       )}
 
@@ -178,22 +202,22 @@ export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProp
             <table className="w-full">
               <thead className="sticky top-0 bg-surface border-b border-border-muted">
                 <tr>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Type
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Package
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Trigger Time
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Time Until
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Repeat
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Exact
                   </th>
                 </tr>
@@ -203,7 +227,7 @@ export function AlarmMonitorPanel({ device, packageName }: AlarmMonitorPanelProp
                   <tr key={alarm.id} className="hover:bg-surface-hover transition-colors">
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 text-xs font-medium rounded ${getTypeColor(alarm.type)}`}>
-                        {alarm.type.replace('_', ' ')}
+                        {alarm.type.replace(/_/g, ' ')}
                       </span>
                     </td>
                     <td className="px-4 py-3">

@@ -218,7 +218,6 @@ export interface ElectronAPI {
   stopMethodTrace: (deviceId: string, packageName: string) => Promise<MethodTraceInfo>;
   cancelMethodTrace: () => Promise<void>;
   analyzeMethodTrace: (filePath: string) => Promise<MethodTraceAnalysis | null>;
-  onMethodTraceProgress: (callback: (progress: { id: string; status: string; duration?: number; error?: string }) => void) => UnsubscribeFn;
 
   // Screen Mirror (scrcpy)
   checkScrcpy: () => Promise<boolean>;
@@ -538,11 +537,6 @@ const electronAPI: ElectronAPI = {
   cancelMethodTrace: () => ipcRenderer.invoke('profiler:cancel-method-trace'),
   analyzeMethodTrace: (filePath) =>
     ipcRenderer.invoke('profiler:analyze-method-trace', filePath),
-  onMethodTraceProgress: (callback) => {
-    const listener = (_: Electron.IpcRendererEvent, progress: { id: string; status: string; duration?: number; error?: string }) => callback(progress);
-    ipcRenderer.on('method-trace-progress', listener);
-    return () => ipcRenderer.removeListener('method-trace-progress', listener);
-  },
 
   // Screen Mirror (scrcpy)
   checkScrcpy: () => ipcRenderer.invoke('scrcpy:check'),

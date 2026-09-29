@@ -1,76 +1,52 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 /* ============================================
-   FONTS
-   ============================================ */
-
-/* Geist Sans - loaded from local or CDN */
-@font-face {
-  font-family: 'Geist Sans';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Sans';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Sans';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* ============================================
    THEME VARIABLES
+   Graphite surfaces, blue for interaction, Android green reserved for
+   "live / healthy" signals. Fonts are the platform's own so the app renders
+   identically offline.
    ============================================ */
 @theme {
-  /* Refined dark palette - Zinc based */
-  --color-background: #09090b;      /* Zinc-950 - true dark */
-  --color-surface: #18181b;         /* Zinc-900 - elevated */
-  --color-surface-hover: #27272a;   /* Zinc-800 - hover state */
-  --color-surface-elevated: #27272a; /* Zinc-800 - modals/dropdowns */
-  --color-border: #3f3f46;          /* Zinc-700 - subtle borders */
-  --color-border-muted: #27272a;    /* Zinc-800 - very subtle */
+  /* Surfaces */
+  --color-background: #131519;
+  --color-surface: #1a1d22;
+  --color-surface-hover: #23272e;
+  --color-surface-elevated: #20242a;
+  --color-border: #333842;
+  --color-border-muted: #262a31;
 
   /* Text hierarchy */
-  --color-text-primary: #fafafa;    /* Zinc-50 */
-  --color-text-secondary: #a1a1aa;  /* Zinc-400 */
-  --color-text-muted: #71717a;      /* Zinc-500 */
+  --color-text-primary: #e9ecf1;
+  --color-text-secondary: #a4abb7;
+  --color-text-muted: #757c89;
 
-  /* Accent - Emerald for dev tools feel */
-  --color-accent: #10b981;          /* Emerald-500 */
-  --color-accent-muted: rgba(16, 185, 129, 0.15);
-  --color-accent-hover: #059669;    /* Emerald-600 */
+  /* Interaction accent */
+  --color-accent: #4f7fee;
+  --color-accent-muted: rgba(79, 127, 238, 0.16);
+  --color-accent-hover: #3f6cdb;
+
+  /* Live / healthy signal (Android green) */
+  --color-signal: #3ddc84;
 
   /* Log level colors */
-  --color-log-verbose: #71717a;
-  --color-log-debug: #3b82f6;
-  --color-log-info: #10b981;
-  --color-log-warn: #f59e0b;
-  --color-log-error: #ef4444;
-  --color-log-fatal: #dc2626;
+  --color-log-verbose: #757c89;
+  --color-log-debug: #6ea0ff;
+  --color-log-info: #3ddc84;
+  --color-log-warn: #f5b841;
+  --color-log-error: #f26d6d;
+  --color-log-fatal: #e5484d;
 
   /* Chart colors */
-  --color-chart-memory: #10b981;    /* Emerald for primary */
-  --color-chart-java: #3b82f6;
-  --color-chart-native: #8b5cf6;
-  --color-chart-graphics: #f59e0b;
-  --color-chart-cpu: #ef4444;
-  --color-chart-fps: #06b6d4;
+  --color-chart-memory: #3ddc84;
+  --color-chart-java: #6ea0ff;
+  --color-chart-native: #a78bfa;
+  --color-chart-graphics: #f5b841;
+  --color-chart-cpu: #f26d6d;
+  --color-chart-fps: #3cc8d8;
 
-  /* Font families */
-  --font-sans: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Font families: native to the platform */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Transitions */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -80,18 +56,45 @@
 /* ============================================
    BASE STYLES
    ============================================ */
-html {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--color-background);
+    color: var(--color-text-primary);
+  }
+}
+
+::selection {
+  background: rgba(79, 127, 238, 0.35);
+}
+
+@layer base {
+  /* Visible keyboard focus everywhere, without showing rings on mouse clicks.
+     Layered so utilities like outline-none can still opt out. */
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  /* Native form controls pick up the dark palette */
+  select option {
+    background: var(--color-surface-elevated);
+    color: var(--color-text-primary);
+  }
 }
 
 /* ============================================
    SCROLLBAR
    ============================================ */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -100,11 +103,18 @@ html {
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 3px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: #4a505c;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Hide scrollbar when not hovering */
@@ -113,7 +123,7 @@ html {
 }
 
 .hide-scrollbar:hover::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 /* ============================================
@@ -136,7 +146,7 @@ html {
 .log-W { color: var(--color-log-warn); }
 .log-E { color: var(--color-log-error); }
 .log-F { color: var(--color-log-fatal); }
-.log-S { color: #a855f7; }
+.log-S { color: #b18cf5; }
 
 /* ============================================
    ANIMATIONS
@@ -157,7 +167,7 @@ html {
     opacity: 1;
   }
   50% {
-    opacity: 0.5;
+    opacity: 0.45;
   }
 }
 
@@ -172,6 +182,17 @@ html {
   }
 }
 
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .animate-fade-in {
   animation: fade-in 200ms ease-out;
 }
@@ -182,6 +203,10 @@ html {
 
 .animate-slide-in {
   animation: slide-in 200ms ease-out;
+}
+
+.animate-pop-in {
+  animation: pop-in 120ms ease-out;
 }
 
 /* Sidebar group expand/collapse animation */
@@ -201,6 +226,21 @@ html {
   overflow: hidden;
 }
 
+/* Panel transition */
+.panel-content {
+  animation: fade-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* ============================================
    COMPONENT UTILITIES
    ============================================ */
@@ -210,122 +250,31 @@ html {
   transform: scale(0.98);
 }
 
-/* Focus ring for accessibility */
-.focus-ring:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-/* Gradient background for stat cards */
-.stat-card-gradient {
-  background: linear-gradient(
-    135deg,
-    rgba(16, 185, 129, 0.08) 0%,
-    rgba(16, 185, 129, 0.02) 100%
-  );
-}
-
-/* Tooltip styles */
-.tooltip {
-  position: relative;
-}
-
-.tooltip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 6px 10px;
-  background: var(--color-surface-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--transition-fast);
-  z-index: 50;
-}
-
-.tooltip:hover::after {
-  opacity: 1;
-}
-
 /* Backdrop blur for dropdowns */
 .backdrop-blur-dropdown {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
 
-/* Panel transition */
-.panel-content {
-  animation: fade-in 150ms ease-out;
+/* Readouts: aligned digits so live values don't jitter */
+.font-mono,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
-/* Monospace text utility */
-.font-mono {
-  font-family: var(--font-mono);
-}
-
-/* ============================================
-   CUSTOM COMPONENTS
-   ============================================ */
-
-/* Ghost button */
-.btn-ghost {
-  background: transparent;
-  color: var(--color-text-secondary);
-  transition: all var(--transition-fast);
-}
-
-.btn-ghost:hover {
-  background: var(--color-surface-hover);
-  color: var(--color-text-primary);
-}
-
-/* Primary button */
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  font-weight: 500;
-  transition: all var(--transition-fast);
-}
-
-.btn-primary:hover {
-  background: var(--color-accent-hover);
-}
-
-/* Input styles */
-.input-base {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-muted);
-  color: var(--color-text-primary);
-  transition: border-color var(--transition-fast);
-}
-
-.input-base:focus {
-  border-color: var(--color-accent);
-  outline: none;
-}
-
-.input-base::placeholder {
+/* Keyboard shortcut hint */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
   color: var(--color-text-muted);
-}
-
-/* Tab styles */
-.tab-active {
-  color: var(--color-accent);
-  border-bottom-color: var(--color-accent);
-}
-
-/* Card hover effect */
-.card-hover {
-  transition: all var(--transition-fast);
-}
-
-.card-hover:hover {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1;
 }

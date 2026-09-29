@@ -32,8 +32,45 @@ import { ScreenMirrorPanel } from './components/ScreenMirrorPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
 import { useNavigationState } from './hooks/useNavigationState';
-import { SdkProvider, LogsProvider, UpdateProvider, useUpdateContext } from './contexts';
+import { SdkProvider, LogsProvider, CrashProvider, UpdateProvider, useUpdateContext } from './contexts';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
+import { CommandPalette } from './components/CommandPalette';
+import { ErrorBoundary } from './components/shared/ErrorBoundary';
+import { getNavItem } from './data/navigation';
+
+const LAST_TARGET_KEY = 'android-debugger-last-target';
+
+interface LastTarget {
+  deviceId: string | null;
+  /** Last app chosen on each device, keyed by device serial. */
+  packages: Record<string, string>;
+}
+
+function loadLastTarget(): LastTarget {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAST_TARGET_KEY) ?? 'null');
+    if (parsed && typeof parsed === 'object') {
+      const packages: Record<string, string> = {};
+      if (parsed.packages && typeof parsed.packages === 'object') {
+        for (const [id, pkg] of Object.entries(parsed.packages)) {
+          if (typeof pkg === 'string') packages[id] = pkg;
+        }
+      }
+      return { deviceId: typeof parsed.deviceId === 'string' ? parsed.deviceId : null, packages };
+    }
+  } catch {
+    // Ignore corrupt state and start fresh
+  }
+  return { deviceId: null, packages: {} };
+}
+
+function saveLastTarget(target: LastTarget) {
+  try {
+    localStorage.setItem(LAST_TARGET_KEY, JSON.stringify(target));
+  } catch {
+    // Storage full or unavailable; persistence is best-effort
+  }
+}
 
 export type TabId = 'dashboard' | 'memory' | 'logs' | 'cpu-fps' | 'network' | 'sdk' | 'settings' | 'app-info' | 'screen-capture' | 'dev-options' | 'file-inspector' | 'intent-tester' | 'battery' | 'crashes' | 'services' | 'network-stats' | 'activity-stack' | 'jobs' | 'alarms' | 'websocket' | 'install-app' | 'bundle-analyzer' | 'thread-monitor' | 'gc-monitor' | 'heap-dump' | 'method-trace' | 'screen-mirror';
 
@@ -45,6 +82,19 @@ function AppContent() {
   const { devices, loading: devicesLoading, refresh: refreshDevices } = useDevices();
   const { setNavigateToSettings } = useUpdateContext();
   const { sidebarExpanded, toggleSidebar, isGroupExpanded, toggleGroup } = useNavigationState(activeTab);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // ⌘K / Ctrl+K opens the tool switcher from anywhere
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
@@ -59,7 +109,12 @@ function AppContent() {
   // ready device when the previous target disappears.
   useEffect(() => {
     if (!selectedDevice && devices.length > 0) {
-      setSelectedDevice(devices.find((device) => device.status === 'device') ?? devices[0]);
+      const { deviceId } = loadLastTarget();
+      setSelectedDevice(
+        devices.find((device) => device.id === deviceId && device.status === 'device') ??
+          devices.find((device) => device.status === 'device') ??
+          devices[0]
+      );
       return;
     }
     if (!selectedDevice) return;
@@ -76,9 +131,28 @@ function AppContent() {
     }
   }, [devices, selectedDevice]);
 
+  // Restore the app last used on this device, if it's still installed.
   useEffect(() => {
-    window.electronAPI.setSelectedDevice(selectedDevice?.id ?? null);
+    const deviceId = selectedDevice?.id ?? null;
+    window.electronAPI.setSelectedDevice(deviceId);
     setPackageName('');
+    if (!deviceId) return;
+
+    const last = loadLastTarget();
+    saveLastTarget({ ...last, deviceId });
+    const remembered = last.packages[deviceId];
+    if (!remembered) return;
+
+    let cancelled = false;
+    window.electronAPI
+      .getPackages(deviceId, true)
+      .then((packages) => {
+        if (!cancelled && packages.includes(remembered)) setPackageName((current) => current || remembered);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [selectedDevice?.id]);
 
   useEffect(() => {
@@ -97,11 +171,16 @@ function AppContent() {
 
   const handlePackageChange = useCallback((pkg: string) => {
     setPackageName(pkg);
-  }, []);
+    if (!selectedDevice) return;
+    const last = loadLastTarget();
+    const packages = { ...last.packages };
+    if (pkg) packages[selectedDevice.id] = pkg;
+    else delete packages[selectedDevice.id];
+    saveLastTarget({ deviceId: selectedDevice.id, packages });
+  }, [selectedDevice]);
 
   const renderPanel = () => {
-    // Dashboard handles its own "no device" state
-    if (activeTab === 'dashboard') {
+    if (activeTab === 'dashboard' && activeDevice) {
       return (
         <Dashboard
           device={activeDevice}
@@ -124,17 +203,12 @@ function AppContent() {
 
     if (!activeDevice) {
       return (
-        <div className="flex-1 flex items-center justify-center text-text-secondary panel-content">
-          <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-surface-hover flex items-center justify-center">
-              <svg className="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <p className="text-lg font-medium text-text-primary mb-1">Device Not Ready</p>
-            <p className="text-sm text-text-muted">Connect and authorize an Android device with USB debugging enabled</p>
-          </div>
-        </div>
+        <DeviceNotReady
+          device={selectedDevice}
+          hasDevices={devices.length > 0}
+          onRefresh={refreshDevices}
+          refreshing={devicesLoading}
+        />
       );
     }
 
@@ -205,36 +279,92 @@ function AppContent() {
   return (
     <SdkProvider sessionKey={`${activeDevice?.id ?? ''}:${packageName}`}>
       <LogsProvider selectedDevice={activeDevice} packageName={packageName}>
-        <div className="h-screen flex flex-col bg-background text-text-primary">
-          <Header
-            devices={devices}
-            selectedDevice={selectedDevice}
-            onDeviceSelect={handleDeviceSelect}
-            onRefreshDevices={refreshDevices}
-            loading={devicesLoading}
-            packageName={packageName}
-            onPackageChange={handlePackageChange}
-            sidebarExpanded={sidebarExpanded}
-            onToggleSidebar={toggleSidebar}
-          />
-          <div className="flex-1 flex min-h-0">
-            <Sidebar
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
+        <CrashProvider device={activeDevice}>
+          <div className="h-screen flex flex-col bg-background text-text-primary overflow-hidden">
+            <Header
+              devices={devices}
+              selectedDevice={selectedDevice}
+              onDeviceSelect={handleDeviceSelect}
+              onRefreshDevices={refreshDevices}
+              loading={devicesLoading}
+              packageName={packageName}
+              onPackageChange={handlePackageChange}
               sidebarExpanded={sidebarExpanded}
-              isGroupExpanded={isGroupExpanded}
-              toggleGroup={toggleGroup}
+              onToggleSidebar={toggleSidebar}
             />
-            <main className="flex-1 flex flex-col overflow-hidden">
-              <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
-                {renderPanel()}
-              </div>
-            </main>
+            <div className="flex-1 flex min-h-0">
+              <Sidebar
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                sidebarExpanded={sidebarExpanded}
+                isGroupExpanded={isGroupExpanded}
+                toggleGroup={toggleGroup}
+                onOpenCommandPalette={() => setPaletteOpen(true)}
+              />
+              <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+                <div key={activeTab} className="flex-1 flex flex-col overflow-hidden panel-content">
+                  <ErrorBoundary label={getNavItem(activeTab)?.label}>
+                    {renderPanel()}
+                  </ErrorBoundary>
+                </div>
+              </main>
+            </div>
           </div>
-        </div>
-        <UpdateAvailableModal />
+          <UpdateAvailableModal />
+          <CommandPalette
+            isOpen={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            onSelect={setActiveTab}
+            hasPackage={!!packageName}
+          />
+        </CrashProvider>
       </LogsProvider>
     </SdkProvider>
+  );
+}
+
+interface DeviceNotReadyProps {
+  device: Device | null;
+  hasDevices: boolean;
+  onRefresh: () => void;
+  refreshing: boolean;
+}
+
+function DeviceNotReady({ device, hasDevices, onRefresh, refreshing }: DeviceNotReadyProps) {
+  const { title, body } = !hasDevices || !device
+    ? {
+        title: 'Connect an Android device',
+        body: 'Plug in a phone with USB debugging turned on, or start an emulator. It shows up here automatically.',
+      }
+    : device.status === 'unauthorized'
+      ? {
+          title: `Allow USB debugging on ${device.model || device.id}`,
+          body: 'Unlock the device and accept the “Allow USB debugging” prompt. Tick “Always allow” to skip this next time.',
+        }
+      : {
+          title: `${device.model || device.id} is offline`,
+          body: 'Reconnect the cable, or run “adb kill-server” and refresh.',
+        };
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-8">
+      <div className="max-w-sm text-center">
+        <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-surface border border-border-muted flex items-center justify-center text-text-muted">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <p className="text-base font-medium text-text-primary">{title}</p>
+        <p className="text-sm text-text-secondary mt-1.5">{body}</p>
+        <button
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="mt-5 px-3.5 h-8 text-sm font-medium rounded-md border border-border bg-surface text-text-primary hover:bg-surface-hover disabled:opacity-50 transition-colors"
+        >
+          {refreshing ? 'Looking for devices…' : 'Look again'}
+        </button>
+      </div>
+    </div>
   );
 }
 

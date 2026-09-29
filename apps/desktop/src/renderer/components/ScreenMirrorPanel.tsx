@@ -28,6 +28,28 @@ export function ScreenMirrorPanel({ device }: ScreenMirrorPanelProps) {
 
   const guide = tabGuides['screen-mirror'];
 
+  // Guard against double-clicks spawning multiple scrcpy processes while a
+  // start/stop request is still in flight.
+  const [pending, setPending] = useState(false);
+  const handleStart = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await startMirror();
+    } finally {
+      setPending(false);
+    }
+  };
+  const handleStop = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await stopMirror();
+    } finally {
+      setPending(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
       <InfoModal
@@ -133,19 +155,21 @@ export function ScreenMirrorPanel({ device }: ScreenMirrorPanelProps) {
               </div>
               {isMirroring ? (
                 <button
-                  onClick={stopMirror}
-                  className="px-4 py-2 text-sm font-medium bg-red-500/15 hover:bg-red-500/25 text-red-400 rounded-md transition-all duration-150 btn-press flex items-center gap-2"
+                  onClick={handleStop}
+                  disabled={pending}
+                  className="px-4 py-2 text-sm font-medium bg-red-500/15 hover:bg-red-500/25 text-red-400 rounded-md transition-all duration-150 btn-press flex items-center gap-2 disabled:opacity-50"
                 >
                   <StopIcon />
                   Stop Mirror
                 </button>
               ) : (
                 <button
-                  onClick={startMirror}
-                  className="px-4 py-2 text-sm font-medium bg-accent hover:bg-accent/90 text-white rounded-md transition-all duration-150 btn-press flex items-center gap-2"
+                  onClick={handleStart}
+                  disabled={pending}
+                  className="px-4 py-2 text-sm font-medium bg-accent hover:bg-accent/90 text-white rounded-md transition-all duration-150 btn-press flex items-center gap-2 disabled:opacity-50"
                 >
                   <PlayIcon />
-                  Start Mirror
+                  {pending ? 'Starting...' : 'Start Mirror'}
                 </button>
               )}
             </div>
@@ -153,7 +177,7 @@ export function ScreenMirrorPanel({ device }: ScreenMirrorPanelProps) {
 
           {/* Configuration Options */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-medium text-text-muted mb-3">
               Mirror Options
             </h3>
             <div className="space-y-3">
@@ -212,7 +236,7 @@ export function ScreenMirrorPanel({ device }: ScreenMirrorPanelProps) {
 
       {/* Tips */}
       <div className="bg-surface rounded-lg p-4 border border-border-muted mt-auto">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+        <h3 className="text-xs font-medium text-text-muted mb-3">
           Keyboard Shortcuts
         </h3>
         <ul className="space-y-2 text-sm text-text-secondary">

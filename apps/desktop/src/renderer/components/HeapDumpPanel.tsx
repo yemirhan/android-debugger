@@ -151,10 +151,17 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
     void startSession({ name: scenarioName, automation, intervalSeconds, thresholdMb, maxSnapshots });
   };
 
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const handleExport = async () => {
     if (!session?.comparison) return;
-    const report = buildHeapLeakReport(session, packageName);
-    await window.electronAPI.exportHeapReport(report, session.name);
+    try {
+      const report = buildHeapLeakReport(session, packageName);
+      const result = await window.electronAPI.exportHeapReport(report, session.name);
+      if (result.success) setExportStatus(result.path ? `Report saved to ${result.path}` : 'Report saved');
+      else if (!result.canceled) setExportStatus('Failed to export report');
+    } catch (err) {
+      setExportStatus(`Failed to export report: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   };
 
   if (!packageName) {
@@ -162,7 +169,7 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
       <div className="flex-1 flex items-center justify-center text-text-muted">
         <div className="text-center">
           <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-surface-hover flex items-center justify-center"><HeapIcon /></div>
-          <p className="text-sm">Select a package to start a leak investigation</p>
+          <p className="text-sm">Choose an app in the toolbar to start a leak investigation</p>
         </div>
       </div>
     );
@@ -183,7 +190,12 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
           {dumps.length > 0 && (
             <button
               type="button"
-              onClick={() => void clearDumps()}
+              onClick={() => {
+                const message = sessionActive
+                  ? 'Clear all heap snapshots? This also discards the leak check in progress.'
+                  : 'Clear all heap snapshots? Captured dump files will be deleted.';
+                if (window.confirm(message)) void clearDumps();
+              }}
               disabled={busy}
               className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover disabled:opacity-50"
             >
@@ -294,10 +306,10 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 text-right">
-              <div><p className="text-[10px] uppercase text-text-muted">Elapsed</p><p className="text-sm font-mono">{formatDuration(now - session.startedAt)}</p></div>
-              <div><p className="text-[10px] uppercase text-text-muted">Iterations</p><p className="text-sm font-mono">{session.iterations}</p></div>
-              <div><p className="text-[10px] uppercase text-text-muted">Snapshots</p><p className="text-sm font-mono">{session.snapshots.length}/{session.maxSnapshots}</p></div>
-              <div><p className="text-[10px] uppercase text-text-muted">Live PSS</p><p className="text-sm font-mono">{liveMemoryPssKb === null ? '—' : formatBytes(liveMemoryPssKb * 1024)}</p></div>
+              <div><p className="text-[11px] text-text-muted">Elapsed</p><p className="text-sm font-mono">{formatDuration(now - session.startedAt)}</p></div>
+              <div><p className="text-[11px] text-text-muted">Iterations</p><p className="text-sm font-mono">{session.iterations}</p></div>
+              <div><p className="text-[11px] text-text-muted">Snapshots</p><p className="text-sm font-mono">{session.snapshots.length}/{session.maxSnapshots}</p></div>
+              <div><p className="text-[11px] text-text-muted">Live PSS</p><p className="text-sm font-mono">{liveMemoryPssKb === null ? '—' : formatBytes(liveMemoryPssKb * 1024)}</p></div>
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-4 border-t border-accent/15">
@@ -330,7 +342,10 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
               <button type="button" aria-pressed={viewMode === 'leak-check'} onClick={() => setViewMode('leak-check')} className={`px-3 py-1 text-xs rounded ${viewMode === 'leak-check' ? 'bg-surface-hover text-text-primary' : 'text-text-muted'}`}>Leak comparison</button>
               <button type="button" aria-pressed={viewMode === 'snapshot'} onClick={() => setViewMode('snapshot')} className={`px-3 py-1 text-xs rounded ${viewMode === 'snapshot' ? 'bg-surface-hover text-text-primary' : 'text-text-muted'}`}>Raw snapshots</button>
             </div>
-            <button type="button" onClick={() => void handleExport()} className="px-3 py-1.5 text-xs font-medium bg-surface border border-border-muted rounded-md hover:bg-surface-hover">Export report</button>
+            <div className="flex items-center gap-3 min-w-0">
+              {exportStatus && <span className="text-xs text-text-muted truncate" title={exportStatus}>{exportStatus}</span>}
+              <button type="button" onClick={() => void handleExport()} className="px-3 py-1.5 text-xs font-medium bg-surface border border-border-muted rounded-md hover:bg-surface-hover whitespace-nowrap">Export report</button>
+            </div>
           </div>
 
           {viewMode === 'leak-check' ? (
@@ -359,7 +374,7 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
                     <thead className="sticky top-0 bg-surface border-b border-border-muted">
                       <tr>
                         <SortableHeader label="Candidate class" active={resultSort === 'name'} onClick={() => setResultSort('name')} align="left" widthClass="w-[40%]" />
-                        <th className="w-[16%] px-3 py-3 text-right text-xs font-medium uppercase text-text-muted">Before → after</th>
+                        <th className="w-[16%] px-3 py-3 text-right text-xs font-medium text-text-muted">Before → after</th>
                         <SortableHeader label="Instance delta" active={resultSort === 'instanceDelta'} onClick={() => setResultSort('instanceDelta')} widthClass="w-[14%]" />
                         <SortableHeader label="Shallow delta" active={resultSort === 'shallowSizeDelta'} onClick={() => setResultSort('shallowSizeDelta')} widthClass="w-[15%]" />
                         <SortableHeader label="Confidence" active={resultSort === 'score'} onClick={() => setResultSort('score')} widthClass="w-[15%]" />
@@ -423,10 +438,10 @@ export function HeapDumpPanel({ device, packageName }: HeapDumpPanelProps) {
 
 function MetricCard({ label, value, tone }: { label: string; value: string; tone: 'emerald' | 'amber' | 'blue' | 'violet' }) {
   const colors = {
-    emerald: 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400',
-    amber: 'border-amber-500/20 bg-amber-500/5 text-amber-400',
-    blue: 'border-blue-500/20 bg-blue-500/5 text-blue-400',
-    violet: 'border-violet-500/20 bg-violet-500/5 text-violet-400',
+    emerald: 'border-border-muted bg-surface text-emerald-400',
+    amber: 'border-border-muted bg-surface text-amber-400',
+    blue: 'border-border-muted bg-surface text-blue-400',
+    violet: 'border-border-muted bg-surface text-violet-400',
   };
   return <div className={`rounded-lg p-3 border ${colors[tone]}`}><p className="text-xs text-text-muted">{label}</p><p className="text-xl font-semibold font-mono mt-1">{value}</p></div>;
 }
@@ -434,7 +449,7 @@ function MetricCard({ label, value, tone }: { label: string; value: string; tone
 function SortableHeader({ label, active, onClick, align = 'right', widthClass = '' }: { label: string; active: boolean; onClick: () => void; align?: 'left' | 'right'; widthClass?: string }) {
   return (
     <th className={`${widthClass} px-3 py-3 ${align === 'left' ? 'text-left' : 'text-right'}`}>
-      <button type="button" onClick={onClick} className={`text-xs font-medium uppercase tracking-wider hover:text-text-primary ${active ? 'text-text-primary' : 'text-text-muted'}`}>{label}</button>
+      <button type="button" onClick={onClick} className={`text-xs font-medium hover:text-text-primary ${active ? 'text-text-primary' : 'text-text-muted'}`}>{label}</button>
     </th>
   );
 }
@@ -484,7 +499,7 @@ function SnapshotView({ dumps, selectedDumpId, onSelectDump, analysis, selectedC
               <SortableHeader label="Class name" active={rawSort === 'name'} onClick={() => onSort('name')} align="left" widthClass="w-[52%]" />
               <SortableHeader label="Instances" active={rawSort === 'instanceCount'} onClick={() => onSort('instanceCount')} widthClass="w-[16%]" />
               <SortableHeader label="Shallow size" active={rawSort === 'shallowSize'} onClick={() => onSort('shallowSize')} widthClass="w-[16%]" />
-              <th className="w-[16%] px-3 py-3 text-right text-xs font-medium uppercase text-text-muted">Retained size</th>
+              <th className="w-[16%] px-3 py-3 text-right text-xs font-medium text-text-muted">Retained size</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-muted">

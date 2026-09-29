@@ -12,14 +12,17 @@ interface AppMetadataPanelProps {
 
 export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const { metadata, loading, error, refresh } = useAppMetadata(device, packageName);
+  const { metadata: rawMetadata, loading, error, refresh } = useAppMetadata(device, packageName);
+  // Never show metadata belonging to a previously selected package (e.g. while the
+  // new package is still loading, or if an older request resolves late).
+  const metadata = rawMetadata && rawMetadata.packageName === packageName ? rawMetadata : null;
   const guide = tabGuides['app-metadata'];
 
   const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
@@ -29,7 +32,7 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
         <div className="w-12 h-12 mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
           <InfoIcon />
         </div>
-        <p className="text-sm">Select a package to view app metadata</p>
+        <p className="text-sm">Choose an app in the toolbar to view app metadata</p>
       </div>
     );
   }
@@ -88,7 +91,7 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
         <div className="flex-1 overflow-auto space-y-4">
           {/* Basic info */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-medium text-text-muted mb-3">
               Basic Information
             </h3>
             <div className="grid grid-cols-2 gap-4">
@@ -105,7 +108,7 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
 
           {/* SDK info */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-medium text-text-muted mb-3">
               SDK Versions
             </h3>
             <div className="grid grid-cols-2 gap-4">
@@ -116,7 +119,7 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
 
           {/* Install info */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-medium text-text-muted mb-3">
               Installation
             </h3>
             <div className="grid grid-cols-2 gap-4">
@@ -129,7 +132,7 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
           {/* Sizes */}
           {(metadata.apkSize > 0 || metadata.dataSize > 0 || metadata.cacheSize > 0) && (
             <div className="bg-surface rounded-lg p-4 border border-border-muted">
-              <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+              <h3 className="text-xs font-medium text-text-muted mb-3">
                 Storage
               </h3>
               <div className="grid grid-cols-3 gap-4">
@@ -142,7 +145,7 @@ export function AppMetadataPanel({ device, packageName }: AppMetadataPanelProps)
 
           {/* Permissions */}
           <div className="bg-surface rounded-lg p-4 border border-border-muted">
-            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-medium text-text-muted mb-3">
               Permissions ({metadata.permissions.length})
             </h3>
             {metadata.permissions.length > 0 ? (

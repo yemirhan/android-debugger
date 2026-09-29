@@ -100,7 +100,7 @@ export function NetworkPanel() {
       }
       if (statusFilter !== 'all') {
         if (statusFilter === 'pending') {
-          if (r.status !== undefined) return false;
+          if (r.status !== undefined || r.error) return false;
         } else if (statusFilter === 'error') {
           if (!r.error && !(r.status && r.status >= 400)) return false;
         } else if (statusFilter === '2xx') {
@@ -160,10 +160,14 @@ export function NetworkPanel() {
         break;
     }
 
-    await navigator.clipboard.writeText(content);
-    setCopied(type);
     setShowCopyMenu(false);
-    setTimeout(() => setCopied(null), 2000);
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+    }
   };
 
   const activeFiltersCount = [
@@ -318,11 +322,11 @@ export function NetworkPanel() {
                     {request.method}
                   </div>
                   <div className="text-text-primary truncate font-mono">{request.url}</div>
-                  <div className={`font-mono ${getStatusColor(request.status)}`}>
-                    {request.status || '...'}
+                  <div className={`font-mono ${request.error && !request.status ? 'text-red-400' : getStatusColor(request.status)}`}>
+                    {request.status || (request.error ? 'ERR' : '...')}
                   </div>
                   <div className="text-text-muted font-mono">
-                    {request.duration ? `${request.duration}ms` : '-'}
+                    {request.duration != null ? `${request.duration}ms` : '-'}
                   </div>
                 </button>
               ))
@@ -404,27 +408,27 @@ export function NetworkPanel() {
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
               {/* URL */}
               <div>
-                <p className="text-xs text-text-muted uppercase tracking-wider mb-1.5">URL</p>
+                <p className="text-xs text-text-muted mb-1.5">URL</p>
                 <p className="text-text-primary break-all font-mono text-xs bg-surface-hover rounded p-2">{selectedRequest.url}</p>
               </div>
 
               {/* Method & Status */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-1">Method</p>
+                  <p className="text-xs text-text-muted mb-1">Method</p>
                   <p className={`font-mono font-medium text-sm ${getMethodColor(selectedRequest.method)}`}>
                     {selectedRequest.method}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-1">Status</p>
-                  <p className={`font-mono font-medium text-sm ${getStatusColor(selectedRequest.status)}`}>
-                    {selectedRequest.status || 'pending'}
+                  <p className="text-xs text-text-muted mb-1">Status</p>
+                  <p className={`font-mono font-medium text-sm ${selectedRequest.error && !selectedRequest.status ? 'text-red-400' : getStatusColor(selectedRequest.status)}`}>
+                    {selectedRequest.status || (selectedRequest.error ? 'failed' : 'pending')}
                   </p>
                 </div>
-                {selectedRequest.duration && (
+                {selectedRequest.duration != null && (
                   <div>
-                    <p className="text-xs text-text-muted uppercase tracking-wider mb-1">Duration</p>
+                    <p className="text-xs text-text-muted mb-1">Duration</p>
                     <p className="font-mono text-sm">{selectedRequest.duration}ms</p>
                   </div>
                 )}
@@ -433,7 +437,7 @@ export function NetworkPanel() {
               {/* Request Headers */}
               {Object.keys(selectedRequest.headers || {}).length > 0 && (
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Request Headers</p>
+                  <p className="text-xs text-text-muted mb-2">Request Headers</p>
                   <div className="bg-surface-hover rounded-md p-2 font-mono text-xs space-y-1">
                     {Object.entries(selectedRequest.headers).map(([key, value]) => (
                       <div key={key} className="flex gap-2">
@@ -448,7 +452,7 @@ export function NetworkPanel() {
               {/* Request Body */}
               {selectedRequest.body && (
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Request Body</p>
+                  <p className="text-xs text-text-muted mb-2">Request Body</p>
                   <pre className="bg-surface-hover rounded-md p-2 font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap">
                     {selectedRequest.body}
                   </pre>
@@ -458,7 +462,7 @@ export function NetworkPanel() {
               {/* Response Headers */}
               {selectedRequest.responseHeaders && Object.keys(selectedRequest.responseHeaders).length > 0 && (
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Response Headers</p>
+                  <p className="text-xs text-text-muted mb-2">Response Headers</p>
                   <div className="bg-surface-hover rounded-md p-2 font-mono text-xs space-y-1">
                     {Object.entries(selectedRequest.responseHeaders).map(([key, value]) => (
                       <div key={key} className="flex gap-2">
@@ -473,7 +477,7 @@ export function NetworkPanel() {
               {/* Response Body */}
               {selectedRequest.responseBody && (
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Response Body</p>
+                  <p className="text-xs text-text-muted mb-2">Response Body</p>
                   <pre className="bg-surface-hover rounded-md p-2 font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap max-h-64">
                     {selectedRequest.responseBody}
                   </pre>
@@ -483,7 +487,7 @@ export function NetworkPanel() {
               {/* Error */}
               {selectedRequest.error && (
                 <div>
-                  <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Error</p>
+                  <p className="text-xs text-text-muted mb-2">Error</p>
                   <pre className="bg-red-500/10 border border-red-500/20 rounded-md p-2 font-mono text-xs text-red-400">
                     {selectedRequest.error}
                   </pre>

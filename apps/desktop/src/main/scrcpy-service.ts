@@ -277,7 +277,9 @@ class ScrcpyService {
       const child = spawn(scrcpyPath, args, {
         env,
         cwd: scrcpyDir,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // stdout is never read; piping it would eventually fill the pipe and
+        // block scrcpy once enough output accumulates.
+        stdio: ['ignore', 'ignore', 'pipe'],
       });
       this.scrcpyProcess = child;
 

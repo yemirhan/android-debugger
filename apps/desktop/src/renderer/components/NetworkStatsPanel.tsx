@@ -22,19 +22,22 @@ interface NetworkStatsPanelProps {
 
 export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const { current, isMonitoring, stopMonitoring, clearData, fetchStats } = useNetworkStats(
+  const { current: rawCurrent, isMonitoring, startMonitoring, stopMonitoring, clearData, fetchStats } = useNetworkStats(
     device,
     packageName
   );
   const guide = tabGuides['network-stats'];
 
   const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   };
+
+  // Ignore stats that belong to a previously selected package.
+  const current = rawCurrent && packageName && rawCurrent.packageName === packageName ? rawCurrent : null;
 
   // Prepare chart data
   const chartData = current
@@ -82,7 +85,8 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
         <div className="flex items-center gap-2">
           <button
             onClick={fetchStats}
-            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+            disabled={!packageName}
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press disabled:opacity-50"
           >
             Refresh
           </button>
@@ -93,14 +97,15 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
             Clear
           </button>
           <button
-            onClick={isMonitoring ? stopMonitoring : undefined}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
+            onClick={isMonitoring ? stopMonitoring : startMonitoring}
+            disabled={!packageName}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press disabled:opacity-50 disabled:cursor-not-allowed ${
               isMonitoring
                 ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-surface text-text-muted border border-border-muted'
+                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
             }`}
           >
-            {isMonitoring ? 'Stop' : 'Stopped'}
+            {isMonitoring ? 'Stop' : 'Start'}
           </button>
         </div>
       </div>
@@ -108,7 +113,7 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
       {/* Info message */}
       {!packageName && (
         <div className="px-4 py-2.5 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400">
-          Select a package to see its network statistics
+          Choose an app in the toolbar to see its network statistics
         </div>
       )}
 
@@ -164,16 +169,16 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
         {packageName && current ? (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} barGap={8}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#262a31" vertical={false} />
               <XAxis
                 dataKey="name"
-                stroke="#71717a"
+                stroke="#757c89"
                 tickLine={false}
                 axisLine={false}
                 tick={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
               />
               <YAxis
-                stroke="#71717a"
+                stroke="#757c89"
                 tickLine={false}
                 axisLine={false}
                 tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
@@ -182,21 +187,21 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#18181b',
-                  border: '1px solid #3f3f46',
+                  backgroundColor: '#20242a',
+                  border: '1px solid #333842',
                   borderRadius: '8px',
                   fontSize: '12px',
                   fontFamily: 'var(--font-mono)',
                   boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
                 }}
-                labelStyle={{ color: '#a1a1aa' }}
+                labelStyle={{ color: '#a4abb7' }}
                 formatter={(value: number) => [formatBytes(value), '']}
               />
               <Legend
                 wrapperStyle={{ fontSize: '11px', fontFamily: 'var(--font-mono)' }}
               />
-              <Bar dataKey="WiFi" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Mobile" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="WiFi" fill="#6ea0ff" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Mobile" fill="#3ddc84" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
@@ -207,7 +212,7 @@ export function NetworkStatsPanel({ device, packageName }: NetworkStatsPanelProp
               </svg>
             </div>
             <p className="text-sm">
-              {packageName ? 'Loading network stats...' : 'Enter a package name to see network stats'}
+              {packageName ? 'Loading network stats...' : 'Choose an app in the toolbar to see network stats'}
             </p>
           </div>
         )}

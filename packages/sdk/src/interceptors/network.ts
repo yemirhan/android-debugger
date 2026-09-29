@@ -15,6 +15,10 @@ let originalFetch: typeof fetch | null = null;
 let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
 let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
 let axiosInterceptors: AxiosInterceptorManager[] = [];
+// True while the wrapped fetch runs synchronously. React Native's fetch polyfill
+// (whatwg-fetch) opens and sends an XMLHttpRequest synchronously inside fetch(),
+// so XHRs opened during that window are already tracked by the fetch interceptor.
+let isInsideFetch = false;
 
 let requestId = 0;
 
@@ -142,7 +146,7 @@ export function interceptAxios(axiosInstance: AxiosInstance, send: SendFn): () =
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (error: any) => {
-      const config = error.config || {};
+      const config = error?.config || {};
       const id = config.__debugger_id;
       const startTime = config.__debugger_start || Date.now();
       const request = pendingRequests.get(id);
@@ -152,13 +156,13 @@ export function interceptAxios(axiosInstance: AxiosInstance, send: SendFn): () =
 
         const errorRequest: NetworkRequest = {
           ...request,
-          status: error.response?.status,
-          error: error.message || 'Request failed',
+          status: error?.response?.status,
+          error: error?.message || 'Request failed',
           duration: Date.now() - startTime,
         };
 
         // Include response data if available
-        if (error.response?.data) {
+        if (error?.response?.data) {
           try {
             errorRequest.responseBody =
               typeof error.response.data === 'string'
@@ -223,7 +227,7 @@ export function interceptNetwork(send: SendFn): () => void {
       headers[key] = value;
     });
     if (init?.headers) {
-      if (init.headers instanceof Headers) {
+      if (typeof Headers !== 'undefined' && init.headers instanceof Headers) {
         init.headers.forEach((value, key) => {
           headers[key] = value;
         });
@@ -252,47 +256,16 @@ export function interceptNetwork(send: SendFn): () => void {
       payload: request,
     });
 
+    let response: Response;
     try {
-      const response = await originalFetch!(input, init);
-
-      // Clone response to read body
-      const clonedResponse = response.clone();
-      let responseBody: string | undefined;
-
+      let responsePromise: Promise<Response>;
+      isInsideFetch = true;
       try {
-        const contentType = response.headers.get('content-type');
-        if (contentType?.includes('application/json') || contentType?.includes('text')) {
-          responseBody = await clonedResponse.text();
-          // Truncate large responses
-          if (responseBody.length > 10000) {
-            responseBody = responseBody.substring(0, 10000) + '... [truncated]';
-          }
-        }
-      } catch {
-        // Ignore body read errors
+        responsePromise = originalFetch!(input, init);
+      } finally {
+        isInsideFetch = false;
       }
-
-      const responseHeaders: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        responseHeaders[key] = value;
-      });
-
-      // Send response
-      const completedRequest: NetworkRequest = {
-        ...request,
-        status: response.status,
-        responseHeaders,
-        responseBody,
-        duration: Date.now() - startTime,
-      };
-
-      send({
-        type: 'network',
-        timestamp: Date.now(),
-        payload: completedRequest,
-      });
-
-      return response;
+      response = await responsePromise;
     } catch (error) {
       // Send error
       const errorRequest: NetworkRequest = {
@@ -309,6 +282,56 @@ export function interceptNetwork(send: SendFn): () => void {
 
       throw error;
     }
+
+    // Instrumentation must never turn a successful fetch into a failure
+    try {
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+
+      const sendCompleted = (responseBody?: string) => {
+        // Truncate large responses
+        if (responseBody && responseBody.length > 10000) {
+          responseBody = responseBody.substring(0, 10000) + '... [truncated]';
+        }
+
+        const completedRequest: NetworkRequest = {
+          ...request,
+          status: response.status,
+          responseHeaders,
+          responseBody,
+          duration: Date.now() - startTime,
+        };
+
+        send({
+          type: 'network',
+          timestamp: Date.now(),
+          payload: completedRequest,
+        });
+      };
+
+      const contentType = response.headers.get('content-type');
+      const isTextBody =
+        (contentType?.includes('application/json') || contentType?.includes('text')) &&
+        // Streams never finish, so reading them would never report completion
+        !contentType.includes('text/event-stream');
+
+      if (isTextBody) {
+        // Read a clone in the background: awaiting it here would delay (or, for
+        // streamed bodies, block) handing the response back to the app.
+        response
+          .clone()
+          .text()
+          .then(sendCompleted, () => sendCompleted(undefined));
+      } else {
+        sendCompleted(undefined);
+      }
+    } catch {
+      // Ignore instrumentation errors
+    }
+
+    return response;
   };
 
   // Intercept XMLHttpRequest
@@ -327,6 +350,7 @@ export function interceptNetwork(send: SendFn): () => void {
     (this as any).__debugger_url = url.toString();
     (this as any).__debugger_start = 0;
     (this as any).__debugger_headers = {};
+    (this as any).__debugger_skip = isInsideFetch;
 
     const originalSetRequestHeader = this.setRequestHeader;
     this.setRequestHeader = function (name: string, value: string): void {
@@ -338,6 +362,11 @@ export function interceptNetwork(send: SendFn): () => void {
   };
 
   XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null): void {
+    if ((this as any).__debugger_skip) {
+      // Issued by the fetch polyfill; already reported by the fetch interceptor
+      return originalXHRSend!.call(this, body);
+    }
+
     const id = (this as any).__debugger_id;
     const method = (this as any).__debugger_method || 'GET';
     const url = (this as any).__debugger_url || '';
@@ -363,7 +392,8 @@ export function interceptNetwork(send: SendFn): () => void {
 
     this.addEventListener('load', function () {
       const responseHeaders: Record<string, string> = {};
-      const headerString = this.getAllResponseHeaders();
+      // React Native returns null when no headers were received
+      const headerString = this.getAllResponseHeaders() || '';
       headerString.split('\r\n').forEach((line) => {
         const [key, ...valueParts] = line.split(':');
         if (key) {
@@ -425,6 +455,20 @@ export function interceptNetwork(send: SendFn): () => void {
       const errorRequest: NetworkRequest = {
         ...request,
         error: 'Request timeout',
+        duration: Date.now() - startTime,
+      };
+
+      send({
+        type: 'network',
+        timestamp: Date.now(),
+        payload: errorRequest,
+      });
+    });
+
+    this.addEventListener('abort', function () {
+      const errorRequest: NetworkRequest = {
+        ...request,
+        error: 'Request aborted',
         duration: Date.now() - startTime,
       };
 

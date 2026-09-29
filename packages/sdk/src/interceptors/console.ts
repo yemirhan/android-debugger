@@ -75,6 +75,10 @@ function serializeArg(arg: unknown): unknown {
     return `[Function: ${arg.name || 'anonymous'}]`;
   }
 
+  // Not representable in JSON (BigInt makes JSON.stringify throw)
+  if (typeof arg === 'bigint') return `${arg}n`;
+  if (typeof arg === 'symbol') return arg.toString();
+
   if (arg instanceof Error) {
     return {
       name: arg.name,
@@ -89,6 +93,11 @@ function serializeArg(arg: unknown): unknown {
       const seen = new WeakSet();
       return JSON.parse(
         JSON.stringify(arg, (key, value) => {
+          if (typeof value === 'bigint') return `${value}n`;
+          if (value instanceof Error) {
+            // Error properties are non-enumerable and would serialize as {}
+            return { name: value.name, message: value.message, stack: value.stack };
+          }
           if (typeof value === 'object' && value !== null) {
             if (seen.has(value)) {
               return '[Circular]';

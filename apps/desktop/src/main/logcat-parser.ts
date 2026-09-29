@@ -33,11 +33,14 @@ export class LogcatMessageParser {
   private readonly MAX_CHUNKS = 256;
   private readonly MAX_CHUNK_LENGTH = 4000;
 
-  parseLogLine(line: string): SdkMessage | null {
+  parseLogLine(rawLine: string): SdkMessage | null {
     // Quick check for SDK prefix
-    if (!line.includes(this.SDK_PREFIX)) {
+    if (!rawLine.includes(this.SDK_PREFIX)) {
       return null;
     }
+    // CRLF output (e.g. adb on Windows) would otherwise leave a trailing `\r`
+    // that breaks the `$`-anchored pattern and corrupts reassembled chunks.
+    const line = rawLine.replace(/\r+$/, '');
 
     const match = line.match(this.MESSAGE_PATTERN);
     if (!match) {

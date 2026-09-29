@@ -11,11 +11,34 @@ interface JobSchedulerPanelProps {
 }
 
 export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProps) {
-  const [showInfo, setShowInfo] = useState(false);
   const [showAllPackages, setShowAllPackages] = useState(false);
+  // Remount the content whenever the device or effective package filter changes so
+  // polling restarts and results from the previous filter are never shown.
+  const filterKey = `${device.id}:${showAllPackages ? '*' : packageName}`;
+  return (
+    <JobSchedulerContent
+      key={filterKey}
+      device={device}
+      packageName={packageName}
+      showAllPackages={showAllPackages}
+      setShowAllPackages={setShowAllPackages}
+    />
+  );
+}
+
+interface JobSchedulerContentProps extends JobSchedulerPanelProps {
+  showAllPackages: boolean;
+  setShowAllPackages: (value: boolean) => void;
+}
+
+function JobSchedulerContent({ device, packageName, showAllPackages, setShowAllPackages }: JobSchedulerContentProps) {
+  const [showInfo, setShowInfo] = useState(false);
   const guide = tabGuides['jobs'];
+  // Without a package filter the IPC call returns every package's jobs; only do
+  // that when “Show all packages” is explicitly enabled.
+  const hasFilter = showAllPackages || !!packageName;
   const { data, isLoading, error, isPolling, refresh, stopPolling, startPolling } = useJobScheduler(
-    device,
+    hasFilter ? device : null,
     showAllPackages ? undefined : packageName || undefined
   );
 
@@ -101,7 +124,8 @@ export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProp
           </label>
           <button
             onClick={() => (isPolling ? stopPolling() : startPolling())}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all duration-150 btn-press ${
+            disabled={!hasFilter && !isPolling}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all duration-150 btn-press disabled:opacity-50 ${
               isPolling
                 ? 'text-amber-400 bg-amber-500/15 border-amber-500/25'
                 : 'text-text-secondary bg-surface border-border-muted hover:bg-surface-hover hover:text-text-primary'
@@ -111,7 +135,7 @@ export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProp
           </button>
           <button
             onClick={refresh}
-            disabled={isLoading}
+            disabled={isLoading || !hasFilter}
             className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press disabled:opacity-50"
           >
             {isLoading ? 'Loading...' : 'Refresh'}
@@ -122,7 +146,7 @@ export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProp
       {/* Info message */}
       {!packageName && !showAllPackages && (
         <div className="px-4 py-2.5 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400">
-          Select a package to see its scheduled jobs, or enable "Show all packages"
+          Choose an app in the toolbar to see its scheduled jobs, or enable “Show all packages”
         </div>
       )}
 
@@ -140,22 +164,22 @@ export function JobSchedulerPanel({ device, packageName }: JobSchedulerPanelProp
             <table className="w-full">
               <thead className="sticky top-0 bg-surface border-b border-border-muted">
                 <tr>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Job ID
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Service
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     State
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Constraints
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Timing
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-text-muted">
                     Persisted
                   </th>
                 </tr>

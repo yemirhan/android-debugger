@@ -21,12 +21,12 @@ interface GcMonitorPanelProps {
 }
 
 const reasonColors: Record<GcReason, string> = {
-  ALLOC: '#f59e0b',
-  CONCURRENT: '#10b981',
-  EXPLICIT: '#8b5cf6',
-  FOR_ALLOC: '#ef4444',
-  BACKGROUND: '#6b7280',
-  UNKNOWN: '#71717a',
+  ALLOC: '#f5b841',
+  CONCURRENT: '#3ddc84',
+  EXPLICIT: '#a78bfa',
+  FOR_ALLOC: '#f26d6d',
+  BACKGROUND: '#757c89',
+  UNKNOWN: '#757c89',
 };
 
 function formatBytes(bytes: number): string {
@@ -43,7 +43,7 @@ function formatTime(ms: number): string {
 }
 
 export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
-  const { events, stats, isMonitoring, stopMonitoring, clearData } = useGcMonitor(device, packageName);
+  const { events, stats, isMonitoring, startMonitoring, stopMonitoring, clearData } = useGcMonitor(device, packageName);
   const [selectedEvent, setSelectedEvent] = useState<GcEvent | null>(null);
 
   // Prepare chart data
@@ -78,7 +78,7 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
           <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-surface-hover flex items-center justify-center">
             <GcIcon />
           </div>
-          <p className="text-sm">Select a package to monitor GC events</p>
+          <p className="text-sm">Choose an app in the toolbar to monitor GC events</p>
         </div>
       </div>
     );
@@ -104,14 +104,14 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
             Clear
           </button>
           <button
-            onClick={isMonitoring ? stopMonitoring : undefined}
+            onClick={isMonitoring ? stopMonitoring : startMonitoring}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
               isMonitoring
                 ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-surface text-text-muted border border-border-muted'
+                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
             }`}
           >
-            {isMonitoring ? 'Stop' : 'Stopped'}
+            {isMonitoring ? 'Stop' : 'Start'}
           </button>
         </div>
       </div>
@@ -149,16 +149,16 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#262a31" vertical={false} />
                   <XAxis
                     dataKey="index"
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
                   />
                   <YAxis
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
@@ -167,8 +167,8 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#18181b',
-                      border: '1px solid #3f3f46',
+                      backgroundColor: '#20242a',
+                      border: '1px solid #333842',
                       borderRadius: '8px',
                       fontSize: '12px',
                       fontFamily: 'var(--font-mono)',
@@ -182,7 +182,7 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
                   <Line
                     type="monotone"
                     dataKey="heapTotal"
-                    stroke="#6b7280"
+                    stroke="#757c89"
                     strokeWidth={1}
                     strokeDasharray="3 3"
                     dot={false}
@@ -190,7 +190,7 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
                   <Line
                     type="monotone"
                     dataKey="heapUsed"
-                    stroke="#10b981"
+                    stroke="#3ddc84"
                     strokeWidth={2}
                     dot={false}
                   />
@@ -211,16 +211,16 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#262a31" vertical={false} />
                   <XAxis
                     dataKey="index"
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
                   />
                   <YAxis
-                    stroke="#71717a"
+                    stroke="#757c89"
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10, fontFamily: 'var(--font-mono)' }}
@@ -229,8 +229,8 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#18181b',
-                      border: '1px solid #3f3f46',
+                      backgroundColor: '#20242a',
+                      border: '1px solid #333842',
                       borderRadius: '8px',
                       fontSize: '12px',
                       fontFamily: 'var(--font-mono)',
@@ -240,9 +240,9 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
                   <Line
                     type="monotone"
                     dataKey="pauseTime"
-                    stroke="#f59e0b"
+                    stroke="#f5b841"
                     strokeWidth={2}
-                    dot={{ r: 3, fill: '#f59e0b' }}
+                    dot={{ r: 3, fill: '#f5b841' }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -261,19 +261,19 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
           <table className="w-full">
             <thead className="sticky top-0 bg-surface border-b border-border-muted">
               <tr>
-                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wider">
+                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted">
                   Time
                 </th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wider">
+                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted">
                   Reason
                 </th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wider">
+                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted">
                   Freed
                 </th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wider">
+                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted">
                   Heap
                 </th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted uppercase tracking-wider">
+                <th className="text-left px-4 py-2 text-xs font-medium text-text-muted">
                   Pause
                 </th>
               </tr>
@@ -343,12 +343,12 @@ interface StatCardProps {
 
 function StatCard({ label, value, color }: StatCardProps) {
   const colors = {
-    emerald: 'border-emerald-500/20 bg-emerald-500/5',
-    blue: 'border-blue-500/20 bg-blue-500/5',
-    violet: 'border-violet-500/20 bg-violet-500/5',
-    amber: 'border-amber-500/20 bg-amber-500/5',
-    red: 'border-red-500/20 bg-red-500/5',
-    cyan: 'border-cyan-500/20 bg-cyan-500/5',
+    emerald: 'border-border-muted bg-surface',
+    blue: 'border-border-muted bg-surface',
+    violet: 'border-border-muted bg-surface',
+    amber: 'border-border-muted bg-surface',
+    red: 'border-border-muted bg-surface',
+    cyan: 'border-border-muted bg-surface',
   };
 
   const textColors = {

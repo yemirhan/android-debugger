@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import type { LogEntry } from '@android-debugger/shared';
-import { MAX_LOG_ENTRIES } from '@android-debugger/shared';
+import { getAppSettings, useAppSettings } from '../lib/app-settings';
 
 export type LogMode = 'rn' | 'all';
 
@@ -11,6 +11,9 @@ interface LogsContextValue {
   logMode: LogMode;
   clearLogs: (deviceId?: string) => Promise<void>;
   togglePause: () => void;
+  // Start/stop the visible log stream (auto-started unless disabled in Settings).
+  startStreaming: () => void;
+  stopStreaming: () => void;
   setLogMode: (mode: LogMode) => void;
 }
 
@@ -39,6 +42,12 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
   const [logMode, setLogModeState] = useState<LogMode>('rn');
   const pausedRnLogsRef = useRef<LogEntry[]>([]);
   const pausedAllLogsRef = useRef<LogEntry[]>([]);
+  // Whether the user wants the visible stream running; reset from the
+  // auto-start setting whenever the device changes.
+  const [streamEnabled, setStreamEnabled] = useState(() => getAppSettings().autoStartLogcat);
+  const { maxLogEntries } = useAppSettings();
+  const maxLogEntriesRef = useRef(maxLogEntries);
+  maxLogEntriesRef.current = maxLogEntries;
 
   // Get current logs based on mode
   const logs = logMode === 'rn' ? rnLogs : allLogs;
@@ -54,29 +63,34 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
     }
   }, [logMode]);
 
-  // Pause/resume
-  const togglePause = useCallback(() => {
-    if (isPaused) {
-      // Resume: merge paused logs into main logs (paused logs are newer, go to front)
-      const currentPausedRef = logMode === 'rn' ? pausedRnLogsRef : pausedAllLogsRef;
-      const currentSetLogs = logMode === 'rn' ? setRnLogs : setAllLogs;
-
-      currentSetLogs((prev) => {
-        const merged = [...currentPausedRef.current, ...prev];
-        currentPausedRef.current = [];
-        if (merged.length > MAX_LOG_ENTRIES) {
-          return merged.slice(0, MAX_LOG_ENTRIES);
-        }
-        return merged;
-      });
-    }
-    setIsPaused((prev) => !prev);
-  }, [isPaused, logMode]);
-
   // Track mode switch timing to ignore stale logs
   const modeSwitchTimeRef = useRef(0);
   const logModeRef = useRef(logMode);
   const isPausedRef = useRef(isPaused);
+
+  // Pause/resume
+  const togglePause = useCallback(() => {
+    if (isPaused) {
+      // Resume: merge paused logs into main logs (paused logs are newer, go to front).
+      // Drain the buffer outside the state updater so the updater stays pure.
+      const currentPausedRef = logMode === 'rn' ? pausedRnLogsRef : pausedAllLogsRef;
+      const currentSetLogs = logMode === 'rn' ? setRnLogs : setAllLogs;
+      const pausedLogs = currentPausedRef.current;
+      currentPausedRef.current = [];
+
+      currentSetLogs((prev) => {
+        const merged = [...pausedLogs, ...prev];
+        if (merged.length > maxLogEntriesRef.current) {
+          return merged.slice(0, maxLogEntriesRef.current);
+        }
+        return merged;
+      });
+    }
+    // Update the ref immediately so entries arriving before the next commit
+    // are routed to the correct buffer.
+    isPausedRef.current = !isPaused;
+    setIsPaused(!isPaused);
+  }, [isPaused, logMode]);
 
   const streamPackageName = logMode === 'all' ? packageName : '';
   useEffect(() => {
@@ -111,14 +125,14 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
       if (currentIsPaused) {
         // Store in paused buffer (newest first)
         currentPausedRef.current.unshift(entry);
-        if (currentPausedRef.current.length > MAX_LOG_ENTRIES) {
-          currentPausedRef.current = currentPausedRef.current.slice(0, MAX_LOG_ENTRIES);
+        if (currentPausedRef.current.length > maxLogEntriesRef.current) {
+          currentPausedRef.current = currentPausedRef.current.slice(0, maxLogEntriesRef.current);
         }
       } else {
         currentSetLogs((prev) => {
           const newLogs = [entry, ...prev];
-          if (newLogs.length > MAX_LOG_ENTRIES) {
-            return newLogs.slice(0, MAX_LOG_ENTRIES);
+          if (newLogs.length > maxLogEntriesRef.current) {
+            return newLogs.slice(0, maxLogEntriesRef.current);
           }
           return newLogs;
         });
@@ -134,7 +148,7 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
   // so changing display filters cannot interrupt SDK capture.
   useEffect(() => {
     window.electronAPI.stopLogcat();
-    if (!selectedDevice || (logMode === 'all' && !streamPackageName)) {
+    if (!selectedDevice || !streamEnabled || (logMode === 'all' && !streamPackageName)) {
       setIsStreaming(false);
       return;
     }
@@ -146,14 +160,33 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
     }
     setIsStreaming(true);
     return () => window.electronAPI.stopLogcat();
-  }, [selectedDevice?.id, logMode, streamPackageName]);
+  }, [selectedDevice?.id, logMode, streamPackageName, streamEnabled]);
+
+  const startStreaming = useCallback(() => setStreamEnabled(true), []);
+  const stopStreaming = useCallback(() => setStreamEnabled(false), []);
 
   useEffect(() => {
     setRnLogs([]);
     setAllLogs([]);
     pausedRnLogsRef.current = [];
     pausedAllLogsRef.current = [];
+    setStreamEnabled(getAppSettings().autoStartLogcat);
   }, [selectedDevice?.id]);
+
+  // Apply a lowered log limit to what is already buffered.
+  useEffect(() => {
+    setRnLogs((prev) => (prev.length > maxLogEntries ? prev.slice(0, maxLogEntries) : prev));
+    setAllLogs((prev) => (prev.length > maxLogEntries ? prev.slice(0, maxLogEntries) : prev));
+    pausedRnLogsRef.current = pausedRnLogsRef.current.slice(0, maxLogEntries);
+    pausedAllLogsRef.current = pausedAllLogsRef.current.slice(0, maxLogEntries);
+  }, [maxLogEntries]);
+
+  // "All" logs are PID-filtered for the selected package, so they must not
+  // carry over to a different package.
+  useEffect(() => {
+    setAllLogs([]);
+    pausedAllLogsRef.current = [];
+  }, [packageName]);
 
   const value: LogsContextValue = {
     logs,
@@ -162,6 +195,8 @@ export function LogsProvider({ children, selectedDevice, packageName }: LogsProv
     logMode,
     clearLogs,
     togglePause,
+    startStreaming,
+    stopStreaming,
     setLogMode,
   };
 

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { TabId } from '../App';
+import { tabToGroup } from '../data/navigation';
 
 const STORAGE_KEY = 'android-debugger-nav-state';
 
@@ -17,10 +18,14 @@ function loadState(): NavigationState {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved);
+      const parsed = JSON.parse(saved) as Partial<NavigationState> | null;
       return {
-        ...defaultState,
-        ...parsed,
+        expandedGroups: Array.isArray(parsed?.expandedGroups)
+          ? parsed.expandedGroups.filter((id): id is string => typeof id === 'string')
+          : defaultState.expandedGroups,
+        sidebarExpanded: typeof parsed?.sidebarExpanded === 'boolean'
+          ? parsed.sidebarExpanded
+          : defaultState.sidebarExpanded,
       };
     }
   } catch (e) {
@@ -45,45 +50,14 @@ export function useNavigationState(activeTab: TabId) {
     saveState(state);
   }, [state]);
 
-  // Auto-expand group containing active tab
-  const getGroupForTab = useCallback((tab: TabId): string | null => {
-    const tabToGroup: Record<string, string> = {
-      // Performance
-      'memory': 'performance',
-      'cpu-fps': 'performance',
-      'battery': 'performance',
-      'network-stats': 'performance',
-      // Debugging
-      'logs': 'debugging',
-      'crashes': 'debugging',
-      'network': 'debugging',
-      'websocket': 'debugging',
-      'sdk': 'debugging',
-      // App State
-      'activity-stack': 'app-state',
-      'jobs': 'app-state',
-      'alarms': 'app-state',
-      'services': 'app-state',
-      'file-inspector': 'app-state',
-      // Tools
-      'intent-tester': 'tools',
-      'screen-capture': 'tools',
-      'dev-options': 'tools',
-      'app-info': 'tools',
-    };
-    return tabToGroup[tab] || null;
-  }, []);
-
   // Auto-expand group when active tab changes
   useEffect(() => {
-    const group = getGroupForTab(activeTab);
-    if (group && !state.expandedGroups.includes(group)) {
-      setState(prev => ({
-        ...prev,
-        expandedGroups: [...prev.expandedGroups, group],
-      }));
-    }
-  }, [activeTab, getGroupForTab, state.expandedGroups]);
+    const group = tabToGroup[activeTab];
+    if (!group) return;
+    setState(prev => prev.expandedGroups.includes(group)
+      ? prev
+      : { ...prev, expandedGroups: [...prev.expandedGroups, group] });
+  }, [activeTab]);
 
   const toggleGroup = useCallback((groupId: string) => {
     setState(prev => ({
@@ -111,6 +85,5 @@ export function useNavigationState(activeTab: TabId) {
     toggleGroup,
     isGroupExpanded,
     toggleSidebar,
-    getGroupForTab,
   };
 }

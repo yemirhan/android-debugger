@@ -14,6 +14,8 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
   const {
     selectedFile,
     selectFile,
+    selectDroppedFile,
+    fileError,
     clearFile,
     installOptions,
     setInstallOptions,
@@ -44,6 +46,8 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
   const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    // dragleave also fires when moving onto a child element; ignore those.
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
     setIsDragOver(false);
   }, []);
 
@@ -52,11 +56,9 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
     e.stopPropagation();
     setIsDragOver(false);
 
-    // Note: Due to Electron security restrictions, we can't directly access
-    // dropped files. The user should use the browse button instead.
-    // In a future enhancement, we could use IPC to handle dropped files.
-    selectFile();
-  }, [selectFile]);
+    const file = e.dataTransfer.files[0];
+    if (file) selectDroppedFile(file);
+  }, [selectDroppedFile]);
 
   // Format file size
   const formatSize = (bytes: number): string => {
@@ -167,6 +169,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
             >
               Browse Files
             </button>
+            {fileError && <p className="text-xs text-red-400 mt-3">{fileError}</p>}
           </div>
         </div>
       )}
@@ -197,7 +200,8 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
             </div>
             <button
               onClick={clearFile}
-              className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-hover rounded-lg transition-colors"
+              disabled={isInstalling}
+              className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-hover rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Remove file"
             >
               <CloseIcon />
@@ -240,6 +244,11 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
                   <p className="text-xs mt-1 opacity-70">{bundletoolDownloadProgress.message}</p>
                 </div>
               )}
+              {!isDownloadingBundletool && bundletoolDownloadProgress && (
+                // The warning is only visible while bundletool is unavailable, so a
+                // leftover message here means the last download attempt failed.
+                <p className="text-xs mt-2 text-red-400">{bundletoolDownloadProgress.message}</p>
+              )}
               {!isDownloadingBundletool && (
                 <button
                   onClick={downloadBundletool}
@@ -256,7 +265,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
       {/* Install Options */}
       {selectedFile && !result && (
         <div className="bg-surface rounded-lg p-4 border border-border-muted">
-          <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+          <h3 className="text-xs font-medium text-text-muted mb-3">
             Install Options
           </h3>
           <div className="space-y-3">
@@ -267,6 +276,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
                 onChange={(e) =>
                   setInstallOptions({ ...installOptions, reinstall: e.target.checked })
                 }
+                disabled={isInstalling}
                 className="w-4 h-4 rounded border-border-muted bg-surface-hover text-accent focus:ring-accent focus:ring-offset-0"
               />
               <div>
@@ -281,6 +291,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
                 onChange={(e) =>
                   setInstallOptions({ ...installOptions, allowDowngrade: e.target.checked })
                 }
+                disabled={isInstalling}
                 className="w-4 h-4 rounded border-border-muted bg-surface-hover text-accent focus:ring-accent focus:ring-offset-0"
               />
               <div>
@@ -295,6 +306,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
                 onChange={(e) =>
                   setInstallOptions({ ...installOptions, grantPermissions: e.target.checked })
                 }
+                disabled={isInstalling}
                 className="w-4 h-4 rounded border-border-muted bg-surface-hover text-accent focus:ring-accent focus:ring-offset-0"
               />
               <div>
@@ -401,7 +413,7 @@ export function AppInstallerPanel({ device }: AppInstallerPanelProps) {
 
       {/* Tips */}
       <div className="bg-surface rounded-lg p-4 border border-border-muted mt-auto">
-        <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+        <h3 className="text-xs font-medium text-text-muted mb-3">
           Tips
         </h3>
         <ul className="space-y-2 text-sm text-text-secondary">

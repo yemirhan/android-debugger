@@ -11,8 +11,16 @@ interface ActivityStackPanelProps {
 }
 
 export function ActivityStackPanel({ device, packageName }: ActivityStackPanelProps) {
+  // Remount on device/package change so polling restarts for the new target and
+  // the previous package's stack is discarded.
+  return <ActivityStackContent key={`${device.id}:${packageName}`} device={device} packageName={packageName} />;
+}
+
+function ActivityStackContent({ device, packageName }: ActivityStackPanelProps) {
   const [showInfo, setShowInfo] = useState(false);
-  const { data, isLoading, error, isPolling, refresh, stopPolling, startPolling } = useActivityStack(device, packageName);
+  const { data: rawData, isLoading, error, isPolling, refresh, stopPolling, startPolling } = useActivityStack(device, packageName);
+  // Ignore results belonging to a previously selected package.
+  const data = rawData && packageName && rawData.packageName === packageName ? rawData : null;
   const guide = tabGuides['activity-stack'];
 
   const getStateColor = (state: ActivityInfo['state']) => {
@@ -61,17 +69,18 @@ export function ActivityStackPanel({ device, packageName }: ActivityStackPanelPr
         <div className="flex items-center gap-2">
           <button
             onClick={() => (isPolling ? stopPolling() : startPolling())}
+            disabled={!packageName && !isPolling}
             className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all duration-150 btn-press ${
               isPolling
                 ? 'text-amber-400 bg-amber-500/15 border-amber-500/25'
                 : 'text-text-secondary bg-surface border-border-muted hover:bg-surface-hover hover:text-text-primary'
-            }`}
+            } disabled:opacity-50`}
           >
             {isPolling ? 'Stop Polling' : 'Start Polling'}
           </button>
           <button
             onClick={refresh}
-            disabled={isLoading}
+            disabled={isLoading || !packageName}
             className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press disabled:opacity-50"
           >
             {isLoading ? 'Loading...' : 'Refresh'}
@@ -82,7 +91,7 @@ export function ActivityStackPanel({ device, packageName }: ActivityStackPanelPr
       {/* Info message */}
       {!packageName && (
         <div className="px-4 py-2.5 rounded-lg text-sm bg-amber-500/15 border border-amber-500/25 text-amber-400">
-          Select a package to view its activity stack
+          Choose an app in the toolbar to view its activity stack
         </div>
       )}
 

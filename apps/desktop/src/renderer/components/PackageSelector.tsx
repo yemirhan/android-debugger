@@ -80,26 +80,35 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
-  // Fetch packages on mount
+  // Fetch packages whenever the device changes. Clear the previous device's list
+  // and ignore responses that resolve after the device has changed again.
   useEffect(() => {
+    let cancelled = false;
+    setPackages([]);
+    setLoadError(null);
     const fetchPackages = async () => {
       setLoading(true);
       try {
         const result = await window.electronAPI.getPackages(device.id, true);
-        setPackages(result);
+        if (!cancelled) setPackages(result);
       } catch (error) {
         console.error('Error fetching packages:', error);
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : 'Failed to load packages');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchPackages();
+    return () => {
+      cancelled = true;
+    };
   }, [device.id]);
 
   // Close dropdown when clicking outside
@@ -156,6 +165,7 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
     setSearch('');
     setIsOpen(false);
     setHighlightedIndex(0);
+    inputRef.current?.blur();
   }, [onChange]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -203,7 +213,9 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
         break;
 
       case 'Tab':
-        if (isOpen && filteredPackages[highlightedIndex]) {
+        // Only auto-select on Tab if the user actually typed a query; otherwise
+        // tabbing through the UI would silently replace the selected package.
+        if (isOpen && search && filteredPackages[highlightedIndex]) {
           handleSelect(filteredPackages[highlightedIndex].pkg);
         } else {
           setIsOpen(false);
@@ -211,7 +223,7 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
         }
         break;
     }
-  }, [isOpen, filteredPackages, highlightedIndex, handleSelect]);
+  }, [isOpen, search, filteredPackages, highlightedIndex, handleSelect]);
 
   // Render package name with highlighted matches
   const renderHighlightedText = (text: string, indices: number[]) => {
@@ -258,7 +270,7 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <div className={`flex items-center gap-2 px-2.5 py-1.5 bg-background rounded-md border transition-colors ${
+      <div className={`flex items-center gap-2 h-8 px-2.5 bg-background rounded-md border transition-colors text-text-muted ${
         isOpen ? 'border-accent' : 'border-border-muted hover:border-border'
       }`}>
         <PackageIcon />
@@ -271,12 +283,26 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
             setIsOpen(true);
             setSearch('');
           }}
+          onClick={() => {
+            // Already-focused inputs don't fire focus again, e.g. after Esc
+            if (!isOpen) {
+              setIsOpen(true);
+              setSearch('');
+            }
+          }}
           onKeyDown={handleKeyDown}
-          placeholder={value || "Select a package"}
-          className="w-52 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none font-mono"
+          placeholder={value || 'Choose an app'}
+          aria-label="App package"
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          className="w-56 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none focus-visible:outline-none"
         />
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => {
+            setIsOpen(!isOpen);
+            setSearch('');
+          }}
           className="text-text-muted hover:text-text-primary transition-colors"
           tabIndex={-1}
         >
@@ -285,36 +311,45 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-full min-w-[320px] bg-surface-elevated border border-border rounded-lg shadow-xl z-50 max-h-64 overflow-hidden animate-fade-in backdrop-blur-dropdown">
-          {/* Keyboard hints */}
-          <div className="px-3 py-1.5 border-b border-border-muted flex items-center gap-3 text-[10px] text-text-muted">
-            <span><kbd className="px-1 py-0.5 bg-surface rounded text-[9px]">↑↓</kbd> navigate</span>
-            <span><kbd className="px-1 py-0.5 bg-surface rounded text-[9px]">Enter</kbd> select</span>
-            <span><kbd className="px-1 py-0.5 bg-surface rounded text-[9px]">Esc</kbd> close</span>
+        <div className="absolute top-full left-0 mt-1.5 w-full min-w-[340px] bg-surface-elevated border border-border rounded-lg shadow-xl shadow-black/40 z-50 max-h-72 overflow-hidden animate-pop-in">
+          <div className="px-3 h-8 border-b border-border-muted flex items-center justify-between text-[11px] text-text-muted">
+            <span>Debuggable apps</span>
+            <span className="flex items-center gap-1"><span className="kbd">↑↓</span><span className="kbd">↵</span></span>
           </div>
 
           {loading ? (
             <div className="px-3 py-3 text-sm text-text-muted flex items-center gap-2">
               <div className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-              Loading packages...
+              Loading apps…
+            </div>
+          ) : loadError ? (
+            <div className="px-3 py-3 text-sm text-red-400">
+              Failed to load packages: {loadError}
             </div>
           ) : filteredPackages.length === 0 ? (
             <div className="px-3 py-3 text-sm text-text-muted">
-              {search ? 'No matching packages' : 'No packages found'}
+              {search ? (
+                'No app matches that name'
+              ) : (
+                <>
+                  <p className="text-text-secondary">No debuggable apps on this device</p>
+                  <p className="text-xs mt-1">Install a debug build of your app, then reopen this list.</p>
+                </>
+              )}
             </div>
           ) : (
-            <ul ref={listRef} className="overflow-y-auto max-h-52">
+            <ul ref={listRef} className="overflow-y-auto max-h-60 p-1">
               {filteredPackages.slice(0, 50).map(({ pkg, indices }, index) => (
                 <li key={pkg}>
                   <button
                     onClick={() => handleSelect(pkg)}
                     onMouseEnter={() => setHighlightedIndex(index)}
-                    className={`w-full px-3 py-2 text-xs text-left font-mono transition-colors ${
+                    className={`w-full px-2.5 py-1.5 rounded-md text-[13px] text-left transition-colors ${
                       index === highlightedIndex
-                        ? 'bg-accent/15 text-text-primary'
+                        ? 'bg-accent-muted text-text-primary'
                         : pkg === value
-                        ? 'bg-accent/5 text-accent'
-                        : 'text-text-primary hover:bg-surface-hover'
+                        ? 'text-accent'
+                        : 'text-text-secondary'
                     }`}
                   >
                     {renderHighlightedText(pkg, indices)}
@@ -323,7 +358,7 @@ export function PackageSelector({ device, value, onChange }: PackageSelectorProp
               ))}
               {filteredPackages.length > 50 && (
                 <li className="px-3 py-2 text-xs text-text-muted border-t border-border-muted">
-                  +{filteredPackages.length - 50} more packages (refine search)
+                  {filteredPackages.length - 50} more. Keep typing to narrow the list.
                 </li>
               )}
             </ul>
