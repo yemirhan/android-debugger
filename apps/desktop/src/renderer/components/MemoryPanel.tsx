@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import type { Device } from '@android-debugger/shared';
 import { useMemory } from '../hooks/useMemory';
+import { MonitorLiveBadge, MonitorToggle } from './monitoring/MonitorToggle';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
 import { tabGuides } from '../data/tabGuides';
@@ -61,25 +62,22 @@ export function MemoryPanel({ device, packageName }: MemoryPanelProps) {
           >
             <InfoIcon />
           </button>
+          <MonitorLiveBadge live={isMonitoring} what="memory" />
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={clearData}
-            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+            className="h-8 px-3 text-sm text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-colors btn-press"
           >
             Clear
           </button>
-          <button
-            onClick={isMonitoring ? stopMonitoring : startMonitoring}
+          <MonitorToggle
+            isMonitoring={isMonitoring}
+            onStart={startMonitoring}
+            onStop={stopMonitoring}
             disabled={!packageName}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press disabled:opacity-50 disabled:cursor-not-allowed ${
-              isMonitoring
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-            }`}
-          >
-            {isMonitoring ? 'Stop' : 'Start'}
-          </button>
+            what="memory"
+          />
         </div>
       </div>
 

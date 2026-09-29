@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import type { Device } from '@android-debugger/shared';
 import { useCpu } from '../hooks/useCpu';
+import { MonitorLiveBadge, MonitorToggle } from './monitoring/MonitorToggle';
 import { useFps } from '../hooks/useFps';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
@@ -46,14 +47,14 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
     clearFps();
   };
 
-  const toggleMonitoring = () => {
-    if (isMonitoring) {
-      cpu.stopMonitoring();
-      fps.stopMonitoring();
-    } else {
-      cpu.startMonitoring();
-      fps.startMonitoring();
-    }
+  const startBoth = () => {
+    cpu.startMonitoring();
+    fps.startMonitoring();
+  };
+
+  const stopBoth = () => {
+    cpu.stopMonitoring();
+    fps.stopMonitoring();
   };
 
   const chartTooltipStyle = {
@@ -87,25 +88,22 @@ export function CpuFpsPanel({ device, packageName }: CpuFpsPanelProps) {
           >
             <InfoIcon />
           </button>
+          <MonitorLiveBadge live={isMonitoring} what="CPU and frame rate" />
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={clearAll}
-            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+            className="h-8 px-3 text-sm text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-colors btn-press"
           >
             Clear
           </button>
-          <button
-            onClick={toggleMonitoring}
+          <MonitorToggle
+            isMonitoring={isMonitoring}
+            onStart={startBoth}
+            onStop={stopBoth}
             disabled={!packageName}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press disabled:opacity-50 disabled:cursor-not-allowed ${
-              isMonitoring
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-            }`}
-          >
-            {isMonitoring ? 'Stop' : 'Start'}
-          </button>
+            what="CPU and frame rate"
+          />
         </div>
       </div>
 

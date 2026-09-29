@@ -13,6 +13,8 @@ import {
 } from 'recharts';
 import type { Device, GcEvent, GcReason } from '@android-debugger/shared';
 import { useGcMonitor } from '../hooks/useGcMonitor';
+import { monitorControls, useMonitor } from '../lib/monitoring/monitors';
+import { MonitorLiveBadge, MonitorToggle } from './monitoring/MonitorToggle';
 import { GcIcon } from './icons';
 
 interface GcMonitorPanelProps {
@@ -44,6 +46,9 @@ function formatTime(ms: number): string {
 
 export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
   const { events, stats, isMonitoring, startMonitoring, stopMonitoring, clearData } = useGcMonitor(device, packageName);
+  // `dumpsys meminfo <app>` makes the app run an explicit GC, so background
+  // memory sampling shows up here as one EXPLICIT collection per sample.
+  const memorySampling = useMonitor('memory').running;
   const [selectedEvent, setSelectedEvent] = useState<GcEvent | null>(null);
 
   // Prepare chart data
@@ -95,26 +100,38 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
               {events.length} events
             </span>
           )}
+          <MonitorLiveBadge live={isMonitoring} what="GC events" />
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={clearData}
-            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+            className="h-8 px-3 text-sm text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-colors btn-press"
           >
             Clear
           </button>
-          <button
-            onClick={isMonitoring ? stopMonitoring : startMonitoring}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
-              isMonitoring
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-            }`}
-          >
-            {isMonitoring ? 'Stop' : 'Start'}
-          </button>
+          <MonitorToggle
+            isMonitoring={isMonitoring}
+            onStart={startMonitoring}
+            onStop={stopMonitoring}
+            what="GC events"
+          />
         </div>
       </div>
+
+      {isMonitoring && memorySampling && (
+        <div className="flex items-center gap-3 rounded-lg border border-border-muted bg-surface px-4 py-2.5">
+          <p className="flex-1 text-sm text-text-secondary">
+            Memory monitoring asks Android for a memory dump every sample, which makes the app run an explicit GC.
+            Pause memory monitoring to see only the app&apos;s own collections.
+          </p>
+          <button
+            onClick={monitorControls('memory').stopMonitoring}
+            className="h-8 px-3 text-sm text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-colors flex-shrink-0"
+          >
+            Pause memory
+          </button>
+        </div>
+      )}
 
       {/* Stats cards */}
       <div className="grid grid-cols-4 gap-3">
@@ -316,7 +333,7 @@ export function GcMonitorPanel({ device, packageName }: GcMonitorPanelProps) {
           </table>
           {events.length === 0 && (
             <div className="flex items-center justify-center h-full text-text-muted text-sm">
-              {isMonitoring ? 'Waiting for GC events...' : 'Start monitoring to capture GC events'}
+              {isMonitoring ? 'No garbage collections yet. They show up here as the app allocates memory.' : 'GC monitoring is paused. Press Start to capture GC events.'}
             </div>
           )}
         </div>

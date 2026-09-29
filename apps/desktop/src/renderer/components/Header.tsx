@@ -2,6 +2,7 @@ import React from 'react';
 import type { Device } from '@android-debugger/shared';
 import { PackageSelector } from './PackageSelector';
 import { DevicePicker } from './DevicePicker';
+import { MonitoringStatus } from './monitoring/MonitoringStatus';
 
 interface HeaderProps {
   devices: Device[];
@@ -76,6 +77,7 @@ export function Header({
 
       {/* Right section: connection status */}
       <div className="flex items-center gap-4 no-drag flex-shrink-0">
+        {isReady && <MonitoringStatus />}
         {isReady && (
           <span
             className="flex items-center gap-1.5 text-xs text-text-muted max-w-[180px]"

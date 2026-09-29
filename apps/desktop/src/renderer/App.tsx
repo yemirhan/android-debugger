@@ -31,6 +31,7 @@ import { MethodTracePanel } from './components/MethodTracePanel';
 import { ScreenMirrorPanel } from './components/ScreenMirrorPanel';
 import { useDevices } from './hooks/useDevices';
 import { useBackgroundLogcat } from './hooks/useBackgroundLogcat';
+import { useBackgroundMonitoring } from './lib/monitoring/monitors';
 import { useNavigationState } from './hooks/useNavigationState';
 import { SdkProvider, LogsProvider, CrashProvider, UpdateProvider, useUpdateContext } from './contexts';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
@@ -99,6 +100,9 @@ function AppContent() {
   // Start logcat in background when device is selected
   // This ensures SDK messages are captured regardless of which panel is active
   useBackgroundLogcat(activeDevice, packageName);
+  // Performance monitors (memory, CPU, FPS, battery, network, threads, GC)
+  // run app-wide so their history keeps growing on every tab.
+  useBackgroundMonitoring(activeDevice, packageName);
 
   // Register settings navigation for update modal
   useEffect(() => {

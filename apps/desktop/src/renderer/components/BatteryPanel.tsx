@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import type { Device } from '@android-debugger/shared';
 import { useBattery } from '../hooks/useBattery';
+import { MonitorLiveBadge, MonitorToggle } from './monitoring/MonitorToggle';
 import { InfoIcon } from './icons';
 import { InfoModal } from './shared/InfoModal';
 import { tabGuides } from '../data/tabGuides';
@@ -130,24 +131,21 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
           >
             <InfoIcon />
           </button>
+          <MonitorLiveBadge live={isMonitoring} what="battery" />
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={clearData}
-            className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-all duration-150 btn-press"
+            className="h-8 px-3 text-sm text-text-secondary bg-surface rounded-md border border-border-muted hover:bg-surface-hover hover:text-text-primary transition-colors btn-press"
           >
             Clear
           </button>
-          <button
-            onClick={isMonitoring ? stopMonitoring : startMonitoring}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 btn-press ${
-              isMonitoring
-                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-            }`}
-          >
-            {isMonitoring ? 'Stop' : 'Start'}
-          </button>
+          <MonitorToggle
+            isMonitoring={isMonitoring}
+            onStart={startMonitoring}
+            onStop={stopMonitoring}
+            what="battery"
+          />
         </div>
       </div>
 
@@ -275,7 +273,7 @@ export function BatteryPanel({ device }: BatteryPanelProps) {
                 <rect x="20" y="9" width="2" height="6" rx="1" strokeWidth={1.5} />
               </svg>
             </div>
-            <p className="text-sm">{isMonitoring ? 'Waiting for battery data...' : 'Monitoring stopped'}</p>
+            <p className="text-sm">{isMonitoring ? 'Waiting for the first battery reading…' : 'Battery monitoring is paused. Press Start to collect readings.'}</p>
           </div>
         )}
       </div>
