@@ -486,12 +486,14 @@ function EmptyBody({
   }
 
   if (probe.state === 'not-running') {
+    // Both CLIs default to 8081; spell out the port so the suggested command starts Metro where we look.
+    const portFlag = port === 8081 ? '' : ` --port ${port}`;
     return (
       <EmptyShell title="Start your React Native dev server">
         <p>DevTools connects through Metro. Start it in your project folder and this tab picks it up on its own:</p>
         <div className="flex flex-wrap gap-2">
-          <Code>npx expo start</Code>
-          <Code>npx react-native start</Code>
+          <Code>{`npx expo start${portFlag}`}</Code>
+          <Code>{`npx react-native start${portFlag}`}</Code>
         </div>
         <p className="text-text-muted">
           Checking localhost:<span className="font-mono">{port}</span> every few seconds. Running Metro on another port? Change it with the Metro button in the toolbar.
